@@ -44,11 +44,17 @@ Code CIN/
 │   ├── native.py           # Go 原生库 ctypes 桥接 (自动回退纯 Python)
 │   ├── debugger.py         # 交互式调试器 (--step)
 │   └── errors.py           # 异常层次: CPUSimulatorError 及子类
-│   └── native/             # Go 原生库源码
-│       ├── go.mod          # Go 模块定义
-│       ├── main.go         # 导出符号: codecin_run / codecin_crom_pack / ...
-│       ├── vm.go           # 原生字节码 VM
-│       ├── crom.go         # CROM 压缩/解压 (Go 端)
+│   └── native/             # Go 原生库源码 (Go 优先架构)
+│       ├── go.mod          # Go 模块定义 (module codecin-native)
+│       ├── main.go         # c-shared 导出: codecin_run / codecin_crom_pack / ...
+│       ├── engine/         # 字节码 VM + CROM + UCBC 编码 (可复用包)
+│       │   ├── vm.go       # 原生字节码 VM (engine.Run)
+│       │   ├── crom.go     # CROM 压缩/解压 (Go 端)
+│       │   ├── encode.go   # IR → UCBC 字节码编码
+│       │   └── isa_gen.go  # 生成常量 (操作码/SYS/操作数种类)
+│       ├── ir/             # 中间表示 (ir.Program / Instr / Operand)
+│       ├── compiler/       # Go 版 CIN 编译器 (tokenizer/parser/codegen)
+│       ├── cmd/codecin/    # 独立 Go CLI (编译 + 运行 .cin)
 │       ├── build.ps1       # Windows 构建脚本
 │       └── build.sh        # Linux / Termux / macOS 构建脚本
 ├── basic.cin               # CIN 综合示例 (回归基准)
@@ -198,10 +204,23 @@ python -c "from codecin import native; print(native.load_native_library())"
 
 > 手动编译等价命令: `go build -buildmode=c-shared -o ../codecin_native.dll .` (在 `codecin/native/` 目录)。
 
-> **常量单一事实来源**: Go 端操作码/操作数类型/SYS 功能号常量由 `codecin/native/isa_gen.go`
-> 提供, 该文件由 `python script/gen_native_isa.py` 从 `codecin/isa.py` **自动生成** (勿手工改动)。
+> **常量单一事实来源**: Go 端操作码/操作数类型/SYS 功能号常量由 `codecin/native/engine/isa_gen.go`
+> 提供, Go 编译器用的 SYS 常量在 `codecin/native/compiler/syscalls.go`; 两者均由
+> `python script/gen_native_isa.py` 从 `codecin/isa.py` **自动生成** (勿手工改动)。
 > 修改指令集后: `python script/gen_native_isa.py` → 重新编译原生库 → 跑 `python -m pytest`。
 > CI 中的 `script/gen_native_isa.py --check` 会拦截两者漂移。
+
+### 独立 Go CLI (codecin)
+
+Go 优先架构提供不依赖 Python 的独立 CLI, 用 Go 版 CIN 编译器 + 字节码 VM 编译并运行 `.cin`:
+
+```bash
+cd codecin/native
+go build -o codecin ./cmd/codecin
+./codecin ../../basic.cin          # 编译 + 运行 (Go 全链路)
+```
+
+Python 入口 (`python cpu.py ...`) 保留为 CLI 壳与回退路径, 两者语义一致。
 
 ---
 
@@ -367,10 +386,11 @@ python cpu.py basic.cin --compile-only && python cpu.py basic.bin  # 字节码�
    前缀**自动注册** (见 `_init_dispatch`), 无需手工登记; 无事件模型的别名指令
    (如 WFE/WFI/SEV) 在 `CPU._OP_ALIASES` 声明。
 3. `codecin/jit.py` — JIT 代码生成加分支 (否则该指令所在块会回退解释执行)。
-4. `codecin/native/vm.go` — 原生 VM `switch` 加实现; 不实现时返回 `statusUnsupported`,
-   Python 端自动回退。Go 侧常量来自生成的 `isa_gen.go`, **不要手工改**。
+4. `codecin/native/engine/vm.go` — 原生 VM `switch` 加实现; 不实现时返回 `StatusUnsupported`,
+   Python 端自动回退。Go 侧常量来自生成的 `engine/isa_gen.go`, **不要手工改**。
 5. `codecin/assembler.py` — 若有特殊操作数语法, 在汇编器适配; 常规 `reg/imm/label/mem` 自动支持。
-6. `codecin/cin.py` — 如需暴露给 CIN, 在 `Syscall` 加功能号并在 `cpu.py`/`vm.go` 的 SYS handler 实现宿主调用。
+6. `codecin/cin.py` + `codecin/native/compiler/` — 如需暴露给 CIN, 在 `Syscall` 加功能号,
+   并在 `cpu.py`/`engine/vm.go` 的 SYS handler 实现宿主调用; Go 版编译器同步在 `compiler/` 支持。
 
 新增后同步 (防止文档/原生常量漂移):
 

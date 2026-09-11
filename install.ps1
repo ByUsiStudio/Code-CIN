@@ -1,4 +1,4 @@
-# Code CIN 一键安装脚本 (Windows PowerShell)
+﻿# Code CIN 一键安装脚本 (Windows PowerShell)
 # 用法: powershell -ExecutionPolicy Bypass -File install.ps1
 # 功能: 检测/安装 Go -> 编译 Go 原生库与 codecin CLI -> 安装 Python 依赖 -> 生成启动器
 $ErrorActionPreference = 'Stop'

@@ -49,6 +49,9 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: codecin/native/go.mod
+      - name: Build all Go packages + CLI
+        run: go build ./...
+        working-directory: codecin/native
       - name: Build c-shared (Linux)
         run: go build -buildmode=c-shared -o /tmp/libcodecin_native.so .
         working-directory: codecin/native
