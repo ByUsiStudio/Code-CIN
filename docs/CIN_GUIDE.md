@@ -440,6 +440,59 @@ function math_demo() -> void {
 }
 ```
 
+### 宿主能力: 2D 绘图画布 (导出 PNG)
+
+CIN 内置一个跨平台的 2D 绘图画布（Go 标准库实现，导出 PNG）。同一时刻存在一个「当前画布」与「当前画笔颜色」（默认黑色，背景白色）。
+
+| 函数 | 签名 | 说明 |
+|------|------|------|
+| `canvas(w, h)` | void | 新建 w×h 画布 (白底) |
+| `set_color(rgb)` | void | 设置画笔颜色 `0xRRGGBB` |
+| `fill_rect(x, y, w, h)` | void | 填充矩形 |
+| `fill_circle(cx, cy, r)` | void | 填充圆 |
+| `draw_line(x0, y0, x1, y1)` | void | 画线 (Bresenham) |
+| `draw_text(x, y, s)` | void | 绘制文本 (内置 5×7 点阵字库; 小写自动转大写) |
+| `save_png(path)` | int | 导出 PNG, 返回 `0` 成功 / `-1` 失败 |
+
+```cin
+function draw() -> int {
+    canvas(200, 100)
+    set_color(0xFF0000)            // 红
+    fill_rect(0, 0, 80, 100)
+    set_color(0x0000FF)            // 蓝
+    fill_circle(140, 50, 40)
+    set_color(0x00FF00)            // 绿
+    draw_line(0, 0, 199, 99)
+    set_color(0x000000)            // 黑
+    draw_text(4, 4, "HELLO")
+    return save_png("out.png")     // 0 成功
+}
+```
+
+> 交互式**窗口**版依赖桌面图形库（如 Fyne），当前沙箱无网络无法引入外部依赖，故先提供画布 + PNG 导出；窗口版为后续项。
+
+### 宿主能力: 联网音频 (下载 + 播放 + 控制)
+
+| 函数 | 签名 | 说明 |
+|------|------|------|
+| `audio_play(url)` | int | 下载 `http/https` URL 或读取本地文件并播放 (WAV/PCM)，返回 `0` 成功 / `-1` 失败 |
+| `audio_stop()` | void | 停止当前播放 |
+| `audio_volume(v)` | void | 设置音量 `0..100` (支持则生效, 否则忽略) |
+| `audio_wait()` | void | 阻塞到当前播放结束 (按 WAV 头时长估算) |
+
+```cin
+function music() -> int {
+    int ok = audio_play("https://example.com/tone.wav")
+    if (ok == 0) {
+        audio_volume(80)
+        audio_wait()
+    }
+    return ok
+}
+```
+
+> MP3/OGG 解码依赖外部库，当前仅支持 WAV(PCM)；音频与 GUI 为 **Go 原生能力**，`--no-native` 下会给出明确错误。
+
 ---
 
 ## 12. 内嵌 CPU 指令语句

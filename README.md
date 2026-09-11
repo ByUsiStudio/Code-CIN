@@ -912,7 +912,7 @@ flowchart LR
 
 ---
 
-**Code CIN - 让CPU模拟变得简单而强大**
+**Code CIN - 让编程与运行时变得简单而强大**
 
 ---
 

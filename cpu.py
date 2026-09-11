@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Code CIN 模拟器入口。
+"""Code CIN 入口。
 
 实现已拆分为 codecin/ 包:
   codecin.cli       命令行解析与启动
