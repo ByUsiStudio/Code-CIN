@@ -20,7 +20,7 @@ sys.path.insert(0, ROOT)
 from codecin.isa import KIND_FLOAT, KIND_IMM, KIND_MEM, KIND_REG, KIND_STR, \
     KIND_VEC, KIND_VECLANE, KIND_COND, Opcode, Syscall  # noqa: E402
 
-OUT_PATH = os.path.join(ROOT, 'codecin', 'native', 'isa_gen.go')
+OUT_PATH = os.path.join(ROOT, 'codecin', 'native', 'engine', 'isa_gen.go')
 
 # Python 常量名 -> Go 常量名 (特殊缩写, 与既有 vm.go 用法保持一致)
 _KIND_GO_NAMES = {
@@ -48,7 +48,7 @@ def build_go() -> str:
     lines.append('// 单一事实来源: codecin/isa.py Opcode / Syscall / KIND_* 常量.')
     lines.append('// 修改指令集后运行: python script/gen_native_isa.py')
     lines.append('')
-    lines.append('package main')
+    lines.append('package engine')
     lines.append('')
     lines.append('// 操作数种类 (与 isa.py KIND_* 一致)')
     for value in sorted(_KIND_GO_NAMES):
@@ -58,6 +58,12 @@ def build_go() -> str:
     for m in Opcode:
         lines.append(f'const op{m.name} = {m.value}')
     lines.append('')
+    lines.append('// 操作码名 -> 编码 (供 UCBC 编码器使用)')
+    lines.append('var opcodeByName = map[string]uint8{')
+    for m in Opcode:
+        lines.append(f'\t"{m.name}": op{m.name},')
+    lines.append('}')
+    lines.append('')
     lines.append('// SYS 功能号 (与 isa.py Syscall 一致)')
     for s in Syscall:
         lines.append(f'const {sys_id(s.name)} = {s.value}')
@@ -66,7 +72,7 @@ def build_go() -> str:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description='生成/校验 codecin/native/isa_gen.go')
+    ap = argparse.ArgumentParser(description='生成/校验 codecin/native/engine/isa_gen.go')
     ap.add_argument('--check', action='store_true', help='仅校验一致')
     args = ap.parse_args()
 
