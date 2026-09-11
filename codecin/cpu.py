@@ -1322,13 +1322,10 @@ class CPU:
         elif call_id == Syscall.RTRIM:
             self._set_reg(0, self._heap_dup_string(
                 self.memory.read_string(x0).rstrip().encode('utf-8') + b'\x00'))
-        elif call_id in (Syscall.AUDIOPLAY, Syscall.AUDIOSTOP, Syscall.AUDIOVOL,
-                         Syscall.AUDIOWAIT, Syscall.CANVASNEW, Syscall.CANVASSET,
-                         Syscall.CANVASRECT, Syscall.CANVASCIRC, Syscall.CANVASTEXT,
-                         Syscall.CANVASLINE, Syscall.CANVASSAVE, Syscall.CANVASSHOW):
+        elif Syscall.AUDIOPLAY <= call_id <= Syscall.TERMUXSMS:
             raise ExecutionError(
-                "GUI/audio builtins require the native Go runtime "
-                "(run without --no-native)")
+                "host builtins (GUI/audio/system/Termux) require the native "
+                "Go runtime (run without --no-native)")
         else:
             raise ExecutionError(f"Unknown SYS call id: {call_id}")
         return True

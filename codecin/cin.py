@@ -2223,10 +2223,13 @@ class CodeGen:
     # ---------------- 函数调用 ----------------
 
     def _builtin_ret_type(self, name: str):
+        host = HOST_BUILTINS.get(name)
+        if host is not None:
+            return None if host[2] == 'void' else host[2]
         if name in ('sin', 'cos', 'tan', 'sqrt', 'pow', 'floor', 'ceil', 'round'):
             return 'float'
         if name in ('strlen', 'strcmp', 'rand', 'time', 'abs', 'input',
-                    'idiv', 'atoi', 'audio_play', 'save_png', 'show_canvas'):
+                    'idiv', 'atoi'):
             return 'int'
         if name in ('strcpy', 'int_to_str', 'itoa', 'float_to_str', 'ftoa',
                     'bool_to_str', 'substr', 'upper', 'lower',
