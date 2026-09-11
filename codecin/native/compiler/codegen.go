@@ -14,6 +14,61 @@ import (
 
 // ---------------- 代码生成 ----------------
 
+// hostBuiltin 宿主能力内建 (表驱动): 名称 -> (SYS 号, 参数个数, 返回类型)。
+type hostBuiltin struct {
+	sysID int64
+	nargs int
+	ret   TypeKind
+}
+
+var hostBuiltins = map[string]hostBuiltin{
+	// 联网音频
+	"audio_play":   {SysAUDIOPLAY, 1, kInt},
+	"audio_stop":   {SysAUDIOSTOP, 0, kVoid},
+	"audio_volume": {SysAUDIOVOL, 1, kVoid},
+	"audio_wait":   {SysAUDIOWAIT, 0, kVoid},
+	// 2D 绘图画布
+	"canvas":      {SysCANVASNEW, 2, kVoid},
+	"set_color":   {SysCANVASSET, 1, kVoid},
+	"fill_rect":   {SysCANVASRECT, 4, kVoid},
+	"fill_circle": {SysCANVASCIRC, 3, kVoid},
+	"draw_line":   {SysCANVASLINE, 4, kVoid},
+	"draw_text":   {SysCANVASTEXT, 3, kVoid},
+	"save_png":    {SysCANVASSAVE, 1, kInt},
+	"show_canvas": {SysCANVASSHOW, 0, kInt},
+	// 系统原生交互 (跨平台)
+	"file_read":   {SysFILEREAD, 1, kString},
+	"file_write":  {SysFILEWRITE, 2, kInt},
+	"file_append": {SysFILEAPPEND, 2, kInt},
+	"file_exists": {SysFILEEXISTS, 1, kInt},
+	"file_delete": {SysFILEDELETE, 1, kInt},
+	"file_size":   {SysFILESIZE, 1, kInt},
+	"mkdir":       {SysMKDIR, 1, kInt},
+	"dir_list":    {SysDIRLIST, 1, kString},
+	"exec":        {SysEXEC, 1, kInt},
+	"exec_output": {SysEXECOUTPUT, 1, kString},
+	"getenv":      {SysGETENV, 1, kString},
+	"setenv":      {SysSETENV, 2, kInt},
+	"os_name":     {SysOSNAME, 0, kString},
+	"hostname":    {SysHOSTNAME, 0, kString},
+	"username":    {SysUSERNAME, 0, kString},
+	"cwd":         {SysCWD, 0, kString},
+	"home_dir":    {SysHOMEDIR, 0, kString},
+	// Termux API
+	"termux_available":     {SysTERMUXAVAIL, 0, kInt},
+	"termux_notify":        {SysTERMUXNOTIFY, 2, kInt},
+	"termux_toast":         {SysTERMUXTOAST, 1, kInt},
+	"termux_clipboard_get": {SysTERMUXCLIPGET, 0, kString},
+	"termux_clipboard_set": {SysTERMUXCLIPSET, 1, kInt},
+	"termux_battery":       {SysTERMUXBATTERY, 0, kString},
+	"termux_vibrate":       {SysTERMUXVIBRATE, 1, kInt},
+	"termux_tts":           {SysTERMUXTTS, 1, kInt},
+	"termux_location":      {SysTERMUXLOCATION, 0, kString},
+	"termux_wifi_info":     {SysTERMUXWIFI, 0, kString},
+	"termux_dialog":        {SysTERMUXDIALOG, 1, kString},
+	"termux_sms_send":      {SysTERMUXSMS, 2, kInt},
+}
+
 func (c *compiler) emit(op string, args ...ir.Operand) {
 	c.res.Instructions = append(c.res.Instructions, ir.Instr{Op: op, Args: args})
 }
@@ -1370,11 +1425,13 @@ func (c *compiler) genPrint(n *Node, newline bool) {
 // ---------------- 函数调用 ----------------
 
 func (c *compiler) builtinRetType(name string) *Type {
+	if hb, ok := hostBuiltins[name]; ok {
+		return scalarT(hb.ret)
+	}
 	switch name {
 	case "sin", "cos", "tan", "sqrt", "pow", "floor", "ceil", "round":
 		return scalarT(kFloat)
-	case "strlen", "strcmp", "rand", "time", "abs", "input", "idiv", "atoi",
-		"audio_play", "save_png", "show_canvas":
+	case "strlen", "strcmp", "rand", "time", "abs", "input", "idiv", "atoi":
 		return scalarT(kInt)
 	case "strcpy", "int_to_str", "itoa", "float_to_str", "ftoa", "bool_to_str",
 		"substr", "upper", "lower", "trim", "ltrim", "rtrim":

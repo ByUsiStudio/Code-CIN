@@ -38,7 +38,8 @@ def test_go_cli_basic_demo():
 
 @needs_cli
 @pytest.mark.parametrize('name', ['control_flow.cin', 'literals_types.cin',
-                                  'modules_demo.cin', 'bitwise_builtins.cin'])
+                                  'modules_demo.cin', 'bitwise_builtins.cin',
+                                  'system_interaction.cin'])
 def test_go_cli_examples(name):
     # 全部示例编译并运行成功 (输出等价性由 test_go_cli_matches_python_compiler 校验)
     r = run_go(os.path.join(ROOT, 'examples', name))
@@ -53,7 +54,7 @@ def test_go_cli_matches_python_compiler():
 
     names = ['basic.cin'] + [os.path.join('examples', f) for f in (
         'control_flow.cin', 'literals_types.cin', 'modules_demo.cin',
-        'bitwise_builtins.cin')]
+        'bitwise_builtins.cin', 'system_interaction.cin')]
     for name in names:
         path = os.path.join(ROOT, name)
         py_out, err = d.run_python(path)

@@ -12,11 +12,21 @@ import (
 // 系统原生交互: 文件/目录/进程/环境变量/系统信息 (跨平台 Windows/Linux/macOS)。
 // 全部经 SYS 宿主调用暴露给 CIN。
 
+// empty 返回一个安全的空串地址 (惰性分配, 避免影响 heap_ptr 的三路径一致性)。
+func (vm *vmState) empty() uint64 {
+	if vm.emptyStr == 0 {
+		p, _ := vm.heapDupString("")
+		vm.emptyStr = p
+	}
+	cur := vm.emptyStr
+	return cur
+}
+
 // hs 在堆上分配字符串; 失败时回退到预留空串 (安全无副作用)。
 func (vm *vmState) hs(s string) uint64 {
 	p, e := vm.heapDupString(s)
 	if e != "" {
-		return vm.emptyStr
+		return vm.empty()
 	}
 	return p
 }
@@ -26,7 +36,7 @@ func (vm *vmState) hs(s string) uint64 {
 func (vm *vmState) fileRead(path string) uint64 {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return vm.emptyStr
+		return vm.empty()
 	}
 	return vm.hs(string(data))
 }
@@ -82,7 +92,7 @@ func (vm *vmState) mkdir(path string) uint64 {
 func (vm *vmState) dirList(path string) uint64 {
 	entries, err := os.ReadDir(path)
 	if err != nil {
-		return vm.emptyStr
+		return vm.empty()
 	}
 	names := make([]string, 0, len(entries))
 	for _, e := range entries {
@@ -119,7 +129,7 @@ func (vm *vmState) execCmd(cmd string) uint64 {
 func (vm *vmState) execOutput(cmd string) uint64 {
 	out, err := shellCommand(cmd).Output()
 	if err != nil && len(out) == 0 {
-		return vm.emptyStr
+		return vm.empty()
 	}
 	return vm.hs(string(out))
 }
@@ -144,7 +154,7 @@ func (vm *vmState) osName() uint64 {
 func (vm *vmState) hostname() uint64 {
 	h, err := os.Hostname()
 	if err != nil {
-		return vm.emptyStr
+		return vm.empty()
 	}
 	return vm.hs(h)
 }
@@ -158,13 +168,13 @@ func (vm *vmState) username() uint64 {
 			return vm.hs(v)
 		}
 	}
-	return vm.emptyStr
+	return vm.empty()
 }
 
 func (vm *vmState) cwd() uint64 {
 	d, err := os.Getwd()
 	if err != nil {
-		return vm.emptyStr
+		return vm.empty()
 	}
 	return vm.hs(d)
 }

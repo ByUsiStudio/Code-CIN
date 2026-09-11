@@ -717,9 +717,12 @@ xychart-beta
 > `s[i]` 单字节读取、`floor/ceil/round/min/max/atoi/trim/ltrim/rtrim` 内建函数 (详见
 > [CIN 编程指南 · 运算符/内建](docs/CIN_GUIDE.md))。
 >
-> **CIN 宿主能力 (GUI / 联网音频)**: 2D 绘图画布 `canvas/set_color/fill_rect/fill_circle/draw_line/draw_text`
+> **CIN 宿主能力 (GUI / 联网音频 / 系统交互)**: 2D 绘图画布 `canvas/set_color/fill_rect/fill_circle/draw_line/draw_text`
 > + `save_png()` 导出 / `show_canvas()` 弹窗查看; 联网音频 `audio_play(url)` / `audio_stop` /
-> `audio_volume` / `audio_wait` (http 下载 + WAV 播放)。
+> `audio_volume` / `audio_wait` (http 下载 + WAV 播放); 系统原生交互 `file_read/file_write/file_append/
+> file_exists/file_delete/file_size/mkdir/dir_list`、`exec/exec_output`、`getenv/setenv`、
+> `os_name/hostname/username/cwd/home_dir` (Windows/Linux/macOS); Termux API `termux_notify/toast/
+> clipboard_get/clipboard_set/battery/vibrate/tts/location/wifi_info/dialog/sms_send`。
 
 ### 程序执行流程图
 

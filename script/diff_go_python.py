@@ -44,10 +44,14 @@ def run_python(path: str):
 
 
 def run_go(path: str):
-    """Go CLI: 编译 + 运行, 返回 (stdout, returncode, stderr)。"""
-    r = subprocess.run([GO_CLI, path], capture_output=True, text=True,
-                       encoding='utf-8', errors='replace', cwd=ROOT)
-    return r.stdout, r.returncode, r.stderr
+    """Go CLI: 编译 + 运行, 返回 (stdout, returncode, stderr)。
+
+    以二进制捕获再显式 UTF-8 解码, 避免 text 模式的换行归一化 (\\r\\n → \\n)。
+    """
+    r = subprocess.run([GO_CLI, path], capture_output=True, cwd=ROOT)
+    out = r.stdout.decode('utf-8', 'replace')
+    err = r.stderr.decode('utf-8', 'replace')
+    return out, r.returncode, err
 
 
 def main(argv):

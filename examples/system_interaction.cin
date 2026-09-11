@@ -1,0 +1,33 @@
+// Code CIN 系统原生交互演示 (跨平台: Windows / Linux / macOS)
+// 运行: python cpu.py examples/system_interaction.cin
+//       codecin examples/system_interaction.cin
+function main() -> int {
+    // 系统信息
+    println("os: " + os_name())
+    println("host: " + hostname())
+    println("user: " + username())
+    println("home: " + home_dir())
+    println("cwd: " + cwd())
+
+    // 文件读写 (相对当前工作目录)
+    string f = "system_demo.txt"
+    file_write(f, "alpha")
+    file_append(f, "-beta")
+    println("size: " + int_to_str(file_size(f)))
+    println("content: " + file_read(f))
+    println("exists: " + int_to_str(file_exists(f)))
+    file_delete(f)
+    println("after_delete: " + int_to_str(file_exists(f)))
+
+    // 环境变量
+    setenv("CODECIN_DEMO_ENV", "42")
+    println("env: " + getenv("CODECIN_DEMO_ENV"))
+
+    // 进程执行 (调用系统 shell)
+    println("shell: " + exec_output("echo codecin"))
+
+    // Termux API (在 Android/Termux 上可用; 否则返回 0/-1)
+    println("termux: " + int_to_str(termux_available()))
+
+    return 0
+}

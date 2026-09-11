@@ -497,6 +497,76 @@ function music() -> int {
 
 > MP3/OGG 解码依赖外部库，当前仅支持 WAV(PCM)；音频与 GUI 为 **Go 原生能力**，`--no-native` 下会给出明确错误。
 
+### 宿主能力: 系统原生交互 (Windows / Linux / macOS)
+
+| 函数 | 签名 | 说明 |
+|------|------|------|
+| `file_read(path)` | string | 读文件内容 (失败为空串) |
+| `file_write(path, s)` | int | 覆盖写; `0` 成功 / `-1` 失败 |
+| `file_append(path, s)` | int | 追加写 |
+| `file_exists(path)` | int | `1` 存在 / `0` 不存在 |
+| `file_delete(path)` | int | 删除文件或空目录 |
+| `file_size(path)` | int | 字节数 / `-1` |
+| `mkdir(path)` | int | 递归创建目录 |
+| `dir_list(path)` | string | 换行分隔条目 (目录名带 `/`) |
+| `exec(cmd)` | int | 执行 shell 命令, 返回退出码 |
+| `exec_output(cmd)` | string | 执行并返回 stdout |
+| `getenv(name)` | string | 读环境变量 (未设置为空串) |
+| `setenv(name, value)` | int | 设置环境变量 |
+| `os_name()` | string | `"windows"` / `"darwin"` / `"linux"` |
+| `hostname()` | string | 主机名 |
+| `username()` | string | 用户名 |
+| `cwd()` | string | 当前工作目录 |
+| `home_dir()` | string | 用户主目录 |
+
+```cin
+string f = "data.txt"
+file_write(f, "hello")
+file_append(f, " world")
+println(file_read(f))                       // hello world
+println("size=" + int_to_str(file_size(f)))
+println("os=" + os_name())
+println("cwd=" + cwd())
+println(exec_output("echo hi"))             // hi
+setenv("MY_VAR", "42")
+println(getenv("MY_VAR"))                   // 42
+```
+
+> `exec` / `exec_output` 经平台默认 shell 执行 (Windows: `cmd /c`, 其他: `sh -c`)。
+> 系统交互为 **Go 原生能力**, 具备真实文件/进程权限, 请谨慎使用。
+
+### 宿主能力: Termux API (Android)
+
+在 Termux 中执行 `pkg install termux-api` 并安装 **Termux:API** 应用后可用; 非 Termux 环境所有调用优雅失败 (返回 `-1` 或空串)。
+
+| 函数 | 签名 | 说明 |
+|------|------|------|
+| `termux_available()` | int | `1` 可用 / `0` 不可用 |
+| `termux_notify(title, content)` | int | 系统通知 |
+| `termux_toast(msg)` | int | Toast 提示 |
+| `termux_clipboard_get()` | string | 读剪贴板 |
+| `termux_clipboard_set(s)` | int | 写剪贴板 |
+| `termux_battery()` | string | 电池状态 (JSON) |
+| `termux_vibrate(ms)` | int | 振动指定毫秒 |
+| `termux_tts(text)` | int | 文字转语音 |
+| `termux_location()` | string | 定位信息 (JSON) |
+| `termux_wifi_info()` | string | WiFi 连接信息 (JSON) |
+| `termux_dialog(title)` | string | 弹出输入对话框 (JSON) |
+| `termux_sms_send(number, text)` | int | 发送短信 |
+
+```cin
+if (termux_available() == 1) {
+    termux_notify("Code CIN", "任务完成")
+    termux_toast("hello from CIN")
+    termux_vibrate(200)
+    termux_tts("done")
+    println(termux_battery())
+    println(termux_clipboard_get())
+}
+```
+
+> 示例: `examples/system_interaction.cin`; Termux 一键安装见 `script/install_termux.sh`。
+
 ---
 
 ## 12. 内嵌 CPU 指令语句

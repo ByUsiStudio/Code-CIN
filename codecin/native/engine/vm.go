@@ -127,8 +127,6 @@ func Run(bc []byte, mem []byte, entry, sp, heapBase int64, inData []byte,
 		rng:     rand.New(rand.NewSource(time.Now().UnixNano())),
 		inData:  inData,
 	}
-	// 预留一个空串 (宿主能力返回失败时安全回退, 避免返回 0 读到数据段)
-	vm.emptyStr, _ = vm.heapDupString("")
 
 	finish := func(status int, errMsg string) *Result {
 		return &Result{

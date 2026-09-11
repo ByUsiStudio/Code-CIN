@@ -55,7 +55,7 @@ func (vm *vmState) termuxToast(msg string) uint64 {
 func (vm *vmState) termuxClipboardGet() uint64 {
 	out, code := termuxRun("termux-clipboard-get")
 	if code != 0 {
-		return vm.emptyStr
+		return vm.empty()
 	}
 	return vm.hs(strings.TrimRight(out, "\r\n"))
 }
@@ -68,7 +68,7 @@ func (vm *vmState) termuxClipboardSet(text string) uint64 {
 func (vm *vmState) termuxBattery() uint64 {
 	out, code := termuxRun("termux-battery-status")
 	if code != 0 {
-		return vm.emptyStr
+		return vm.empty()
 	}
 	return vm.hs(strings.TrimSpace(out))
 }
@@ -86,7 +86,7 @@ func (vm *vmState) termuxTTS(text string) uint64 {
 func (vm *vmState) termuxLocation() uint64 {
 	out, code := termuxRun("termux-location")
 	if code != 0 {
-		return vm.emptyStr
+		return vm.empty()
 	}
 	return vm.hs(strings.TrimSpace(out))
 }
@@ -94,7 +94,7 @@ func (vm *vmState) termuxLocation() uint64 {
 func (vm *vmState) termuxWifiInfo() uint64 {
 	out, code := termuxRun("termux-wifi-connectioninfo")
 	if code != 0 {
-		return vm.emptyStr
+		return vm.empty()
 	}
 	return vm.hs(strings.TrimSpace(out))
 }
@@ -102,7 +102,7 @@ func (vm *vmState) termuxWifiInfo() uint64 {
 func (vm *vmState) termuxDialog(title string) uint64 {
 	out, code := termuxRun("termux-dialog", "-t", title)
 	if code != 0 {
-		return vm.emptyStr
+		return vm.empty()
 	}
 	return vm.hs(strings.TrimSpace(out))
 }
