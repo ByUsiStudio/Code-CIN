@@ -83,6 +83,7 @@ type Node struct {
 	//        block/return/if/while/for/dowhile/switch/break/continue/decl/cpu/assert/expr
 	//        declitem/case/arraylit
 	Num     float64
+	Ival    int64
 	IsFloat bool
 	Bool    bool
 	Str     string
