@@ -419,6 +419,12 @@ string copy = strcpy(s)         // 拷贝为新堆块
 | `substr(s, start, len)` | string | 子串 (新堆块, 越界自动裁剪) |
 | `indexof(hay, needle)` | int | 首次出现位置, 未找到为 `-1` |
 | `upper(s)` / `lower(s)` | string | ASCII 大小写转换 (新堆块) |
+| `trim(s)` / `ltrim(s)` / `rtrim(s)` | string | 去首尾 / 前导 / 尾部空白 (新堆块) |
+| `atoi(s)` | int | 字符串 → 十进制整数 (前导空白忽略, 失败为 `0`) |
+| `floor(x)` / `ceil(x)` | float | 向下 / 向上取整 (结果仍为 float) |
+| `round(x)` | float | 四舍五入 (`floor(x + 0.5)`, 半值向 +∞) |
+| `min(a, b)` / `max(a, b)` | int/float | 数值最小 / 最大值 (int/float 混用按 float 提升) |
+| `idiv(a, b)` | int | 整数除法 (向零截断; `/` 恒为浮点除) |
 
 内建在表达式任意位置可用; 数值参数按需自动提升为 float。
 
@@ -517,9 +523,9 @@ function main() -> int {
 
 ## 14. 限制与注意事项
 
-1. **无指针/取地址运算**: `&` `*` 不是运算符; "引用" 仅通过数组/struct 传参隐式实现。
-2. **无位运算符**: CIN 层没有 `&` `|` `<<` `>>` (避免与逻辑运算混淆); 需要位操作时用内嵌 CPU 语句或汇编。
-3. **`/` 恒为浮点除**: 想要整数除法语义请组合使用; `%` 仅支持整数, 浮点取模报错。
+1. **无指针/取地址运算**: `*` 仅是乘法、`&` 仅是位与 (不是解引用/取地址); "引用" 仅通过数组/struct 传参隐式实现。
+2. **`/` 恒为浮点除**: 整数除法用内建 `idiv(a, b)` (向零截断); `%` 仅支持整数取模, 浮点取模报错。
+3. **位运算仅整数**: `&` `|` `^` `<<` `>>` `~` 不接受 float/string 操作数; `>>` 为算术右移 (符号位扩展)。
 4. **递归深度**: 每层调用消耗栈槽 (默认内存 64KB, 栈区约 1024 槽); 过深递归触发栈溢出错误, 可用 `--mem-size` 加大内存。
 5. **struct 字段**: 不支持变长指针数组字段; 字符串字段是指针, 拼接/复制会产生新堆块。
 6. **全局初始化顺序**: 按声明顺序写入数据区; 数组字面量长度超过声明维度会报错。
@@ -533,8 +539,9 @@ function main() -> int {
 | 错误信息 | 原因 | 修正 |
 |----------|------|------|
 | `Unknown function: xxx` | 调用了未定义/拼错的函数 | 检查函数名或自定义该函数 |
-| `Unsupported int operator: xx` | 对整数使用了不支持的运算 | 使用 `+ - * / %` |
+| `Unsupported int operator: xx` | 对整数使用了不支持的运算 | 使用 `+ - * / % & \| ^ << >>` |
 | `Float modulo not supported` | 浮点使用 `%` | 先取整或改用整数 |
+| `Bitwise operator ... requires integer operands` | 对 float/string 使用位运算 | 位运算仅支持 int/bool |
 | `Expected RBRACE ... at line N` | 花括号不配对 / 块内缺换行 | 检查第 N 行附近括号 |
 | `Undefined variable: xxx` | 使用未声明变量 | 先声明 |
 | `Type mismatch ...` | 赋值/传参类型不匹配 | 显式转换或修改类型 |

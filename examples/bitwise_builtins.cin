@@ -1,0 +1,44 @@
+// Code CIN 位运算 / 整数除法 / 字符串下标 / 新内建函数示例
+// 运行: python cpu.py examples/bitwise_builtins.cin
+function main() -> int {
+    // 位运算 (& | ^ << >> ~)
+    int a = 0b1100 & 0b1010        // 8
+    int b = 0b1100 | 0b0010        // 14
+    int c = 0b1100 ^ 0b1010        // 6
+    int d = 1 << 5                 // 32
+    int e = -16 >> 2               // -4  (算术右移, 保留符号)
+    int f = ~0                     // -1  (位取反)
+
+    // 位运算复合赋值
+    int g = 7
+    g &= 3                          // 3
+    g |= 8                          // 11
+    g ^= 1                          // 10
+    g <<= 2                         // 40
+    g >>= 3                         // 5
+
+    // 整数除法 (向零截断; '/' 恒为浮点除)
+    int q = idiv(17, 5)            // 3
+    int r = idiv(-17, 5)           // -3
+
+    // 字符串单字节访问 (0..255 编码, 只读)
+    string s = "Code CIN"
+    int h = s[0]                    // 'C' = 67
+    int w = s[5]                    // 'C' = 67
+
+    // 数值内建
+    int mn = min(5, 3)             // 3
+    int mx = max(5, 3)             // 5
+    int fl = floor(3.7)            // 3
+    int ce = ceil(3.2)             // 4
+    int ro = round(2.5)            // 3
+
+    // 字符串内建
+    int ti = atoi(" 42 ")          // 42
+    string t = trim("  hi  ")
+    int tl = strlen(t)             // 2
+
+    // 返回各项之和 = 256
+    return a + b + c + d + e + f + g + q + r
+         + h + w + mn + mx + fl + ce + ro + ti + tl
+}
