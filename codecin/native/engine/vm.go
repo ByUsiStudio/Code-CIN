@@ -1,14 +1,15 @@
-package main
-
-// Code CIN 原生字节码 VM。语义与 codecin/cpu.py 解释器严格一致:
+// Package engine 是 Code CIN 的原生字节码 VM (Go 实现)。
+//
+// 语义与 codecin/cpu.py 解释器严格一致:
 //   - PC 语义: 取指后先 pc++ 再执行; CALL/BL 压入的是已自增的 pc
 //   - 栈: 8 字节 qword, 自顶向下; sp 初值由调用方传入
 //   - 寄存器: 33 个槽, R[31]=XZR 只读, R[32]=SP
-//   - 遇到不支持的指令立即返回 status=2, pc 指向该指令, 供 Python 回退
+//   - 遇到不支持的指令立即返回 StatusUnsupported, pc 指向该指令, 供 Python 回退
 //
 // 字节码格式 (UCBC v1):
 //   magic[4] version u8 entry u32 count u32
 //   指令: opcode u8 argc u8 ; 操作数: kind u8 value i64 extra i64 (小端)
+package engine
 
 import (
 	"encoding/binary"
@@ -17,6 +18,14 @@ import (
 	"strconv"
 	"strings"
 	"time"
+)
+
+// 执行状态码 (与 c-shared 桥接层 / Python native.py 一致)。
+const (
+	StatusOK          = 0
+	StatusDone        = 1
+	StatusUnsupported = 2
+	StatusError       = 3
 )
 
 // 操作数种类/操作码/SYS 功能号常量由 isa_gen.go 提供 (单一事实来源:
@@ -52,6 +61,18 @@ type vmState struct {
 	inPos   int
 }
 
+// Result 是 Run 的执行结果。
+type Result struct {
+	Status  int
+	Pc      int
+	Sp      uint64
+	HeapPtr uint64
+	Steps   uint64
+	Regs    [33]uint64
+	Output  string
+	ErrMsg  string
+}
+
 func decodeBytecode(bc []byte) ([]instruction, int, bool) {
 	if len(bc) < 13 || string(bc[:4]) != "UCBC" {
 		return nil, 0, false
@@ -84,11 +105,13 @@ func decodeBytecode(bc []byte) ([]instruction, int, bool) {
 	return prog, int(entry), true
 }
 
-// runVM 执行程序。status: 0=halt, 1=正常结束(越界), 2=不支持, 3=错误
-func runVM(bc []byte, mem []byte, entry, sp, heapBase int64, inData []byte, maxSteps int64) (status int, state *vmState, errMsg string) {
+// Run 执行程序字节码, 返回结果快照。mem 会被原地修改 (数据段/堆/栈写入)。
+func Run(bc []byte, mem []byte, entry, sp, heapBase int64, inData []byte,
+	maxSteps int64) *Result {
+
 	prog, ent, ok := decodeBytecode(bc)
 	if !ok {
-		return 3, nil, "bad bytecode"
+		return &Result{Status: StatusError, ErrMsg: "bad bytecode"}
 	}
 	if entry >= 0 {
 		ent = int(entry)
@@ -104,22 +127,35 @@ func runVM(bc []byte, mem []byte, entry, sp, heapBase int64, inData []byte, maxS
 		inData:  inData,
 	}
 
+	finish := func(status int, errMsg string) *Result {
+		return &Result{
+			Status:  status,
+			Pc:      vm.pc,
+			Sp:      vm.sp,
+			HeapPtr: vm.heapPtr,
+			Steps:   vm.steps,
+			Regs:    vm.regs,
+			Output:  vm.out.String(),
+			ErrMsg:  errMsg,
+		}
+	}
+
 	for {
 		if maxSteps > 0 && int64(vm.steps) >= maxSteps {
-			return 1, vm, ""
+			return finish(StatusDone, "")
 		}
 		if vm.pc < 0 || vm.pc >= len(vm.prog) {
-			return 1, vm, ""
+			return finish(StatusDone, "")
 		}
 		ins := vm.prog[vm.pc]
 		if !opcodeSupported(ins.opcode) {
-			return 2, vm, ""
+			return finish(StatusUnsupported, "")
 		}
 		// 未知 SYS 功能号: 交给解释器 (pc 不自增)
 		if ins.opcode == opSYS {
 			if len(ins.args) == 0 || ins.args[0].kind != kindImm ||
 				!syscallSupported(uint64(ins.args[0].value)) {
-				return 2, vm, ""
+				return finish(StatusUnsupported, "")
 			}
 		}
 		// 与解释器一致: 先自增 pc
@@ -127,10 +163,10 @@ func runVM(bc []byte, mem []byte, entry, sp, heapBase int64, inData []byte, maxS
 		vm.steps++
 		halt, err := vm.execute(ins)
 		if err != "" {
-			return 3, vm, err
+			return finish(StatusError, err)
 		}
 		if halt {
-			return 0, vm, ""
+			return finish(StatusOK, "")
 		}
 	}
 }
@@ -153,7 +189,10 @@ func syscallSupported(id uint64) bool {
 	switch id {
 	case sysABORT, sysSUBSTR, sysINDEXOF, sysTOUPPER, sysTOLOWER:
 		return false
-	case sysFLOOR, sysCEIL, sysROUND, sysATOI, sysTRIM, sysLTRIM, sysRTRIM:
+	case sysFLOOR, sysCEIL, sysROUND, sysATOI, sysTRIM, sysLTRIM, sysRTRIM,
+		sysAUDIOPLAY, sysAUDIOSTOP, sysAUDIOVOL, sysAUDIOWAIT,
+		sysCANVASNEW, sysCANVASSET, sysCANVASRECT, sysCANVASCIRC,
+		sysCANVASTEXT, sysCANVASLINE, sysCANVASSAVE:
 		return true
 	}
 	return id <= sysBOOLSTR
@@ -332,8 +371,7 @@ func formatFloat(f float64) string {
 	if math.IsInf(f, -1) {
 		return "-Inf"
 	}
-	s := strconv.FormatFloat(f, 'g', -1, 64)
-	return s
+	return strconv.FormatFloat(f, 'g', -1, 64)
 }
 
 func (vm *vmState) readCString(addr uint64) string {
@@ -862,7 +900,6 @@ func (vm *vmState) doSyscall(id uint64) string {
 	case sysCEIL:
 		vm.setReg(0, fToBits(math.Ceil(bitsToF(x0))))
 	case sysROUND:
-		// 与 Python 侧 floor(x + 0.5) 一致 (半值向 +inf)
 		vm.setReg(0, fToBits(math.Floor(bitsToF(x0)+0.5)))
 	case sysATOI:
 		s := strings.TrimSpace(vm.readCString(x0))
@@ -890,6 +927,28 @@ func (vm *vmState) doSyscall(id uint64) string {
 			return e
 		}
 		vm.setReg(0, p)
+	case sysAUDIOPLAY:
+		vm.setReg(0, vm.audioPlay(vm.readCString(x0)))
+	case sysAUDIOSTOP:
+		vm.audioStop()
+	case sysAUDIOVOL:
+		vm.audioVolume(x0)
+	case sysAUDIOWAIT:
+		vm.audioWait()
+	case sysCANVASNEW:
+		vm.canvasNew(x0, x1)
+	case sysCANVASSET:
+		vm.canvasSetColor(x0)
+	case sysCANVASRECT:
+		vm.canvasRect(x0, x1, vm.reg(2), vm.reg(3))
+	case sysCANVASCIRC:
+		vm.canvasCircle(x0, x1, vm.reg(2))
+	case sysCANVASTEXT:
+		vm.canvasText(x0, x1, vm.readCString(vm.reg(2)))
+	case sysCANVASLINE:
+		vm.canvasLine(x0, x1, vm.reg(2), vm.reg(3))
+	case sysCANVASSAVE:
+		vm.setReg(0, vm.canvasSave(vm.readCString(x0)))
 	default:
 		return "Unknown SYS call id"
 	}

@@ -8,6 +8,8 @@ import "C"
 import (
 	"encoding/binary"
 	"unsafe"
+
+	"codecin-native/engine"
 )
 
 // 结果结构布局 (与 codecin/native.py _parse_result 严格一致):
@@ -18,13 +20,6 @@ import (
 //   mem_len u64 | mem ...
 //   out_len u64 | out ...
 //   err_len u16 | err ...
-
-const (
-	statusOK          = 0
-	statusDone        = 1
-	statusUnsupported = 2
-	statusError       = 3
-)
 
 //export codecin_run
 func codecin_run(bcPtr unsafe.Pointer, bcLen C.int,
@@ -40,17 +35,14 @@ func codecin_run(bcPtr unsafe.Pointer, bcLen C.int,
 		in = C.GoBytes(inPtr, inLen)
 	}
 
-	status, state, errMsg := runVM(bc, mem, int64(entry), int64(sp), int64(heapBase),
+	res := engine.Run(bc, mem, int64(entry), int64(sp), int64(heapBase),
 		in, int64(maxSteps))
 
-	// 将输出与错误收集
 	out := []byte{}
-	if state != nil {
-		out = []byte(state.out.String())
-	}
 	errb := []byte{}
-	if errMsg != "" {
-		errb = []byte(errMsg)
+	if res != nil {
+		out = []byte(res.Output)
+		errb = []byte(res.ErrMsg)
 	}
 
 	// 结果内存 (vec 区填 0: CIN 不使用向量寄存器)
@@ -60,23 +52,25 @@ func codecin_run(bcPtr unsafe.Pointer, bcLen C.int,
 	buf := make([]byte, total)
 
 	pos := 0
+	status := engine.StatusError
+	pc, sp2, heap, steps := 0, uint64(sp), uint64(heapBase), uint64(0)
+	if res != nil {
+		status = res.Status
+		pc = res.Pc
+		sp2 = res.Sp
+		heap = res.HeapPtr
+		steps = res.Steps
+	}
 	buf[0] = byte(status)
 	pos = 4
-	pc, sp2, heap, steps := 0, uint64(sp), uint64(heapBase), uint64(0)
-	if state != nil {
-		pc = state.pc
-		sp2 = state.sp
-		heap = state.heapPtr
-		steps = state.steps
-	}
 	binary.LittleEndian.PutUint64(buf[pos:], uint64(pc))
 	binary.LittleEndian.PutUint64(buf[pos+8:], sp2)
 	binary.LittleEndian.PutUint64(buf[pos+16:], heap)
 	binary.LittleEndian.PutUint64(buf[pos+24:], steps)
 	pos = 36 // 状态头 36 字节: status+pad(4) + 4×u64(32)
-	if state != nil {
+	if res != nil {
 		for i := 0; i < 33; i++ {
-			binary.LittleEndian.PutUint64(buf[pos+i*8:], state.regs[i])
+			binary.LittleEndian.PutUint64(buf[pos+i*8:], res.Regs[i])
 		}
 	}
 	pos += regBytes
@@ -109,7 +103,7 @@ func codecin_free(ptr unsafe.Pointer) {
 //export codecin_crom_pack
 func codecin_crom_pack(dataPtr unsafe.Pointer, dataLen C.int, compress C.int, outLen *C.int) unsafe.Pointer {
 	data := C.GoBytes(dataPtr, dataLen)
-	packed := cromPack(data, compress != 0)
+	packed := engine.CromPack(data, compress != 0)
 	if packed == nil {
 		return nil
 	}
@@ -123,7 +117,7 @@ func codecin_crom_pack(dataPtr unsafe.Pointer, dataLen C.int, compress C.int, ou
 func codecin_crom_unpack(dataPtr unsafe.Pointer, dataLen C.int,
 	memLen *C.int, flags *C.int) unsafe.Pointer {
 	data := C.GoBytes(dataPtr, dataLen)
-	raw, flg, ok := cromUnpack(data)
+	raw, flg, ok := engine.CromUnpack(data)
 	if !ok {
 		return nil
 	}

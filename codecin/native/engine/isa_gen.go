@@ -2,7 +2,7 @@
 // 单一事实来源: codecin/isa.py Opcode / Syscall / KIND_* 常量.
 // 修改指令集后运行: python script/gen_native_isa.py
 
-package main
+package engine
 
 // 操作数种类 (与 isa.py KIND_* 一致)
 const kindReg = 0
@@ -128,6 +128,122 @@ const opLUI = 109
 const opAUIPC = 110
 const opSYS = 111
 
+// 操作码名 -> 编码 (供 UCBC 编码器使用)
+var opcodeByName = map[string]uint8{
+	"MOV": opMOV,
+	"LOAD": opLOAD,
+	"STORE": opSTORE,
+	"ADD": opADD,
+	"SUB": opSUB,
+	"MUL": opMUL,
+	"DIV": opDIV,
+	"AND": opAND,
+	"OR": opOR,
+	"XOR": opXOR,
+	"SHL": opSHL,
+	"SHR": opSHR,
+	"INC": opINC,
+	"DEC": opDEC,
+	"CMP": opCMP,
+	"JMP": opJMP,
+	"JZ": opJZ,
+	"JNZ": opJNZ,
+	"JE": opJE,
+	"JL": opJL,
+	"JG": opJG,
+	"PUSH": opPUSH,
+	"POP": opPOP,
+	"CALL": opCALL,
+	"RET": opRET,
+	"IN": opIN,
+	"OUT": opOUT,
+	"HALT": opHALT,
+	"ADDS": opADDS,
+	"SUBS": opSUBS,
+	"ADDC": opADDC,
+	"SUBC": opSUBC,
+	"LSL": opLSL,
+	"LSR": opLSR,
+	"ASR": opASR,
+	"ROR": opROR,
+	"MVN": opMVN,
+	"EOR": opEOR,
+	"BIC": opBIC,
+	"ORN": opORN,
+	"LDR": opLDR,
+	"STR": opSTR,
+	"LDP": opLDP,
+	"STP": opSTP,
+	"CBZ": opCBZ,
+	"CBNZ": opCBNZ,
+	"TBZ": opTBZ,
+	"TBNZ": opTBNZ,
+	"B": opB,
+	"BL": opBL,
+	"BR": opBR,
+	"NOP": opNOP,
+	"WFE": opWFE,
+	"WFI": opWFI,
+	"SEV": opSEV,
+	"CSEL": opCSEL,
+	"CSINC": opCSINC,
+	"CSINV": opCSINV,
+	"CSNEG": opCSNEG,
+	"SXTB": opSXTB,
+	"SXTH": opSXTH,
+	"SXTW": opSXTW,
+	"UXTB": opUXTB,
+	"UXTH": opUXTH,
+	"CLZ": opCLZ,
+	"CLS": opCLS,
+	"RBIT": opRBIT,
+	"REV": opREV,
+	"FADD": opFADD,
+	"FSUB": opFSUB,
+	"FMUL": opFMUL,
+	"FDIV": opFDIV,
+	"FCMP": opFCMP,
+	"FCVT": opFCVT,
+	"FABS": opFABS,
+	"FNEG": opFNEG,
+	"LDRS": opLDRS,
+	"STRS": opSTRS,
+	"VADD": opVADD,
+	"VSUB": opVSUB,
+	"VMUL": opVMUL,
+	"VDIV": opVDIV,
+	"VLD1": opVLD1,
+	"VST1": opVST1,
+	"LB": opLB,
+	"LH": opLH,
+	"LW": opLW,
+	"LD": opLD,
+	"SB": opSB,
+	"SH": opSH,
+	"SW": opSW,
+	"SD": opSD,
+	"ADDI": opADDI,
+	"SLTI": opSLTI,
+	"SLTIU": opSLTIU,
+	"XORI": opXORI,
+	"ORI": opORI,
+	"ANDI": opANDI,
+	"SLLI": opSLLI,
+	"SRLI": opSRLI,
+	"SRAI": opSRAI,
+	"BEQ": opBEQ,
+	"BNE": opBNE,
+	"BLT": opBLT,
+	"BGE": opBGE,
+	"BLTU": opBLTU,
+	"BGEU": opBGEU,
+	"JALR": opJALR,
+	"JAL": opJAL,
+	"LUI": opLUI,
+	"AUIPC": opAUIPC,
+	"SYS": opSYS,
+}
+
 // SYS 功能号 (与 isa.py Syscall 一致)
 const sysSQRT = 0
 const sysPOW = 1
@@ -168,3 +284,14 @@ const sysATOI = 35
 const sysTRIM = 36
 const sysLTRIM = 37
 const sysRTRIM = 38
+const sysAUDIOPLAY = 39
+const sysAUDIOSTOP = 40
+const sysAUDIOVOL = 41
+const sysAUDIOWAIT = 42
+const sysCANVASNEW = 43
+const sysCANVASSET = 44
+const sysCANVASRECT = 45
+const sysCANVASCIRC = 46
+const sysCANVASTEXT = 47
+const sysCANVASLINE = 48
+const sysCANVASSAVE = 49

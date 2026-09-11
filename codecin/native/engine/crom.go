@@ -1,4 +1,4 @@
-package main
+package engine
 
 // CROM v3: magic 'CROM' + version u8 + mem_size u32 + flags u8 + crc32 u32
 //        + 2B reserved + payload (zlib 默认压缩, 与 Python zlib level 6 兼容)
@@ -13,7 +13,8 @@ import (
 
 const cromVersion = 3
 
-func cromPack(data []byte, compress bool) []byte {
+// CromPack 打包内存镜像为 CROM 字节流 (compress=true 时 zlib 压缩)。
+func CromPack(data []byte, compress bool) []byte {
 	var payload []byte
 	flags := byte(0)
 	if compress {
@@ -39,8 +40,8 @@ func cromPack(data []byte, compress bool) []byte {
 	return out
 }
 
-// cromUnpack 返回 (raw, flags, ok)
-func cromUnpack(data []byte) ([]byte, int, bool) {
+// CromUnpack 解包 CROM, 返回 (raw, flags, ok)。
+func CromUnpack(data []byte) ([]byte, int, bool) {
 	if len(data) < 16 || string(data[0:4]) != "CROM" {
 		return nil, 0, false
 	}
