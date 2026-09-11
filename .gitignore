@@ -18,4 +18,9 @@ __pycache__/
 /codecin/codecin.exe
 /codecin/native/codecin
 /codecin/native/codecin.exe
+# c-shared 生成的头文件 (Python ctypes 不需要, 由构建脚本删除)
+/codecin/codecin_native.h
+/codecin/libcodecin_native.h
+/codecin/native/codecin_native.h
+/codecin/native/libcodecin_native.h
 /*.png

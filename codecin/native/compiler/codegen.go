@@ -82,8 +82,8 @@ func (c *compiler) newLabel(hint string) string {
 	return fmt.Sprintf("_%s_%d", hint, c.labelCounter)
 }
 
-func (c *compiler) reg(n int) ir.Operand { return ir.Reg(n) }
-func (c *compiler) imm(v int64) ir.Operand { return ir.Imm(v) }
+func (c *compiler) reg(n int) ir.Operand       { return ir.Reg(n) }
+func (c *compiler) imm(v int64) ir.Operand     { return ir.Imm(v) }
 func (c *compiler) lab(name string) ir.Operand { return ir.Label(name) }
 
 // ---------------- 数据段 ----------------

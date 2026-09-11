@@ -79,21 +79,21 @@ func typeName(t *Type) string {
 
 // Node 是 AST 节点 (等价于 Python 侧的位置元组)。
 type Node struct {
-	Kind    string // num/bool/str/var/call/binop/not/bitnot/neg/preinc/predec/postinc/postdec/cond/member/index
+	Kind string // num/bool/str/var/call/binop/not/bitnot/neg/preinc/predec/postinc/postdec/cond/member/index
 	//        block/return/if/while/for/dowhile/switch/break/continue/decl/cpu/assert/expr
 	//        declitem/case/arraylit
-	Num     float64
-	Ival    int64
-	IsFloat bool
-	Bool    bool
-	Str     string
-	Name    string
-	Op      string
+	Num        float64
+	Ival       int64
+	IsFloat    bool
+	Bool       bool
+	Str        string
+	Name       string
+	Op         string
 	A, B, C, D *Node
-	List    []*Node
-	Int     int
-	Type    *Type
-	Filename string
+	List       []*Node
+	Int        int
+	Type       *Type
+	Filename   string
 	// 数组字面量: Is2D=false 时 ArrayLit[0] 为元素; Is2D=true 时 ArrayLit 为行。
 	ArrayLit [][]*Node
 	Is2D     bool
@@ -103,10 +103,10 @@ type Node struct {
 
 // DeclItem 一条变量声明 (name, type, init, arrayLit)。
 type DeclItem struct {
-	Name      string
-	Type      *Type
-	Init      *Node
-	ArrayLit  *Node
+	Name     string
+	Type     *Type
+	Init     *Node
+	ArrayLit *Node
 }
 
 // SwitchBranch 一个 switch 分支 ('case', constExpr|nil, stmts)。
@@ -125,20 +125,20 @@ type compiler struct {
 	globals   []*GlobalVar
 
 	// 代码生成状态
-	res        *ir.Program
-	dataPtr    int
-	heapStr    map[string]int
-	filename   string
-	bounds     bool
+	res      *ir.Program
+	dataPtr  int
+	heapStr  map[string]int
+	filename string
+	bounds   bool
 
 	// 函数生成上下文
-	funcDef       *FuncDef
-	locals        map[string]localVar
-	frameBytes    int
-	breakLbls     []string
-	continueLbls  []string
-	labelCounter  int
-	globalsSym    map[string]globalVar
+	funcDef      *FuncDef
+	locals       map[string]localVar
+	frameBytes   int
+	breakLbls    []string
+	continueLbls []string
+	labelCounter int
+	globalsSym   map[string]globalVar
 }
 
 type localVar struct {
@@ -199,10 +199,10 @@ func newCompiler(filename string, bounds bool) *compiler {
 			Labels:     map[string]int{},
 			DataLabels: map[string]int{},
 		},
-		heapStr:     map[string]int{},
-		filename:    filename,
-		bounds:      bounds,
-		locals:      map[string]localVar{},
-		globalsSym:  map[string]globalVar{},
+		heapStr:    map[string]int{},
+		filename:   filename,
+		bounds:     bounds,
+		locals:     map[string]localVar{},
+		globalsSym: map[string]globalVar{},
 	}
 }

@@ -7,15 +7,16 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
-	"runtime"
 	"strings"
-	"syscall"
 	"time"
-	"unsafe"
 )
 
 // 联网音频: 下载 (http/https) 或本地文件 → 解析 WAV → 平台播放。
-// 支持格式: WAV (PCM)。MP3/OGG 需外部解码器, 本实现不包含 (沙箱离线, 无法引入依赖)。
+// 支持格式: WAV (PCM)。MP3/OGG 需外部解码器, 本实现不包含。
+//
+// 平台播放后端由构建约束拆分:
+//   audio_windows.go (//go:build windows)   —— winmm PlaySoundW
+//   audio_other.go   (//go:build !windows)  —— afplay / aplay / paplay / ffplay
 
 // 宿主全局音频状态 (同一时刻一个音频流)。
 var (
@@ -62,55 +63,27 @@ func isWav(data []byte) bool {
 	return len(data) >= 12 && string(data[0:4]) == "RIFF" && string(data[8:12]) == "WAVE"
 }
 
-// playPlatform 异步播放 WAV 字节; 返回 error。按平台选择后端。
-func playPlatform(data []byte) error {
+// writeTempWav 将 WAV 字节写入临时文件并记录路径。
+func writeTempWav(data []byte) (string, error) {
 	f, err := os.CreateTemp("", "codecin_*.wav")
 	if err != nil {
-		return err
+		return "", err
 	}
 	if _, err := f.Write(data); err != nil {
 		_ = f.Close()
 		_ = os.Remove(f.Name())
-		return err
+		return "", err
 	}
 	if err := f.Close(); err != nil {
 		_ = os.Remove(f.Name())
-		return err
+		return "", err
 	}
 	audioTemp = f.Name()
-
-	switch runtime.GOOS {
-	case "windows":
-		return playWindowsWav(audioTemp)
-	case "darwin":
-		audioCmd = exec.Command("afplay", audioTemp)
-		return audioCmd.Start()
-	default: // linux 等
-		for _, p := range []string{"aplay", "paplay", "ffplay"} {
-			if _, err := exec.LookPath(p); err == nil {
-				if p == "ffplay" {
-					audioCmd = exec.Command(p, "-nodisp", "-autoexit", "-loglevel", "quiet", audioTemp)
-				} else {
-					audioCmd = exec.Command(p, audioTemp)
-				}
-				return audioCmd.Start()
-			}
-		}
-		return fmt.Errorf("no audio player found (aplay/paplay/ffplay)")
-	}
+	return audioTemp, nil
 }
 
-// stopPlatform 停止平台播放。
-func stopPlatform() {
-	switch runtime.GOOS {
-	case "windows":
-		stopWindowsWav()
-	default:
-		if audioCmd != nil && audioCmd.Process != nil {
-			_ = audioCmd.Process.Kill()
-		}
-		audioCmd = nil
-	}
+// cleanupTempWav 删除临时 WAV 文件。
+func cleanupTempWav() {
 	if audioTemp != "" {
 		_ = os.Remove(audioTemp)
 		audioTemp = ""
@@ -141,7 +114,7 @@ func (vm *vmState) audioStop() {
 }
 
 func (vm *vmState) audioVolume(level uint64) {
-	// 音量控制依赖 OS 混音器, 本实现忽略 (返回前记录, 便于后续扩展)。
+	// 音量控制依赖 OS 混音器, 本实现忽略 (保留参数以便后续扩展)。
 	_ = level
 }
 
@@ -157,33 +130,4 @@ func (vm *vmState) audioWait() {
 		time.Sleep(remain)
 	}
 	audioActive = false
-}
-
-// ---- Windows: winmm PlaySound (异步) ----
-
-var (
-	winmm      = syscall.NewLazyDLL("winmm.dll")
-	playSoundW = winmm.NewProc("PlaySoundW")
-)
-
-const (
-	sndAsync   = 0x0001
-	sndPurge   = 0x0040
-	sndFilename = 0x00020000
-)
-
-func playWindowsWav(path string) error {
-	p, err := syscall.UTF16PtrFromString(path)
-	if err != nil {
-		return err
-	}
-	r, _, _ := playSoundW.Call(uintptr(unsafe.Pointer(p)), 0, sndFilename|sndAsync)
-	if r == 0 {
-		return fmt.Errorf("PlaySoundW failed")
-	}
-	return nil
-}
-
-func stopWindowsWav() {
-	playSoundW.Call(0, 0, sndPurge)
 }

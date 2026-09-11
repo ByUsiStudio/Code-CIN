@@ -194,6 +194,29 @@ sh build.sh
 
 产物: `codecin/libcodecin_native.dylib`
 
+### 跨平台兼容性与静态链接
+
+- **平台相关代码用构建约束隔离**: 例如音频后端
+  `engine/audio_windows.go` (`//go:build windows`, winmm `PlaySoundW`) 与
+  `engine/audio_other.go` (`//go:build !windows`, `afplay` / `aplay` / `paplay` / `ffplay`)。
+  其余代码 (VM / 编译器 / CROM / 系统交互 / Termux) 均为纯 Go 跨平台实现。
+  **新增平台相关 API 时必须用 `//go:build` 拆分, 否则会导致其它平台无法编译。**
+- **静态链接**: 构建脚本默认先尝试 `-ldflags "-linkmode external -extldflags -static"`
+  把 C 运行时静态链入共享库, 失败时自动回退动态链接 (可用 `CODECIN_STATIC=0` 强制动态,
+  `CODECIN_STATIC=1` 强制静态并要求必须成功)。macOS 不支持共享库完全静态链接, 始终动态。
+  Windows 上 Go c-shared 通常已只依赖系统 DLL (`kernel32` / `msvcrt` 等), 无 MinGW 运行时依赖。
+- **跨平台编译自检** (无需 C 交叉工具链, 只检查纯 Go 包):
+
+  ```bash
+  cd codecin/native
+  for t in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64; do
+    GOOS="${t%/*}" GOARCH="${t#*/}" CGO_ENABLED=0 \
+      go build ./engine ./ir ./compiler ./cmd/codecin
+  done
+  ```
+
+  CI 的 `native` 作业会执行该检查 (见 `.github/workflows/ci.yml`)。
+
 ### 验证
 
 ```bash

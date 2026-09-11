@@ -52,6 +52,15 @@ jobs:
       - name: Build all Go packages + CLI
         run: go build ./...
         working-directory: codecin/native
+      - name: Cross-compile check (linux/darwin/windows, pure-Go)
+        run: |
+          set -e
+          for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64; do
+            echo "--> $target"
+            GOOS="${target%/*}" GOARCH="${target#*/}" CGO_ENABLED=0 \
+              go build ./engine ./ir ./compiler ./cmd/codecin
+          done
+        working-directory: codecin/native
       - name: Build c-shared (Linux)
         run: go build -buildmode=c-shared -o /tmp/libcodecin_native.so .
         working-directory: codecin/native

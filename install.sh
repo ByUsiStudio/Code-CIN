@@ -53,10 +53,22 @@ case "$(uname -s)" in
   Darwin) OUT="$ROOT/codecin/libcodecin_native.dylib" ;;
   *)      OUT="$ROOT/codecin/libcodecin_native.so" ;;
 esac
-info "编译 Go 原生库 → $OUT"
-go build -buildmode=c-shared -o "$OUT" . || fail "原生库编译失败 (检查是否安装 C 编译器: gcc/clang)"
+info "编译 Go 原生库 → $OUT (优先静态链接)"
+BUILT=0
+if [ "$(uname -s)" != "Darwin" ]; then
+  # macOS 不支持共享库完全静态链接
+  if go build -buildmode=c-shared -ldflags '-linkmode external -extldflags "-static"' -o "$OUT" .; then
+    BUILT=1
+    ok "原生库编译完成 (静态链接)"
+  else
+    warn "静态链接不可用, 回退动态链接"
+  fi
+fi
+if [ "$BUILT" != "1" ]; then
+  go build -buildmode=c-shared -o "$OUT" . || fail "原生库编译失败 (检查是否安装 C 编译器: gcc/clang)"
+  ok "原生库编译完成 (动态链接)"
+fi
 rm -f "$ROOT/codecin"/codecin_native.h "$ROOT/codecin"/libcodecin_native.h 2>/dev/null || true
-ok "原生库编译完成"
 
 # ---------- 3. 编译 codecin CLI ----------
 info "编译 codecin CLI (Go)"

@@ -1,7 +1,9 @@
 // Package ir 定义 Code CIN 字节码中间表示 (IR)。
 //
 // 该 IR 与 Python codecin 侧 CINCompiler 产出的结构完全等价:
-//   指令 = (opcode 名, 操作数列表); 操作数用 Kind 区分 (reg/imm/mem/label/cond/float/str)。
+//
+//	指令 = (opcode 名, 操作数列表); 操作数用 Kind 区分 (reg/imm/mem/label/cond/float/str)。
+//
 // 编译器 (compiler 包) 产出 *Program, engine 包将其编码为 UCBC 字节码后交由 VM 执行。
 package ir
 
@@ -35,8 +37,8 @@ type Program struct {
 }
 
 // 操作数构造辅助 (与编译器共享书写习惯)。
-func Reg(n int) Operand        { return Operand{Kind: "reg", V: int64(n)} }
-func Imm(v int64) Operand      { return Operand{Kind: "imm", V: v} }
+func Reg(n int) Operand   { return Operand{Kind: "reg", V: int64(n)} }
+func Imm(v int64) Operand { return Operand{Kind: "imm", V: v} }
 func Mem(base, off int) Operand {
 	return Operand{Kind: "mem", V: int64(base), Off: int64(off)}
 }

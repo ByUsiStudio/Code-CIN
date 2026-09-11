@@ -145,7 +145,11 @@ step_func "编译 Go 原生库与 codecin CLI"
 cd codecin/native
 export CGO_ENABLED=1 GOCACHE="$PWD/../../.gocache" GOTMPDIR="$PWD/../../.gotmp"
 mkdir -p "$GOCACHE" "$GOTMPDIR"
-go build -buildmode=c-shared -o ../libcodecin_native.so .
+# 优先静态链接 (Android/bionic 下若不可用则回退动态)
+if ! go build -buildmode=c-shared -ldflags '-linkmode external -extldflags "-static"' -o ../libcodecin_native.so .; then
+    warning "静态链接不可用, 回退动态链接"
+    go build -buildmode=c-shared -o ../libcodecin_native.so .
+fi
 go build -o ../codecin ./cmd/codecin
 cd ../..
 rm -f codecin/codecin_native.h codecin/libcodecin_native.h 2>/dev/null || true

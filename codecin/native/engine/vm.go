@@ -7,8 +7,9 @@
 //   - 遇到不支持的指令立即返回 StatusUnsupported, pc 指向该指令, 供 Python 回退
 //
 // 字节码格式 (UCBC v1):
-//   magic[4] version u8 entry u32 count u32
-//   指令: opcode u8 argc u8 ; 操作数: kind u8 value i64 extra i64 (小端)
+//
+//	magic[4] version u8 entry u32 count u32
+//	指令: opcode u8 argc u8 ; 操作数: kind u8 value i64 extra i64 (小端)
 package engine
 
 import (
@@ -45,20 +46,20 @@ type instruction struct {
 }
 
 type vmState struct {
-	prog    []instruction
-	entry   int
-	mem     []byte
-	regs    [33]uint64
-	sp      uint64
-	pc      int
-	heapPtr uint64
-	steps   uint64
-	flags   struct{ N, Z, C, V bool }
-	out     strings.Builder
-	sysIdx  int
-	rng     *rand.Rand
-	inData  []byte
-	inPos   int
+	prog     []instruction
+	entry    int
+	mem      []byte
+	regs     [33]uint64
+	sp       uint64
+	pc       int
+	heapPtr  uint64
+	steps    uint64
+	flags    struct{ N, Z, C, V bool }
+	out      strings.Builder
+	sysIdx   int
+	rng      *rand.Rand
+	inData   []byte
+	inPos    int
 	emptyStr uint64 // 预留空串地址 (宿主调用返回失败时的安全空串)
 }
 

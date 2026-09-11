@@ -43,11 +43,18 @@ $env:GOTMPDIR = $GOTMPDIR
 
 Push-Location $NATIVE_DIR
 $OUT = Join-Path $ROOT 'codecin\codecin_native.dll'
-Info "编译 Go 原生库 -> $OUT"
-go build -buildmode=c-shared -o $OUT .
-if ($LASTEXITCODE -ne 0) { Pop-Location; Fail "原生库编译失败 (需要 C 编译器: 安装 MinGW-w64 或 TDM-GCC)" }
+Info "编译 Go 原生库 -> $OUT (优先静态链接)"
+$staticLd = '-linkmode external -extldflags -static'
+go build -buildmode=c-shared -ldflags $staticLd -o $OUT .
+if ($LASTEXITCODE -eq 0) {
+    Ok "原生库编译完成 (静态链接)"
+} else {
+    Warn "静态链接不可用, 回退动态链接"
+    go build -buildmode=c-shared -o $OUT .
+    if ($LASTEXITCODE -ne 0) { Pop-Location; Fail "原生库编译失败 (需要 C 编译器: 安装 MinGW-w64 或 TDM-GCC)" }
+    Ok "原生库编译完成 (动态链接)"
+}
 Remove-Item -Force (Join-Path $ROOT 'codecin\codecin_native.h') -ErrorAction SilentlyContinue
-Ok "原生库编译完成"
 
 # ---------- 3. 编译 codecin CLI ----------
 Info "编译 codecin CLI (Go)"
