@@ -1533,54 +1533,14 @@ func (c *compiler) genCall(name string, args []*Node) *Type {
 		return scalarT(kInt)
 	}
 
-	// 宿主能力: 联网音频 / 2D 绘图画布
-	if name == "audio_play" {
-		c.genHostSys(SysAUDIOPLAY, []*Node{args[0]})
-		return scalarT(kInt)
-	}
-	if name == "audio_stop" {
-		c.genHostSys(SysAUDIOSTOP, nil)
-		return scalarT(kVoid)
-	}
-	if name == "audio_volume" {
-		c.genHostSys(SysAUDIOVOL, []*Node{args[0]})
-		return scalarT(kVoid)
-	}
-	if name == "audio_wait" {
-		c.genHostSys(SysAUDIOWAIT, nil)
-		return scalarT(kVoid)
-	}
-	if name == "canvas" {
-		c.genHostSys(SysCANVASNEW, []*Node{args[0], args[1]})
-		return scalarT(kVoid)
-	}
-	if name == "set_color" {
-		c.genHostSys(SysCANVASSET, []*Node{args[0]})
-		return scalarT(kVoid)
-	}
-	if name == "fill_rect" {
-		c.genHostSys(SysCANVASRECT, args)
-		return scalarT(kVoid)
-	}
-	if name == "fill_circle" {
-		c.genHostSys(SysCANVASCIRC, args)
-		return scalarT(kVoid)
-	}
-	if name == "draw_line" {
-		c.genHostSys(SysCANVASLINE, args)
-		return scalarT(kVoid)
-	}
-	if name == "draw_text" {
-		c.genHostSys(SysCANVASTEXT, args)
-		return scalarT(kVoid)
-	}
-	if name == "save_png" {
-		c.genHostSys(SysCANVASSAVE, []*Node{args[0]})
-		return scalarT(kInt)
-	}
-	if name == "show_canvas" {
-		c.genHostSys(SysCANVASSHOW, nil)
-		return scalarT(kInt)
+	// 宿主能力 (表驱动): 音频 / 画布 / 系统交互 / Termux API
+	if hb, ok := hostBuiltins[name]; ok {
+		n := hb.nargs
+		if n > len(args) {
+			n = len(args)
+		}
+		c.genHostSys(hb.sysID, args[:n])
+		return scalarT(hb.ret)
 	}
 
 	if name == "time" {
