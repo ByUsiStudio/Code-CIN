@@ -9,7 +9,7 @@ authors = [
     { name = "ByUsi Studio" },
     { name = "北啊呢" },
 ]
-keywords = ["cpu", "simulator", "emulator", "assembler", "compiler"]
+keywords = ["simulator", "emulator", "assembler", "compiler"]
 dependencies = [
     "rich>=13,<15",
 ]
