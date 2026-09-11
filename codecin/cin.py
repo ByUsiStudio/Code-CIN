@@ -2176,13 +2176,22 @@ class CodeGen:
         if name in ('sin', 'cos', 'tan', 'sqrt', 'pow', 'floor', 'ceil', 'round'):
             return 'float'
         if name in ('strlen', 'strcmp', 'rand', 'time', 'abs', 'input',
-                    'idiv', 'atoi'):
+                    'idiv', 'atoi', 'audio_play', 'save_png'):
             return 'int'
         if name in ('strcpy', 'int_to_str', 'itoa', 'float_to_str', 'ftoa',
                     'bool_to_str', 'substr', 'upper', 'lower',
                     'trim', 'ltrim', 'rtrim'):
             return 'string'
         return None
+
+    def _gen_host_sys(self, sys_id: int, args: list) -> None:
+        """求值 args (左到右) 并放入 x0..x(n-1), 发射 SYS sys_id。"""
+        for a in args:
+            self.gen_value(a)
+            self.emit('PUSH', self.reg(0))
+        for i in range(len(args) - 1, -1, -1):
+            self.emit('POP', self.reg(i))
+        self.emit('SYS', self.imm(sys_id))
 
     def _gen_call(self, name: str, args: list):
         if name in ('println', 'print'):
@@ -2313,6 +2322,40 @@ class CodeGen:
         if name == 'atoi':
             self.gen_value(args[0])
             self.emit('SYS', self.imm(Syscall.ATOI))
+            return 'int'
+        # ---- 宿主能力: 联网音频 / 2D 绘图画布 (Go 原生实现) ----
+        if name == 'audio_play':
+            self._gen_host_sys(Syscall.AUDIOPLAY, [args[0]])
+            return 'int'
+        if name == 'audio_stop':
+            self._gen_host_sys(Syscall.AUDIOSTOP, [])
+            return 'void'
+        if name == 'audio_volume':
+            self._gen_host_sys(Syscall.AUDIOVOL, [args[0]])
+            return 'void'
+        if name == 'audio_wait':
+            self._gen_host_sys(Syscall.AUDIOWAIT, [])
+            return 'void'
+        if name == 'canvas':
+            self._gen_host_sys(Syscall.CANVASNEW, [args[0], args[1]])
+            return 'void'
+        if name == 'set_color':
+            self._gen_host_sys(Syscall.CANVASSET, [args[0]])
+            return 'void'
+        if name == 'fill_rect':
+            self._gen_host_sys(Syscall.CANVASRECT, args[:4])
+            return 'void'
+        if name == 'fill_circle':
+            self._gen_host_sys(Syscall.CANVASCIRC, args[:3])
+            return 'void'
+        if name == 'draw_line':
+            self._gen_host_sys(Syscall.CANVASLINE, args[:4])
+            return 'void'
+        if name == 'draw_text':
+            self._gen_host_sys(Syscall.CANVASTEXT, args[:3])
+            return 'void'
+        if name == 'save_png':
+            self._gen_host_sys(Syscall.CANVASSAVE, [args[0]])
             return 'int'
         if name == 'time':
             self.emit('SYS', self.imm(Syscall.TIME))
