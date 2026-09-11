@@ -106,6 +106,56 @@ _COMPOUND_TO_BASE = {
     '&=': '&', '|=': '|', '^=': '^', '<<=': '<<', '>>=': '>>',
 }
 
+# 宿主能力内建 (表驱动): 名称 -> (SYS 功能号, 参数个数, 返回类型)。
+# 全部由 Go 原生引擎实现; 解释器 (--no-native) 下会给出明确错误。
+HOST_BUILTINS = {
+    # 联网音频
+    'audio_play': (Syscall.AUDIOPLAY, 1, 'int'),
+    'audio_stop': (Syscall.AUDIOSTOP, 0, 'void'),
+    'audio_volume': (Syscall.AUDIOVOL, 1, 'void'),
+    'audio_wait': (Syscall.AUDIOWAIT, 0, 'void'),
+    # 2D 绘图画布
+    'canvas': (Syscall.CANVASNEW, 2, 'void'),
+    'set_color': (Syscall.CANVASSET, 1, 'void'),
+    'fill_rect': (Syscall.CANVASRECT, 4, 'void'),
+    'fill_circle': (Syscall.CANVASCIRC, 3, 'void'),
+    'draw_line': (Syscall.CANVASLINE, 4, 'void'),
+    'draw_text': (Syscall.CANVASTEXT, 3, 'void'),
+    'save_png': (Syscall.CANVASSAVE, 1, 'int'),
+    'show_canvas': (Syscall.CANVASSHOW, 0, 'int'),
+    # 系统原生交互 (跨平台)
+    'file_read': (Syscall.FILEREAD, 1, 'string'),
+    'file_write': (Syscall.FILEWRITE, 2, 'int'),
+    'file_append': (Syscall.FILEAPPEND, 2, 'int'),
+    'file_exists': (Syscall.FILEEXISTS, 1, 'int'),
+    'file_delete': (Syscall.FILEDELETE, 1, 'int'),
+    'file_size': (Syscall.FILESIZE, 1, 'int'),
+    'mkdir': (Syscall.MKDIR, 1, 'int'),
+    'dir_list': (Syscall.DIRLIST, 1, 'string'),
+    'exec': (Syscall.EXEC, 1, 'int'),
+    'exec_output': (Syscall.EXECOUTPUT, 1, 'string'),
+    'getenv': (Syscall.GETENV, 1, 'string'),
+    'setenv': (Syscall.SETENV, 2, 'int'),
+    'os_name': (Syscall.OSNAME, 0, 'string'),
+    'hostname': (Syscall.HOSTNAME, 0, 'string'),
+    'username': (Syscall.USERNAME, 0, 'string'),
+    'cwd': (Syscall.CWD, 0, 'string'),
+    'home_dir': (Syscall.HOMEDIR, 0, 'string'),
+    # Termux API
+    'termux_available': (Syscall.TERMUXAVAIL, 0, 'int'),
+    'termux_notify': (Syscall.TERMUXNOTIFY, 2, 'int'),
+    'termux_toast': (Syscall.TERMUXTOAST, 1, 'int'),
+    'termux_clipboard_get': (Syscall.TERMUXCLIPGET, 0, 'string'),
+    'termux_clipboard_set': (Syscall.TERMUXCLIPSET, 1, 'int'),
+    'termux_battery': (Syscall.TERMUXBATTERY, 0, 'string'),
+    'termux_vibrate': (Syscall.TERMUXVIBRATE, 1, 'int'),
+    'termux_tts': (Syscall.TERMUXTTS, 1, 'int'),
+    'termux_location': (Syscall.TERMUXLOCATION, 0, 'string'),
+    'termux_wifi_info': (Syscall.TERMUXWIFI, 0, 'string'),
+    'termux_dialog': (Syscall.TERMUXDIALOG, 1, 'string'),
+    'termux_sms_send': (Syscall.TERMUXSMS, 2, 'int'),
+}
+
 
 @dataclass
 class Token:
@@ -2323,43 +2373,12 @@ class CodeGen:
             self.gen_value(args[0])
             self.emit('SYS', self.imm(Syscall.ATOI))
             return 'int'
-        # ---- 宿主能力: 联网音频 / 2D 绘图画布 (Go 原生实现) ----
-        if name == 'audio_play':
-            self._gen_host_sys(Syscall.AUDIOPLAY, [args[0]])
-            return 'int'
-        if name == 'audio_stop':
-            self._gen_host_sys(Syscall.AUDIOSTOP, [])
-            return 'void'
-        if name == 'audio_volume':
-            self._gen_host_sys(Syscall.AUDIOVOL, [args[0]])
-            return 'void'
-        if name == 'audio_wait':
-            self._gen_host_sys(Syscall.AUDIOWAIT, [])
-            return 'void'
-        if name == 'canvas':
-            self._gen_host_sys(Syscall.CANVASNEW, [args[0], args[1]])
-            return 'void'
-        if name == 'set_color':
-            self._gen_host_sys(Syscall.CANVASSET, [args[0]])
-            return 'void'
-        if name == 'fill_rect':
-            self._gen_host_sys(Syscall.CANVASRECT, args[:4])
-            return 'void'
-        if name == 'fill_circle':
-            self._gen_host_sys(Syscall.CANVASCIRC, args[:3])
-            return 'void'
-        if name == 'draw_line':
-            self._gen_host_sys(Syscall.CANVASLINE, args[:4])
-            return 'void'
-        if name == 'draw_text':
-            self._gen_host_sys(Syscall.CANVASTEXT, args[:3])
-            return 'void'
-        if name == 'save_png':
-            self._gen_host_sys(Syscall.CANVASSAVE, [args[0]])
-            return 'int'
-        if name == 'show_canvas':
-            self._gen_host_sys(Syscall.CANVASSHOW, [])
-            return 'int'
+        # ---- 宿主能力 (表驱动): 音频 / 画布 / 系统交互 / Termux API ----
+        host = HOST_BUILTINS.get(name)
+        if host is not None:
+            sys_id, nargs, ret = host
+            self._gen_host_sys(sys_id, args[:nargs])
+            return ret
         if name == 'time':
             self.emit('SYS', self.imm(Syscall.TIME))
             return 'int'

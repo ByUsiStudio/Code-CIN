@@ -59,6 +59,7 @@ type vmState struct {
 	rng     *rand.Rand
 	inData  []byte
 	inPos   int
+	emptyStr uint64 // 预留空串地址 (宿主调用返回失败时的安全空串)
 }
 
 // Result 是 Run 的执行结果。
@@ -126,6 +127,8 @@ func Run(bc []byte, mem []byte, entry, sp, heapBase int64, inData []byte,
 		rng:     rand.New(rand.NewSource(time.Now().UnixNano())),
 		inData:  inData,
 	}
+	// 预留一个空串 (宿主能力返回失败时安全回退, 避免返回 0 读到数据段)
+	vm.emptyStr, _ = vm.heapDupString("")
 
 	finish := func(status int, errMsg string) *Result {
 		return &Result{
@@ -184,9 +187,9 @@ func opcodeSupported(op uint8) bool {
 }
 
 // syscallSupported: 原生 VM 已实现的 SYS 功能号。
-// 现已在 Go 侧实现全部宿主调用 (0..sysCANVASSHOW), 供独立 Go CLI 使用。
+// 现已在 Go 侧实现全部宿主调用 (0..sysTERMUXSMS), 供独立 Go CLI 使用。
 func syscallSupported(id uint64) bool {
-	return id <= sysCANVASSHOW
+	return id <= sysTERMUXSMS
 }
 
 // ---------------- 操作数/寄存器/内存 ----------------
@@ -992,6 +995,66 @@ func (vm *vmState) doSyscall(id uint64) string {
 		vm.setReg(0, vm.canvasSave(vm.readCString(x0)))
 	case sysCANVASSHOW:
 		vm.setReg(0, vm.canvasShow())
+	// 系统原生交互 (文件/进程/环境/系统信息)
+	case sysFILEREAD:
+		vm.setReg(0, vm.fileRead(vm.readCString(x0)))
+	case sysFILEWRITE:
+		vm.setReg(0, vm.fileWrite(vm.readCString(x0), vm.readCString(x1)))
+	case sysFILEAPPEND:
+		vm.setReg(0, vm.fileAppend(vm.readCString(x0), vm.readCString(x1)))
+	case sysFILEEXISTS:
+		vm.setReg(0, vm.fileExists(vm.readCString(x0)))
+	case sysFILEDELETE:
+		vm.setReg(0, vm.fileDelete(vm.readCString(x0)))
+	case sysFILESIZE:
+		vm.setReg(0, vm.fileSize(vm.readCString(x0)))
+	case sysMKDIR:
+		vm.setReg(0, vm.mkdir(vm.readCString(x0)))
+	case sysDIRLIST:
+		vm.setReg(0, vm.dirList(vm.readCString(x0)))
+	case sysEXEC:
+		vm.setReg(0, vm.execCmd(vm.readCString(x0)))
+	case sysEXECOUTPUT:
+		vm.setReg(0, vm.execOutput(vm.readCString(x0)))
+	case sysGETENV:
+		vm.setReg(0, vm.getenv(vm.readCString(x0)))
+	case sysSETENV:
+		vm.setReg(0, vm.setenv(vm.readCString(x0), vm.readCString(x1)))
+	case sysOSNAME:
+		vm.setReg(0, vm.osName())
+	case sysHOSTNAME:
+		vm.setReg(0, vm.hostname())
+	case sysUSERNAME:
+		vm.setReg(0, vm.username())
+	case sysCWD:
+		vm.setReg(0, vm.cwd())
+	case sysHOMEDIR:
+		vm.setReg(0, vm.homeDir())
+	// Termux API
+	case sysTERMUXAVAIL:
+		vm.setReg(0, vm.termuxAvailable())
+	case sysTERMUXNOTIFY:
+		vm.setReg(0, vm.termuxNotify(vm.readCString(x0), vm.readCString(x1)))
+	case sysTERMUXTOAST:
+		vm.setReg(0, vm.termuxToast(vm.readCString(x0)))
+	case sysTERMUXCLIPGET:
+		vm.setReg(0, vm.termuxClipboardGet())
+	case sysTERMUXCLIPSET:
+		vm.setReg(0, vm.termuxClipboardSet(vm.readCString(x0)))
+	case sysTERMUXBATTERY:
+		vm.setReg(0, vm.termuxBattery())
+	case sysTERMUXVIBRATE:
+		vm.setReg(0, vm.termuxVibrate(x0))
+	case sysTERMUXTTS:
+		vm.setReg(0, vm.termuxTTS(vm.readCString(x0)))
+	case sysTERMUXLOCATION:
+		vm.setReg(0, vm.termuxLocation())
+	case sysTERMUXWIFI:
+		vm.setReg(0, vm.termuxWifiInfo())
+	case sysTERMUXDIALOG:
+		vm.setReg(0, vm.termuxDialog(vm.readCString(x0)))
+	case sysTERMUXSMS:
+		vm.setReg(0, vm.termuxSmsSend(vm.readCString(x0), vm.readCString(x1)))
 	default:
 		return "Unknown SYS call id"
 	}

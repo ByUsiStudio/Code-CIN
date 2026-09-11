@@ -174,6 +174,37 @@ class Syscall(IntEnum):
     CANVASLINE = 48 # line(x0,y0,x1,y1): 画线 (x0,x1,y0=x1? 见参数说明)
     CANVASSAVE = 49 # save(x0=路径) -> 0 成功 / -1 失败 (PNG 编码写盘)
     CANVASSHOW = 50 # show_canvas(): 保存当前画布到临时 PNG 并用系统查看器打开 (窗口)
+    # ---- 宿主能力: 系统原生交互 (跨平台文件/进程/环境/系统信息; Go 实现) ----
+    FILEREAD = 51     # file_read(x0=path) -> 新堆字符串 (文件内容; 失败为空串)
+    FILEWRITE = 52    # file_write(x0=path, x1=内容) -> 0 成功 / -1 失败 (覆盖写)
+    FILEAPPEND = 53   # file_append(x0=path, x1=内容) -> 0 成功 / -1 失败 (追加)
+    FILEEXISTS = 54   # file_exists(x0=path) -> 1 存在 / 0 不存在
+    FILEDELETE = 55   # file_delete(x0=path) -> 0 成功 / -1 失败 (文件或空目录)
+    FILESIZE = 56     # file_size(x0=path) -> 字节数 / -1 失败
+    MKDIR = 57        # mkdir(x0=path) -> 0 成功 / -1 失败 (递归创建)
+    DIRLIST = 58      # dir_list(x0=path) -> 换行分隔条目 (新堆字符串; 失败为空串)
+    EXEC = 59         # exec(x0=shell 命令) -> 退出码 (同步; 平台默认 shell)
+    EXECOUTPUT = 60   # exec_output(x0=shell 命令) -> stdout 新堆字符串 (退出码非 0 也返回输出)
+    GETENV = 61       # getenv(x0=变量名) -> 新堆字符串 (未设置为空串)
+    SETENV = 62       # setenv(x0=变量名, x1=值) -> 0 成功 / -1 失败
+    OSNAME = 63       # os_name() -> "windows" / "darwin" / "linux" / ...
+    HOSTNAME = 64     # hostname() -> 新堆字符串
+    USERNAME = 65     # username() -> 新堆字符串
+    CWD = 66          # cwd() -> 当前工作目录 (新堆字符串)
+    HOMEDIR = 67      # home_dir() -> 用户主目录 (新堆字符串)
+    # ---- 宿主能力: Termux API 交互 (Android/Termux; 经 termux-* 命令) ----
+    TERMUXAVAIL = 68     # termux_available() -> 1 Termux API 可用 / 0 不可用
+    TERMUXNOTIFY = 69    # termux_notify(x0=标题, x1=内容) -> 0 / -1
+    TERMUXTOAST = 70     # termux_toast(x0=消息) -> 0 / -1
+    TERMUXCLIPGET = 71   # termux_clipboard_get() -> 剪贴板内容 (新堆字符串)
+    TERMUXCLIPSET = 72   # termux_clipboard_set(x0=文本) -> 0 / -1
+    TERMUXBATTERY = 73   # termux_battery() -> JSON (新堆字符串)
+    TERMUXVIBRATE = 74   # termux_vibrate(x0=毫秒) -> 0 / -1
+    TERMUXTTS = 75       # termux_tts(x0=文本) -> 0 / -1 (文字转语音)
+    TERMUXLOCATION = 76  # termux_location() -> JSON (新堆字符串)
+    TERMUXWIFI = 77      # termux_wifi_info() -> JSON (新堆字符串)
+    TERMUXDIALOG = 78    # termux_dialog(x0=标题) -> JSON (新堆字符串)
+    TERMUXSMS = 79       # termux_sms_send(x0=号码, x1=内容) -> 0 / -1
 
 
 class Cond:
