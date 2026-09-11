@@ -1,0 +1,84 @@
+// Code CIN 官方标准库: 极简 JSON 取值 (json)
+// 用法: import "lib/json.cin"
+// 说明: 面向扁平对象 (Termux API 等返回的 JSON), 不做完整语法解析。
+//       支持 "key": value 的字符串/数字/布尔/空值提取。
+
+// 取 key 对应的原始片段 (字符串去引号; 数字/布尔原样; 找不到返回 "")
+function j_raw(string json, string key) -> string {
+    string pat = "\"" + key + "\""
+    int p = indexof(json, pat)
+    if (p < 0) { return "" }
+    int after = p + strlen(pat)
+    string rest = substr(json, after, 9999)
+    int q = indexof(rest, ":")
+    if (q < 0) { return "" }
+    int n = strlen(json)
+    int start = after + q + 1
+    // 跳过空白
+    while (start < n && (json[start] == 32 || json[start] == 9 || json[start] == 10 || json[start] == 13)) {
+        start = start + 1
+    }
+    if (start >= n) { return "" }
+    if (json[start] == 34) {
+        // 字符串值
+        int end = start + 1
+        while (end < n && json[end] != 34) { end = end + 1 }
+        return substr(json, start + 1, end - start - 1)
+    }
+    // 数字 / true / false / null
+    int end = start
+    while (end < n && json[end] != 44 && json[end] != 125) { end = end + 1 }
+    return trim(substr(json, start, end - start))
+}
+
+// 取字符串字段
+function j_str(string json, string key) -> string {
+    return j_raw(json, key)
+}
+
+// 取整数字段 (无法解析为 0)
+function j_int(string json, string key) -> int {
+    return atoi(j_raw(json, key))
+}
+
+// 取浮点字段 (支持可选负号与小数; 无法解析为 0.0)
+function j_float(string json, string key) -> float {
+    string s = j_raw(json, key)
+    int n = strlen(s)
+    int i = 0
+    int neg = 0
+    if (i < n && s[i] == 45) {
+        neg = 1
+        i = i + 1
+    }
+    float v = 0.0
+    while (i < n && s[i] >= 48 && s[i] <= 57) {
+        v = v * 10.0 + (s[i] - 48)
+        i = i + 1
+    }
+    if (i < n && s[i] == 46) {
+        i = i + 1
+        float scale = 0.1
+        while (i < n && s[i] >= 48 && s[i] <= 57) {
+            v = v + (s[i] - 48) * scale
+            scale = scale * 0.1
+            i = i + 1
+        }
+    }
+    if (neg == 1) { return -v }
+    return v
+}
+
+// 是否包含 key
+function j_has(string json, string key) -> int {
+    if (indexof(json, "\"" + key + "\"") >= 0) { return 1 }
+    return 0
+}
+
+// 取布尔字段 (true/1 为 1, 否则 0)
+function j_bool(string json, string key) -> int {
+    string v = j_raw(json, key)
+    if (strcmp(v, "true") == 0) { return 1 }
+    if (strcmp(v, "1") == 0) { return 1 }
+    return 0
+}

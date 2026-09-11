@@ -1097,6 +1097,18 @@ func (c *compiler) genBinop(op string, left, right *Node) *Type {
 	if op == "&" || op == "|" || op == "^" || op == "<<" || op == ">>" {
 		return c.genBitwise(op, left, right)
 	}
+	if op == "==" || op == "!=" || op == "<" || op == ">" || op == "<=" || op == ">=" {
+		// 比较作为值表达式: 条件成立得 1, 否则 0
+		lFalse := c.newLabel("cmpf")
+		lEnd := c.newLabel("cmpe")
+		c.genCondJumpFalse(&Node{Kind: "binop", Op: op, A: left, B: right}, lFalse)
+		c.emit("MOV", c.reg(0), c.imm(1))
+		c.emit("JMP", c.lab(lEnd))
+		c.label(lFalse)
+		c.emit("MOV", c.reg(0), c.imm(0))
+		c.label(lEnd)
+		return scalarT(kBool)
+	}
 
 	lt := c.exprType(left)
 	rt := c.exprType(right)

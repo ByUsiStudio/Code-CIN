@@ -1,0 +1,74 @@
+// Code CIN 官方标准库: 轻量测试断言 (test)
+// 用法: import "lib/test.cin"
+// 说明: 提供计数器与断言; 结束时调用 t_report() 输出汇总 (返回失败数)。
+
+// 通过 / 失败计数 (全局)
+int T_PASS = 0
+int T_FAIL = 0
+
+// 断言两个整数相等
+function t_eq_int(int got, int want, string label) -> int {
+    if (got == want) {
+        T_PASS = T_PASS + 1
+        return 1
+    }
+    T_FAIL = T_FAIL + 1
+    println("FAIL " + label + ": got=" + int_to_str(got) + " want=" + int_to_str(want))
+    return 0
+}
+
+// 断言两个字符串相等
+function t_eq_str(string got, string want, string label) -> int {
+    if (strcmp(got, want) == 0) {
+        T_PASS = T_PASS + 1
+        return 1
+    }
+    T_FAIL = T_FAIL + 1
+    println("FAIL " + label + ": got=[" + got + "] want=[" + want + "]")
+    return 0
+}
+
+// 断言浮点近似相等 (容差 eps)
+function t_near(float got, float want, float eps, string label) -> int {
+    float d = got - want
+    if (d < 0.0) { d = -d }
+    if (d <= eps) {
+        T_PASS = T_PASS + 1
+        return 1
+    }
+    T_FAIL = T_FAIL + 1
+    println("FAIL " + label + ": got=" + float_to_str(got) + " want=" + float_to_str(want))
+    return 0
+}
+
+// 断言条件为真
+function t_true(int cond, string label) -> int {
+    if (cond != 0) {
+        T_PASS = T_PASS + 1
+        return 1
+    }
+    T_FAIL = T_FAIL + 1
+    println("FAIL " + label + ": condition false")
+    return 0
+}
+
+// 断言条件为假
+function t_false(int cond, string label) -> int {
+    return t_true(cond == 0, label)
+}
+
+// 重置计数
+function t_reset() -> void {
+    T_PASS = 0
+    T_FAIL = 0
+}
+
+// 输出汇总, 返回失败数
+function t_report() -> int {
+    if (T_FAIL == 0) {
+        println("OK: " + int_to_str(T_PASS) + " assertions passed")
+    } else {
+        println("FAILED: " + int_to_str(T_FAIL) + " of " + int_to_str(T_PASS + T_FAIL))
+    }
+    return T_FAIL
+}

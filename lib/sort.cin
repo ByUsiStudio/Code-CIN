@@ -1,0 +1,93 @@
+// Code CIN 官方标准库: 排序与查找 (sort)
+// 用法: import "lib/sort.cin"
+
+// 是否已升序有序
+function sort_is_sorted(int[] a, int n) -> int {
+    for (int i = 1; i < n; i = i + 1) {
+        if (a[i - 1] > a[i]) { return 0 }
+    }
+    return 1
+}
+
+// 冒泡排序 (原地, 升序)
+function sort_bubble(int[] a, int n) -> void {
+    for (int i = 0; i < n - 1; i = i + 1) {
+        for (int j = 0; j < n - 1 - i; j = j + 1) {
+            if (a[j] > a[j + 1]) {
+                int t = a[j]
+                a[j] = a[j + 1]
+                a[j + 1] = t
+            }
+        }
+    }
+}
+
+// 选择排序 (原地, 升序)
+function sort_selection(int[] a, int n) -> void {
+    for (int i = 0; i < n - 1; i = i + 1) {
+        int k = i
+        for (int j = i + 1; j < n; j = j + 1) {
+            if (a[j] < a[k]) { k = j }
+        }
+        if (k != i) {
+            int t = a[i]
+            a[i] = a[k]
+            a[k] = t
+        }
+    }
+}
+
+// 插入排序 (原地, 升序)
+function sort_insertion(int[] a, int n) -> void {
+    for (int i = 1; i < n; i = i + 1) {
+        int key = a[i]
+        int j = i - 1
+        while (j >= 0 && a[j] > key) {
+            a[j + 1] = a[j]
+            j = j - 1
+        }
+        a[j + 1] = key
+    }
+}
+
+// 快速排序区间 [lo, hi] (原地, 升序)
+function sort_quick(int[] a, int lo, int hi) -> void {
+    if (lo >= hi) { return }
+    int pivot = a[idiv(lo + hi, 2)]
+    int i = lo
+    int j = hi
+    while (i <= j) {
+        while (a[i] < pivot) { i = i + 1 }
+        while (a[j] > pivot) { j = j - 1 }
+        if (i <= j) {
+            int t = a[i]
+            a[i] = a[j]
+            a[j] = t
+            i = i + 1
+            j = j - 1
+        }
+    }
+    if (lo < j) { sort_quick(a, lo, j) }
+    if (i < hi) { sort_quick(a, i, hi) }
+}
+
+// 快速排序整体入口
+function sort_quick_all(int[] a, int n) -> void {
+    if (n > 1) { sort_quick(a, 0, n - 1) }
+}
+
+// 二分查找 (数组需已升序), 返回下标或 -1
+function bin_search(int[] a, int n, int v) -> int {
+    int lo = 0
+    int hi = n - 1
+    while (lo <= hi) {
+        int mid = idiv(lo + hi, 2)
+        if (a[mid] == v) { return mid }
+        if (a[mid] < v) {
+            lo = mid + 1
+        } else {
+            hi = mid - 1
+        }
+    }
+    return -1
+}

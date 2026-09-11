@@ -1,0 +1,118 @@
+// Code CIN 官方标准库: Termux API 便捷封装 (termux)
+// 用法: import "lib/termux.cin"
+// 说明: 需 termux-api 命令 + Termux:API 应用; 非 Termux 环境下调用返回 -1/空串。
+import "json.cin"
+
+// Termux API 是否可用 (1/0)
+function tx_ok() -> int {
+    return termux_available()
+}
+
+// 发送系统通知
+function tx_notify(string title, string content) -> int {
+    return termux_notify(title, content)
+}
+
+// 弹出 Toast
+function tx_toast(string msg) -> int {
+    return termux_toast(msg)
+}
+
+// 复制到剪贴板
+function tx_copy(string s) -> int {
+    return termux_clipboard_set(s)
+}
+
+// 读取剪贴板
+function tx_paste() -> string {
+    return termux_clipboard_get()
+}
+
+// 振动 ms 毫秒
+function tx_vibrate(int ms) -> int {
+    return termux_vibrate(ms)
+}
+
+// 文字转语音
+function tx_say(string text) -> int {
+    return termux_tts(text)
+}
+
+// 发送短信
+function tx_sms(string number, string text) -> int {
+    return termux_sms_send(number, text)
+}
+
+// 电池状态原始 JSON
+function tx_battery_json() -> string {
+    return termux_battery()
+}
+
+// 电池百分比 (-1 表示不可用)
+function tx_battery_level() -> int {
+    string j = termux_battery()
+    if (strlen(j) == 0) { return -1 }
+    return j_int(j, "percentage")
+}
+
+// 电池温度 (-1.0 表示不可用)
+function tx_battery_temp() -> float {
+    string j = termux_battery()
+    if (strlen(j) == 0) { return -1.0 }
+    return j_float(j, "temperature")
+}
+
+// 电池是否充电中 (1/0)
+function tx_battery_plugged() -> int {
+    string j = termux_battery()
+    if (strlen(j) == 0) { return 0 }
+    string p = j_str(j, "plugged")
+    if (strcmp(p, "UNPLUGGED") == 0) { return 0 }
+    if (strlen(p) == 0) { return 0 }
+    return 1
+}
+
+// 定位原始 JSON
+function tx_location_json() -> string {
+    return termux_location()
+}
+
+// 定位纬度 (不可用为 0.0)
+function tx_latitude() -> float {
+    string j = termux_location()
+    if (strlen(j) == 0) { return 0.0 }
+    return j_float(j, "latitude")
+}
+
+// 定位经度
+function tx_longitude() -> float {
+    string j = termux_location()
+    if (strlen(j) == 0) { return 0.0 }
+    return j_float(j, "longitude")
+}
+
+// WiFi 连接信息原始 JSON
+function tx_wifi_json() -> string {
+    return termux_wifi_info()
+}
+
+// 当前 WiFi SSID (不可用为空串)
+function tx_wifi_ssid() -> string {
+    string j = termux_wifi_info()
+    if (strlen(j) == 0) { return "" }
+    return j_str(j, "ssid")
+}
+
+// 弹出输入对话框, 返回用户输入的文本
+function tx_prompt(string title) -> string {
+    string j = termux_dialog(title)
+    if (strlen(j) == 0) { return "" }
+    return j_str(j, "text")
+}
+
+// 通知 + 振动 组合
+function tx_alert(string title, string content) -> int {
+    int r = termux_notify(title, content)
+    termux_vibrate(200)
+    return r
+}

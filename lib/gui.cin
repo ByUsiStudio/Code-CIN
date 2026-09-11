@@ -1,0 +1,94 @@
+// Code CIN 官方标准库: 画布绘图助手 (gui)
+// 用法: import "lib/gui.cin"
+// 依赖内建: canvas / set_color / fill_rect / fill_circle / draw_line / draw_text / save_png / show_canvas
+
+// 打包 RGB 颜色 (0xRRGGBB)
+function g_rgb(int r, int g, int b) -> int {
+    return ((r & 255) << 16) | ((g & 255) << 8) | (b & 255)
+}
+
+// 新建白色画布
+function g_new(int w, int h) -> void {
+    canvas(w, h)
+}
+
+// 清空为指定颜色
+function g_clear(int w, int h, int rgb) -> void {
+    canvas(w, h)
+    set_color(rgb)
+    fill_rect(0, 0, w, h)
+}
+
+// 画一个矩形边框 (线宽 1)
+function g_rect_outline(int x, int y, int w, int h, int rgb) -> void {
+    set_color(rgb)
+    draw_line(x, y, x + w - 1, y)
+    draw_line(x, y + h - 1, x + w - 1, y + h - 1)
+    draw_line(x, y, x, y + h - 1)
+    draw_line(x + w - 1, y, x + w - 1, y + h - 1)
+}
+
+// 柱状图 (自动按最大值缩放; 深蓝柱子)
+function g_bar_chart(int[] values, int n, int w, int h) -> void {
+    g_clear(w, h, g_rgb(255, 255, 255))
+    if (n <= 0) { return }
+    int maxv = 1
+    for (int i = 0; i < n; i = i + 1) {
+        if (values[i] > maxv) { maxv = values[i] }
+    }
+    int bw = idiv(w, n)
+    if (bw < 1) { bw = 1 }
+    for (int i = 0; i < n; i = i + 1) {
+        int bh = idiv(values[i] * h, maxv)
+        set_color(g_rgb(60, 120, 200))
+        fill_rect(i * bw, h - bh, bw - 1, bh)
+    }
+    g_rect_outline(0, 0, w, h, g_rgb(0, 0, 0))
+}
+
+// 网格 (浅灰)
+function g_grid(int w, int h, int step) -> void {
+    set_color(g_rgb(200, 200, 200))
+    int x = 0
+    while (x < w) {
+        draw_line(x, 0, x, h - 1)
+        x = x + step
+    }
+    int y = 0
+    while (y < h) {
+        draw_line(0, y, w - 1, y)
+        y = y + step
+    }
+}
+
+// 折线图 (深红)
+function g_line_chart(int[] values, int n, int w, int h) -> void {
+    g_clear(w, h, g_rgb(255, 255, 255))
+    if (n <= 1) { return }
+    int maxv = 1
+    for (int i = 0; i < n; i = i + 1) {
+        if (values[i] > maxv) { maxv = values[i] }
+    }
+    int stepx = idiv(w - 1, n - 1)
+    if (stepx < 1) { stepx = 1 }
+    set_color(g_rgb(200, 40, 40))
+    int px = 0
+    int py = h - 1 - idiv(values[0] * (h - 1), maxv)
+    for (int i = 1; i < n; i = i + 1) {
+        int cx = i * stepx
+        int cy = h - 1 - idiv(values[i] * (h - 1), maxv)
+        draw_line(px, py, cx, cy)
+        px = cx
+        py = cy
+    }
+}
+
+// 导出 PNG (0 成功 / -1 失败)
+function g_save(string path) -> int {
+    return save_png(path)
+}
+
+// 调用系统查看器弹出窗口
+function g_show() -> int {
+    return show_canvas()
+}

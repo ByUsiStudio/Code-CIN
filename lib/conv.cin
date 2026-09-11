@@ -1,0 +1,151 @@
+// Code CIN 官方标准库: 进制与字符串格式化 (conv)
+// 用法: import "lib/conv.cin"
+
+// 十六进制数字字符 -> 数值 ('0'-'9' 'A'-'F' 'a'-'f'), 非法返回 -1
+function c_hex_digit(int ch) -> int {
+    if (ch >= 48 && ch <= 57) { return ch - 48 }
+    if (ch >= 65 && ch <= 70) { return ch - 55 }
+    if (ch >= 97 && ch <= 102) { return ch - 87 }
+    return -1
+}
+
+// 整数 -> 十六进制字符串 (按 64 位无符号处理; 负数给出 16 位补码)
+function c_to_hex(int v) -> string {
+    if (v == 0) { return "0" }
+    string digits = "0123456789ABCDEF"
+    int x = v
+    string out = ""
+    while (x != 0) {
+        int d = x & 15
+        out = substr(digits, d, 1) + out
+        x = (x >> 4) & 0x0FFFFFFFFFFFFFFF
+    }
+    return out
+}
+
+// 十六进制字符串 -> 整数 (可带 0x 前缀; 遇非法字符停止)
+function c_parse_hex(string s) -> int {
+    int i = 0
+    int n = strlen(s)
+    if (n >= 2 && s[0] == 48 && (s[1] == 120 || s[1] == 88)) { i = 2 }
+    int v = 0
+    while (i < n) {
+        int d = c_hex_digit(s[i])
+        if (d < 0) { break }
+        v = v * 16 + d
+        i = i + 1
+    }
+    return v
+}
+
+// 整数 -> 二进制字符串
+function c_to_bin(int v) -> string {
+    if (v == 0) { return "0" }
+    int x = v
+    string out = ""
+    while (x != 0) {
+        if ((x & 1) == 1) {
+            out = "1" + out
+        } else {
+            out = "0" + out
+        }
+        x = (x >> 1) & 0x7FFFFFFFFFFFFFFF
+    }
+    return out
+}
+
+// 二进制字符串 -> 整数 (可带 0b 前缀)
+function c_parse_bin(string s) -> int {
+    int i = 0
+    int n = strlen(s)
+    if (n >= 2 && s[0] == 48 && (s[1] == 98 || s[1] == 66)) { i = 2 }
+    int v = 0
+    while (i < n) {
+        int ch = s[i]
+        if (ch == 48) {
+            v = v * 2
+        } else if (ch == 49) {
+            v = v * 2 + 1
+        } else {
+            break
+        }
+        i = i + 1
+    }
+    return v
+}
+
+// 左填充到宽度 width (fill 可多字符)
+function c_pad_left(string s, int width, string fill) -> string {
+    string out = s
+    if (strlen(fill) == 0) { return out }
+    while (strlen(out) < width) { out = fill + out }
+    return out
+}
+
+// 右填充到宽度 width
+function c_pad_right(string s, int width, string fill) -> string {
+    string out = s
+    if (strlen(fill) == 0) { return out }
+    while (strlen(out) < width) { out = out + fill }
+    return out
+}
+
+// 整数用 0 左填充到宽度 width
+function c_pad_int(int v, int width) -> string {
+    if (v < 0) { return "-" + c_pad_left(int_to_str(-v), width, "0") }
+    return c_pad_left(int_to_str(v), width, "0")
+}
+
+// 字符串重复 n 次
+function c_repeat(string s, int n) -> string {
+    string out = ""
+    for (int i = 0; i < n; i = i + 1) { out = out + s }
+    return out
+}
+
+// 字符编码 -> 单字符字符串 (覆盖常用可见 ASCII; 未知返回空串)
+function c_chr(int code) -> string {
+    if (code == 10) { return "\n" }
+    if (code == 9) { return "\t" }
+    if (code == 13) { return "\r" }
+    string all = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789 .,:;!?-+/()[]{}<>*#@%&|^~=_'\""
+    int i = 0
+    int n = strlen(all)
+    while (i < n) {
+        if (all[i] == code) { return substr(all, i, 1) }
+        i = i + 1
+    }
+    return ""
+}
+
+// 字符串 -> 整数 (十进制, 别名 atoi)
+function c_to_int(string s) -> int {
+    return atoi(s)
+}
+
+// 字符串 -> 浮点 (支持可选负号与小数部分)
+function c_parse_float(string s) -> float {
+    int n = strlen(s)
+    int i = 0
+    int neg = 0
+    if (i < n && s[i] == 45) {
+        neg = 1
+        i = i + 1
+    }
+    float v = 0.0
+    while (i < n && s[i] >= 48 && s[i] <= 57) {
+        v = v * 10.0 + (s[i] - 48)
+        i = i + 1
+    }
+    if (i < n && s[i] == 46) {
+        i = i + 1
+        float scale = 0.1
+        while (i < n && s[i] >= 48 && s[i] <= 57) {
+            v = v + (s[i] - 48) * scale
+            scale = scale * 0.1
+            i = i + 1
+        }
+    }
+    if (neg == 1) { return -v }
+    return v
+}

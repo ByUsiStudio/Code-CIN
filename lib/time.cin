@@ -1,0 +1,54 @@
+// Code CIN 官方标准库: 时间工具 (time)
+// 用法: import "lib/time.cin"
+// 依赖内建: time()
+
+// 当前 Unix 时间戳 (秒)
+function t_now() -> int {
+    return time()
+}
+
+// 两位左补零
+function t_two(int v) -> string {
+    if (v < 0) { v = -v }
+    if (v < 10) { return "0" + int_to_str(v) }
+    return int_to_str(v)
+}
+
+// 秒 -> "HH:MM:SS"
+function t_hms(int secs) -> string {
+    if (secs < 0) { secs = -secs }
+    int h = idiv(secs, 3600)
+    int m = idiv(secs % 3600, 60)
+    int s = secs % 60
+    return t_two(h) + ":" + t_two(m) + ":" + t_two(s)
+}
+
+// 秒 -> "MM:SS"
+function t_ms(int secs) -> string {
+    if (secs < 0) { secs = -secs }
+    return t_two(idiv(secs, 60)) + ":" + t_two(secs % 60)
+}
+
+// 天/时/分/秒 拆解, 存入 4 元素数组
+function t_breakdown(int secs, int[] out) -> void {
+    if (secs < 0) { secs = -secs }
+    out[0] = idiv(secs, 86400)
+    out[1] = idiv(secs % 86400, 3600)
+    out[2] = idiv(secs % 3600, 60)
+    out[3] = secs % 60
+}
+
+// 人性化时长 "1d 2h 3m 4s" (省略为 0 的高位单位)
+function t_human(int secs) -> string {
+    if (secs < 0) { secs = -secs }
+    int d = idiv(secs, 86400)
+    int h = idiv(secs % 86400, 3600)
+    int m = idiv(secs % 3600, 60)
+    int s = secs % 60
+    string out = ""
+    if (d > 0) { out = out + int_to_str(d) + "d " }
+    if (d > 0 || h > 0) { out = out + int_to_str(h) + "h " }
+    if (d > 0 || h > 0 || m > 0) { out = out + int_to_str(m) + "m " }
+    out = out + int_to_str(s) + "s"
+    return out
+}

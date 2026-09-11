@@ -1,0 +1,88 @@
+// Code CIN 官方标准库: 浮点向量与统计 (vec)
+// 用法: import "lib/vec.cin"
+
+// 求和
+function v_sum(float[] a, int n) -> float {
+    float s = 0.0
+    for (int i = 0; i < n; i = i + 1) { s = s + a[i] }
+    return s
+}
+
+// 均值
+function v_mean(float[] a, int n) -> float {
+    if (n <= 0) { return 0.0 }
+    return v_sum(a, n) / n
+}
+
+// 样本方差
+function v_var(float[] a, int n) -> float {
+    if (n <= 1) { return 0.0 }
+    float m = v_mean(a, n)
+    float s = 0.0
+    for (int i = 0; i < n; i = i + 1) {
+        float d = a[i] - m
+        s = s + d * d
+    }
+    return s / (n - 1)
+}
+
+// 样本标准差
+function v_std(float[] a, int n) -> float {
+    return sqrt(v_var(a, n))
+}
+
+// 点积
+function v_dot(float[] a, float[] b, int n) -> float {
+    float s = 0.0
+    for (int i = 0; i < n; i = i + 1) { s = s + a[i] * b[i] }
+    return s
+}
+
+// 最小值
+function v_min(float[] a, int n) -> float {
+    if (n <= 0) { return 0.0 }
+    float m = a[0]
+    for (int i = 1; i < n; i = i + 1) { if (a[i] < m) { m = a[i] } }
+    return m
+}
+
+// 最大值
+function v_max(float[] a, int n) -> float {
+    if (n <= 0) { return 0.0 }
+    float m = a[0]
+    for (int i = 1; i < n; i = i + 1) { if (a[i] > m) { m = a[i] } }
+    return m
+}
+
+// 逐元素相加 (结果写入 dst)
+function v_add(float[] a, float[] b, float[] dst, int n) -> void {
+    for (int i = 0; i < n; i = i + 1) { dst[i] = a[i] + b[i] }
+}
+
+// 逐元素缩放 (结果写入 dst)
+function v_scale(float[] a, float k, float[] dst, int n) -> void {
+    for (int i = 0; i < n; i = i + 1) { dst[i] = a[i] * k }
+}
+
+// 原地归一化到 [0, 1] (按 min/max)
+function v_normalize(float[] a, int n) -> void {
+    if (n <= 0) { return }
+    float lo = v_min(a, n)
+    float hi = v_max(a, n)
+    float span = hi - lo
+    if (span == 0.0) {
+        for (int i = 0; i < n; i = i + 1) { a[i] = 0.0 }
+        return
+    }
+    for (int i = 0; i < n; i = i + 1) { a[i] = (a[i] - lo) / span }
+}
+
+// 欧几里得范数
+function v_norm(float[] a, int n) -> float {
+    return sqrt(v_dot(a, a, n))
+}
+
+// 一维线性插值
+function v_lerp(float a, float b, float t) -> float {
+    return a + (b - a) * t
+}

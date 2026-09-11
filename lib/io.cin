@@ -1,0 +1,141 @@
+// Code CIN 官方标准库: 文件与路径 (io)
+// 用法: import "lib/io.cin"
+// 依赖内建: file_read / file_write / file_append / file_exists / file_size ...
+// 注意: 全部为 Go 原生能力 (需原生运行时)。
+
+// 读取整个文本 (失败为空串)
+function io_read(string path) -> string {
+    return file_read(path)
+}
+
+// 覆盖写入 (0 成功 / -1 失败)
+function io_write(string path, string text) -> int {
+    return file_write(path, text)
+}
+
+// 追加写入
+function io_append(string path, string text) -> int {
+    return file_append(path, text)
+}
+
+// 是否存在
+function io_exists(string path) -> int {
+    return file_exists(path)
+}
+
+// 字节数 (-1 失败)
+function io_size(string path) -> int {
+    return file_size(path)
+}
+
+// 删除
+function io_remove(string path) -> int {
+    return file_delete(path)
+}
+
+// 递归创建目录
+function io_mkdir(string path) -> int {
+    return mkdir(path)
+}
+
+// 目录条目 (换行分隔; 目录名带 /)
+function io_list(string path) -> string {
+    return dir_list(path)
+}
+
+// 路径拼接 (自动补 /; 不处理 .. 归一化)
+function io_join(string a, string b) -> string {
+    if (strlen(a) == 0) { return b }
+    if (strlen(b) == 0) { return a }
+    int last = a[strlen(a) - 1]
+    if (last == 47 || last == 92) { return a + b }
+    return a + "/" + b
+}
+
+// 取路径最后一段 (文件名)
+function io_basename(string path) -> string {
+    int n = strlen(path)
+    int cut = -1
+    for (int i = 0; i < n; i = i + 1) {
+        if (path[i] == 47 || path[i] == 92) { cut = i }
+    }
+    if (cut < 0) { return path }
+    return substr(path, cut + 1, n - cut - 1)
+}
+
+// 取路径目录部分 (无分隔符返回 "")
+function io_dirname(string path) -> string {
+    int n = strlen(path)
+    int cut = -1
+    for (int i = 0; i < n; i = i + 1) {
+        if (path[i] == 47 || path[i] == 92) { cut = i }
+    }
+    if (cut < 0) { return "" }
+    return substr(path, 0, cut)
+}
+
+// 行数 (按 \n; 空串为 0)
+function io_line_count(string text) -> int {
+    int n = strlen(text)
+    if (n == 0) { return 0 }
+    int c = 1
+    for (int i = 0; i < n; i = i + 1) {
+        if (text[i] == 10) { c = c + 1 }
+    }
+    return c
+}
+
+// 取第 idx 行 (0 起, 不含换行符; 越界返回 "")
+function io_get_line(string text, int idx) -> string {
+    int n = strlen(text)
+    int line = 0
+    int start = 0
+    for (int i = 0; i <= n; i = i + 1) {
+        if (i == n || text[i] == 10) {
+            if (line == idx) { return substr(text, start, i - start) }
+            line = line + 1
+            start = i + 1
+        }
+    }
+    return ""
+}
+
+// 按分隔串切分, 返回第 idx 段 (0 起; 越界返回 "")
+function io_split_get(string text, string sep, int idx) -> string {
+    int sl = strlen(sep)
+    if (sl == 0) { return idx == 0 ? text : "" }
+    int n = strlen(text)
+    int seg = 0
+    int start = 0
+    int i = 0
+    while (i <= n - sl) {
+        if (strcmp(substr(text, i, sl), sep) == 0) {
+            if (seg == idx) { return substr(text, start, i - start) }
+            seg = seg + 1
+            i = i + sl
+            start = i
+            continue
+        }
+        i = i + 1
+    }
+    if (seg == idx) { return substr(text, start, n - start) }
+    return ""
+}
+
+// 按分隔串切分的段数
+function io_split_count(string text, string sep) -> int {
+    int sl = strlen(sep)
+    if (sl == 0) { return 1 }
+    int n = strlen(text)
+    int c = 1
+    int i = 0
+    while (i <= n - sl) {
+        if (strcmp(substr(text, i, sl), sep) == 0) {
+            c = c + 1
+            i = i + sl
+            continue
+        }
+        i = i + 1
+    }
+    return c
+}

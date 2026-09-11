@@ -1,0 +1,62 @@
+// Code CIN 官方标准库演示 (array / sort / conv / vec / json / time / test)
+// 运行: python cpu.py examples/stdlib_demo.cin
+//       codecin examples/stdlib_demo.cin
+import "lib/test.cin"
+import "lib/array.cin"
+import "lib/sort.cin"
+import "lib/conv.cin"
+import "lib/vec.cin"
+import "lib/json.cin"
+import "lib/time.cin"
+
+function main() -> int {
+    t_reset()
+
+    // ---- array ----
+    int a[8] = {5, 3, 8, 1, 9, 2, 7, 4}
+    t_eq_int(a_sum(a, 8), 39, "a_sum")
+    t_eq_int(a_max(a, 8), 9, "a_max")
+    t_eq_int(a_min(a, 8), 1, "a_min")
+    t_eq_int(a_find(a, 8, 8), 2, "a_find")
+    t_eq_int(a_count(a, 8, 3), 1, "a_count")
+    t_eq_int(a_index_of_max(a, 8), 4, "a_index_of_max")
+    t_eq_int(a_contains(a, 8, 6), 0, "a_contains")
+
+    // ---- sort ----
+    sort_quick_all(a, 8)
+    t_eq_int(sort_is_sorted(a, 8), 1, "sort_is_sorted")
+    t_eq_int(a[0], 1, "sorted_first")
+    t_eq_int(a[7], 9, "sorted_last")
+    t_eq_int(bin_search(a, 8, 7), 6, "bin_search")
+    t_eq_int(bin_search(a, 8, 100), -1, "bin_search_miss")
+
+    // ---- conv ----
+    t_eq_str(c_to_hex(255), "FF", "c_to_hex")
+    t_eq_int(c_parse_hex("0x1F"), 31, "c_parse_hex")
+    t_eq_str(c_to_bin(10), "1010", "c_to_bin")
+    t_eq_int(c_parse_bin("0b1010"), 10, "c_parse_bin")
+    t_eq_str(c_pad_int(7, 3), "007", "c_pad_int")
+    t_near(c_parse_float("-3.25"), -3.25, 0.0001, "c_parse_float")
+
+    // ---- vec ----
+    float v[4] = {1.0, 2.0, 3.0, 4.0}
+    t_near(v_sum(v, 4), 10.0, 0.0001, "v_sum")
+    t_near(v_mean(v, 4), 2.5, 0.0001, "v_mean")
+    t_near(v_dot(v, v, 4), 30.0, 0.0001, "v_dot")
+    t_near(v_max(v, 4), 4.0, 0.0001, "v_max")
+
+    // ---- json ----
+    string j = "{\"name\":\"cin\",\"level\":42,\"on\":true,\"temp\":30.5}"
+    t_eq_str(j_str(j, "name"), "cin", "j_str")
+    t_eq_int(j_int(j, "level"), 42, "j_int")
+    t_eq_int(j_bool(j, "on"), 1, "j_bool")
+    t_near(j_float(j, "temp"), 30.5, 0.0001, "j_float")
+    t_true(j_has(j, "level"), "j_has")
+
+    // ---- time ----
+    t_eq_str(t_hms(3661), "01:01:01", "t_hms")
+    t_eq_str(t_ms(125), "02:05", "t_ms")
+    t_eq_str(t_human(90061), "1d 1h 1m 1s", "t_human")
+
+    return t_report()
+}

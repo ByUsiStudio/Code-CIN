@@ -1945,6 +1945,17 @@ class CodeGen:
             return self._gen_logical(op, left, right)
         if op in ('&', '|', '^', '<<', '>>'):
             return self._gen_bitwise(op, left, right)
+        if op in ('==', '!=', '<', '>', '<=', '>='):
+            # 比较作为值表达式: 条件成立得 1, 否则 0
+            l_false = self.new_label('cmpf')
+            l_end = self.new_label('cmpe')
+            self.gen_cond_jump_false(('binop', op, left, right), l_false)
+            self.emit('MOV', self.reg(0), self.imm(1))
+            self.emit('JMP', self.lab(l_end))
+            self.label(l_false)
+            self.emit('MOV', self.reg(0), self.imm(0))
+            self.label(l_end)
+            return 'bool'
 
         lt = self._expr_type(left)
         rt = self._expr_type(right)
