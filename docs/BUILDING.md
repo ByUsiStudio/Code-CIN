@@ -390,7 +390,9 @@ python cpu.py basic.cin --compile-only && python cpu.py basic.bin  # 字节码�
    Python 端自动回退。Go 侧常量来自生成的 `engine/isa_gen.go`, **不要手工改**。
 5. `codecin/assembler.py` — 若有特殊操作数语法, 在汇编器适配; 常规 `reg/imm/label/mem` 自动支持。
 6. `codecin/cin.py` + `codecin/native/compiler/` — 如需暴露给 CIN, 在 `Syscall` 加功能号,
-   并在 `cpu.py`/`engine/vm.go` 的 SYS handler 实现宿主调用; Go 版编译器同步在 `compiler/` 支持。
+   并在 `cpu.py`/`engine/vm.go` 的 SYS handler 实现宿主调用。**宿主能力内建**采用表驱动:
+   在 `cin.py` 的 `HOST_BUILTINS` 与 `compiler/codegen.go` 的 `hostBuiltins` 各加一行
+   (名称 → SYS 号 / 参数个数 / 返回类型), Python 解释器会统一给出「需原生运行时」错误。
 
 新增后同步 (防止文档/原生常量漂移):
 

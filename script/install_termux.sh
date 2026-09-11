@@ -59,8 +59,10 @@ step_func "更新软件包列表"
 pkg update -y
 finish_step "更新软件包列表"
 
-step_func "安装基础工具 (git, python, pip, uv, golang)"
+step_func "安装基础工具 (git, python, pip, uv, golang, termux-api)"
 pkg install -y git python python-pip uv golang
+# Termux API (可选): 提供 termux-notification / termux-clipboard-* 等命令
+pkg install -y termux-api || warning "termux-api 安装失败 (可选; 另需安装 Termux:API 应用)"
 finish_step "安装基础工具"
 
 step_func "创建工作目录"
