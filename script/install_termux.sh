@@ -59,8 +59,8 @@ step_func "更新软件包列表"
 pkg update -y
 finish_step "更新软件包列表"
 
-step_func "安装基础工具 (git, python, pip, uv)"
-pkg install -y git python python-pip uv
+step_func "安装基础工具 (git, python, pip, uv, golang)"
+pkg install -y git python python-pip uv golang
 finish_step "安装基础工具"
 
 step_func "创建工作目录"
