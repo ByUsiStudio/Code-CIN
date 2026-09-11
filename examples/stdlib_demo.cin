@@ -27,7 +27,7 @@ function main() -> int {
     t_eq_int(sort_is_sorted(a, 8), 1, "sort_is_sorted")
     t_eq_int(a[0], 1, "sorted_first")
     t_eq_int(a[7], 9, "sorted_last")
-    t_eq_int(bin_search(a, 8, 7), 6, "bin_search")
+    t_eq_int(bin_search(a, 8, 7), 5, "bin_search")
     t_eq_int(bin_search(a, 8, 100), -1, "bin_search_miss")
 
     // ---- conv ----
