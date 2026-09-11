@@ -32,7 +32,7 @@ echo -e "  工作目录: ${BLUE}$(pwd)${NC}"
 echo -e "  系统    : ${CYAN}$(uname -s) $(uname -r) $(uname -m)${NC}"
 line
 
-total_steps=7
+total_steps=8
 current_step=0
 
 step_func() {
@@ -56,65 +56,119 @@ finish_step() {
 }
 
 step_func "更新软件包列表"
-apt update -y
+pkg update -y
 finish_step "更新软件包列表"
 
-step_func "安装依赖工具 (wget, unzip, zip)"
-apt install -y wget unzip zip
-finish_step "安装依赖工具"
+step_func "安装基础工具 (git, python, pip, uv)"
+pkg install -y git python python-pip uv
+finish_step "安装基础工具"
 
 step_func "创建工作目录"
-cd ~/ || { error "无法切换到用户目录"; exit 1; }
-mkdir -p "ByUsi Studio/UCPU" || { error "无法创建目录"; exit 1; }
-cd "ByUsi Studio/UCPU" || { error "无法进入目录"; exit 1; }
+WORK_DIR="$HOME/.ByUsi Studio/UCPU"
+mkdir -p "$WORK_DIR"
+cd "$WORK_DIR"
 success "工作目录: $(pwd)"
 thin_line
 true
 finish_step "创建工作目录"
 
-step_func "下载 UCPU 程序"
-wget "https://www.cdifit.cn/f/5JKI2/ucpu.zip" -O /data/data/com.termux/files/usr/tmp/ucpu.zip
-finish_step "下载 UCPU 程序"
-
-step_func "解压 UCPU"
+step_func "克隆或更新 UCPU 仓库"
 if [ -n "$(ls -A .)" ]; then
-    warning "当前目录非空，存在以下文件："
-    ls -la
-    echo -n "是否清空该目录并继续解压？ (y/N): "
-    read answer
-    if [[ "$answer" =~ ^[Yy]$ ]]; then
-        success "用户选择清空目录"
-        rm -rvf ./*
-        if [ $? -ne 0 ]; then
-            error "清空目录失败"
+    warning "当前目录非空，已存在 UCPU 项目文件。"
+    if git rev-parse --git-dir >/dev/null 2>&1; then
+        echo -n "是否进行拉取更新？ (y/N): "
+        read answer
+        if [[ "$answer" =~ ^[Yy]$ ]]; then
+            success "用户选择拉取更新"
+            git pull
+            if [ $? -ne 0 ]; then
+                error "拉取更新失败"
+                exit 1
+            fi
+            success "更新完成"
+        else
+            error "用户取消安装"
             exit 1
         fi
-        success "目录已清空"
     else
-        error "用户取消安装"
+        warning "当前目录不是有效的 git 仓库，无法拉取更新。"
+        echo -n "是否清空目录并重新克隆？ (y/N): "
+        read answer
+        if [[ "$answer" =~ ^[Yy]$ ]]; then
+            success "用户选择清空目录"
+            find . -mindepth 1 -delete
+            success "目录已清空"
+            git clone https://gitee.com/byusistudio/ucpu .
+            if [ $? -ne 0 ]; then
+                error "克隆失败"
+                exit 1
+            fi
+        else
+            error "用户取消安装"
+            exit 1
+        fi
+    fi
+else
+    info "目录为空，直接克隆"
+    git clone https://gitee.com/byusistudio/ucpu .
+    if [ $? -ne 0 ]; then
+        error "克隆失败"
+        exit 1
+    fi
+fi
+finish_step "克隆或更新 UCPU 仓库"
+
+step_func "创建/更新虚拟环境"
+if [ ! -d ".venv" ]; then
+    info "虚拟环境不存在，正在创建..."
+    uv venv
+    if [ $? -ne 0 ]; then
+        error "创建虚拟环境失败"
         exit 1
     fi
 else
-    info "目录为空，直接解压"
+    info "虚拟环境已存在，跳过创建。"
 fi
-unzip -o /data/data/com.termux/files/usr/tmp/ucpu.zip
-finish_step "解压 UCPU"
+finish_step "创建/更新虚拟环境"
 
-step_func "清理临时文件"
-rm -f /data/data/com.termux/files/usr/tmp/ucpu.zip
-if [ $? -eq 0 ]; then
-    success "临时文件已清理"
-else
-    warning "清理临时文件可能有残留"
+step_func "同步 Python 依赖 (uv sync)"
+uv sync
+if [ $? -ne 0 ]; then
+    error "依赖同步失败"
+    exit 1
 fi
+finish_step "同步 Python 依赖"
+
+step_func "生成启动脚本 (ucpu-cli)"
+cat > ucpu-cli << 'EOF'
+#!/bin/bash
+original_pwd="$PWD"
+cd "$(dirname "$0")" || exit
+args=()
+for arg in "$@"; do
+    if [[ "$arg" == -* ]]; then
+        args+=("$arg")
+    elif [[ "$arg" = /* ]]; then
+        args+=("$arg")
+    elif [[ "$arg" =~ ^[0-9]+$ ]]; then
+        args+=("$arg")
+    else
+        args+=("$original_pwd/$arg")
+    fi
+done
+uv run python cpu.py "${args[@]}"
+EOF
+chmod +x ucpu-cli
+success "启动脚本已创建: $(pwd)/ucpu-cli"
 thin_line
 true
-finish_step "清理临时文件"
+finish_step "生成启动脚本"
 
 step_func "配置环境变量"
 UCPU_INSTALL="$HOME/../usr/etc/profile.d/ucpu_init.sh"
 mkdir -p "$(dirname "$UCPU_INSTALL")"
-echo "export PATH=\"\$PATH:$(pwd)\"" > "$UCPU_INSTALL"
+PROJECT_ROOT="$(pwd)"
+echo "export PATH=\"\$PATH:$PROJECT_ROOT\"" > "$UCPU_INSTALL"
 chmod +x "$UCPU_INSTALL"
 success "环境变量已添加到 $UCPU_INSTALL"
 thin_line
@@ -132,3 +186,4 @@ line
 echo -e "${YELLOW}提示: 请运行以下命令使环境变量生效:${NC}"
 echo -e "  ${BOLD}source $UCPU_INSTALL${NC}"
 echo -e "或重新打开终端。"
+echo -e "之后您可以直接在任意位置执行 ${GREEN}ucpu-cli${NC} 命令。"
