@@ -160,6 +160,19 @@ class Syscall(IntEnum):
     TRIM = 36       # string trim(x0=s) -> 去首尾空白的新堆字符串
     LTRIM = 37      # string ltrim(x0=s) -> 去前导空白的新堆字符串
     RTRIM = 38      # string rtrim(x0=s) -> 去尾部空白的新堆字符串
+    # ---- 宿主能力: 联网音频 (Go 原生实现; 无原生库时报错) ----
+    AUDIOPLAY = 39  # audio_play(x0=url/文件路径) -> 0 成功 / -1 失败 (同步下载+播放)
+    AUDIOSTOP = 40  # audio_stop(): 停止当前播放
+    AUDIOVOL = 41   # audio_volume(x0=0..100): 设置音量 (支持则生效, 否则忽略)
+    AUDIOWAIT = 42  # audio_wait(): 阻塞到当前播放结束 (按 WAV 头时长估算)
+    # ---- 宿主能力: 2D 绘图画布 (Go 标准库 image/png 实现, 导出 PNG) ----
+    CANVASNEW = 43  # canvas(w=x0, h=x1): 新建 w*h 画布 (当前画布)
+    CANVASSET = 44  # set_color(rgb=x0): 设置画笔颜色 (0xRRGGBB)
+    CANVASRECT = 45 # rect(x=x0, y=x1, w=x2, h=x3): 填充矩形
+    CANVASCIRC = 46 # circle(x=x0, y=x1, r=x2): 填充圆
+    CANVASTEXT = 47 # text(x=x0, y=x1, s=x2 指针): 绘制文本 (内置 8x8 点阵字库)
+    CANVASLINE = 48 # line(x0,y0,x1,y1): 画线 (x0,x1,y0=x1? 见参数说明)
+    CANVASSAVE = 49 # save(x0=路径) -> 0 成功 / -1 失败 (PNG 编码写盘)
 
 
 class Cond:
