@@ -15,6 +15,7 @@ CIN_EXPECTED = {
     'literals_types.cin': 77,   # 31+13+15+6+6+4+2
     'modules_demo.cin': 12,     # import lib/math.cin + lib/str.cin
     'bitwise_builtins.cin': 256,  # 位运算/整除/下标/新内建各项之和
+    'stdlib_demo.cin': 0,       # 官方标准库断言全部通过 (t_report 返回失败数)
 }
 ASM_EXPECTED = {
     'asm_constants.asm': ('x0', 63),

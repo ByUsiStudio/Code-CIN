@@ -33,6 +33,25 @@ function main() -> int {
 }"""
     # -4 + 4 = 0
     assert run_cin_source(src).regs.read(0) == 0
+    # 同一程序在原生 VM 上同样成立 (回归: 原生 ASR 支持)
+    assert run_cin_source(src, use_native=True).regs.read(0) == 0
+
+
+def test_arithmetic_shift_right_prints():
+    """>> 计算结果应可打印 (回归: 原生 VM 缺 ASR 会导致输出截断)。"""
+    src = """
+function main() -> int {
+    int e = -16 >> 2
+    println("asr=" + int_to_str(e))
+    return 0
+}"""
+    import io
+    import contextlib
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        cpu = run_cin_source(src, use_native=True)
+    assert cpu.regs.read(0) == 0
+    assert "asr=" in buf.getvalue()
 
 
 def test_bitwise_compound_assign():

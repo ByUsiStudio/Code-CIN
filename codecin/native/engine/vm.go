@@ -176,8 +176,8 @@ func opcodeSupported(op uint8) bool {
 	switch op {
 	case opMOV, opLOAD, opSTORE, opADD, opSUB, opMUL, opDIV, opAND, opOR, opXOR,
 		opSHL, opSHR, opINC, opDEC, opCMP, opJMP, opJZ, opJNZ, opJE, opJL, opJG,
-		opPUSH, opPOP, opCALL, opRET, opIN, opOUT, opHALT, opLSL, opLSR, opMVN,
-		opB, opBL, opNOP, opLB, opLH, opLW, opLD, opSB, opSH, opSW, opSD,
+		opPUSH, opPOP, opCALL, opRET, opIN, opOUT, opHALT, opLSL, opLSR, opASR,
+		opMVN, opB, opBL, opNOP, opLB, opLH, opLW, opLD, opSB, opSH, opSW, opSD,
 		opADDI, opXORI, opORI, opANDI, opSYS:
 		return true
 	}
@@ -666,6 +666,12 @@ func (vm *vmState) execute(ins instruction) (bool, string) {
 		rd, rn := int(args[0].value), int(args[1].value)
 		v, _ := vm.val(args[2])
 		vm.setReg(rd, vm.reg(rn)>>(v&63))
+	case opASR:
+		// 算术右移 (保留符号), 与 Python _op_asr 一致
+		rd, rn := int(args[0].value), int(args[1].value)
+		amt, _ := vm.val(args[2])
+		sv := int64(vm.reg(rn))
+		vm.setReg(rd, uint64(sv>>(amt&63))&mask64)
 	case opSYS:
 		if len(args) == 0 || args[0].kind != kindImm {
 			return false, "SYS requires an immediate call id"

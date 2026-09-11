@@ -710,8 +710,11 @@ xychart-beta
 >
 > **CIN 新语法示例**: `examples/control_flow.cin` (break/continue、do-while、switch/case、三目、复合赋值)、
 > `examples/literals_types.cin` (char/short/long/unsigned、0x/0b/0o 与字符字面量、`++/--`、转换内建函数);
-> 汇编器 `.equ`/表达式示例: `examples/asm_constants.asm`; 模块/标准库示例: `examples/modules_demo.cin`
-> (`lib/math.cin`、`lib/str.cin`)。
+> 汇编器 `.equ`/表达式示例: `examples/asm_constants.asm`。
+>
+> **官方标准库 (`lib/`)**: `math` `str` `array` `sort` `conv` `vec` `rand` `json` `time` `io` `gui` `termux` `test`
+> —— 示例 `examples/modules_demo.cin`、`examples/stdlib_demo.cin` (断言全部通过)。详见
+> [CIN 编程指南 · 官方标准库清单](docs/CIN_GUIDE.md#官方标准库清单-lib)。
 >
 > **CIN 位运算/整除/字符串下标/更多内建**: `& | ^ ~ << >>` (及复合赋值)、`idiv()` 整数除法、
 > `s[i]` 单字节读取、`floor/ceil/round/min/max/atoi/trim/ltrim/rtrim` 内建函数 (详见

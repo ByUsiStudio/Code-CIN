@@ -39,6 +39,19 @@ function main() -> int {
     int tl = strlen(t)             // 2
 
     // 返回各项之和 = 256
-    return a + b + c + d + e + f + g + q + r +
-           h + w + mn + mx + fl + ce + ro + ti + tl
+    int total = a + b + c + d + e + f + g + q + r +
+                h + w + mn + mx + fl + ce + ro + ti + tl
+    println("bit_and=" + int_to_str(a) + " bit_or=" + int_to_str(b) +
+            " bit_xor=" + int_to_str(c))
+    println("shl=" + int_to_str(d) + " asr=" + int_to_str(e) +
+            " not=" + int_to_str(f))
+    println("compound=" + int_to_str(g) + " idiv=" + int_to_str(q) +
+            " idiv_neg=" + int_to_str(r))
+    println("s[0]=" + int_to_str(h) + " s[5]=" + int_to_str(w))
+    println("min=" + int_to_str(mn) + " max=" + int_to_str(mx))
+    println("floor=" + int_to_str(fl) + " ceil=" + int_to_str(ce) +
+            " round=" + int_to_str(ro))
+    println("atoi=" + int_to_str(ti) + " trim_len=" + int_to_str(tl))
+    println("total=" + int_to_str(total))
+    return total
 }
