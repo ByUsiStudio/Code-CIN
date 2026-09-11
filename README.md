@@ -699,6 +699,10 @@ xychart-beta
 > `examples/literals_types.cin` (char/short/long/unsigned、0x/0b/0o 与字符字面量、`++/--`、转换内建函数);
 > 汇编器 `.equ`/表达式示例: `examples/asm_constants.asm`; 模块/标准库示例: `examples/modules_demo.cin`
 > (`lib/math.cin`、`lib/str.cin`)。
+>
+> **CIN 位运算/整除/字符串下标/更多内建**: `& | ^ ~ << >>` (及复合赋值)、`idiv()` 整数除法、
+> `s[i]` 单字节读取、`floor/ceil/round/min/max/atoi/trim/ltrim/rtrim` 内建函数 (详见
+> [CIN 编程指南 · 运算符/内建](docs/CIN_GUIDE.md))。
 
 ### 程序执行流程图
 
