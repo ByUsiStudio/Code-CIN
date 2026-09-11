@@ -183,19 +183,10 @@ func opcodeSupported(op uint8) bool {
 	return false
 }
 
-// syscallSupported: 原生 VM 已实现的 SYS 功能号 (其余交给解释器回退)。
-// ABORT/SUBSTR/INDEXOF/TOUPPER/TOLOWER 保持回退, 与既有行为一致。
+// syscallSupported: 原生 VM 已实现的 SYS 功能号。
+// 现已在 Go 侧实现全部宿主调用 (0..sysCANVASSAVE), 供独立 Go CLI 使用。
 func syscallSupported(id uint64) bool {
-	switch id {
-	case sysABORT, sysSUBSTR, sysINDEXOF, sysTOUPPER, sysTOLOWER:
-		return false
-	case sysFLOOR, sysCEIL, sysROUND, sysATOI, sysTRIM, sysLTRIM, sysRTRIM,
-		sysAUDIOPLAY, sysAUDIOSTOP, sysAUDIOVOL, sysAUDIOWAIT,
-		sysCANVASNEW, sysCANVASSET, sysCANVASRECT, sysCANVASCIRC,
-		sysCANVASTEXT, sysCANVASLINE, sysCANVASSAVE:
-		return true
-	}
-	return id <= sysBOOLSTR
+	return id <= sysCANVASSAVE
 }
 
 // ---------------- 操作数/寄存器/内存 ----------------
@@ -752,7 +743,7 @@ func (vm *vmState) readLineInt() uint64 {
 func (vm *vmState) doSyscall(id uint64) string {
 	x0 := vm.reg(0)
 	x1 := vm.reg(1)
-	_ = vm.reg(2)
+	x2 := vm.reg(2)
 
 	switch id {
 	case sysABS:
@@ -895,6 +886,56 @@ func (vm *vmState) doSyscall(id uint64) string {
 			return e
 		}
 		vm.setReg(0, addr)
+	case sysSUBSTR:
+		// substr(s, start, len): 按字符索引, 越界自动裁剪
+		runes := []rune(vm.readCString(x0))
+		n := int64(len(runes))
+		start := int64(0)
+		if int64(x1) > n {
+			start = n
+		} else if int64(x1) > 0 {
+			start = int64(x1)
+		}
+		length := int64(0)
+		if int64(x2) > 0 {
+			length = int64(x2)
+		}
+		end := start + length
+		if end > n {
+			end = n
+		}
+		p, e := vm.heapDupString(string(runes[start:end]))
+		if e != "" {
+			return e
+		}
+		vm.setReg(0, p)
+	case sysINDEXOF:
+		hay := vm.readCString(x0)
+		needle := vm.readCString(x1)
+		bi := strings.Index(hay, needle)
+		idx := int64(-1)
+		if bi >= 0 {
+			idx = int64(len([]rune(hay[:bi])))
+		}
+		vm.setReg(0, uint64(idx)&mask64)
+	case sysTOUPPER:
+		p, e := vm.heapDupString(strings.ToUpper(vm.readCString(x0)))
+		if e != "" {
+			return e
+		}
+		vm.setReg(0, p)
+	case sysTOLOWER:
+		p, e := vm.heapDupString(strings.ToLower(vm.readCString(x0)))
+		if e != "" {
+			return e
+		}
+		vm.setReg(0, p)
+	case sysABORT:
+		msg := vm.readCString(x0)
+		if msg != "" {
+			return "Runtime abort: " + msg
+		}
+		return "Runtime abort"
 	case sysFLOOR:
 		vm.setReg(0, fToBits(math.Floor(bitsToF(x0))))
 	case sysCEIL:

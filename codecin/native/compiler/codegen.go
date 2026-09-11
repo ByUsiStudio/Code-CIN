@@ -123,7 +123,7 @@ func (c *compiler) constValue(n *Node) (*Type, int64, error) {
 
 func (c *compiler) emitGlobalsInit(globals []*GlobalVar) {
 	for _, gv := range globals {
-		_, addr, _ := c.globalsSym[gv.name]
+		addr := c.globalsSym[gv.name].addr
 		if gv.init != nil {
 			_, raw, err := c.constValue(gv.init)
 			if err == nil {
@@ -194,7 +194,7 @@ func (c *compiler) genFunctionBody(f *FuncDef) {
 	}
 
 	// struct 局部变量: 堆分配对象
-	for name, lv := range c.locals {
+	for _, lv := range c.locals {
 		if isStruct(lv.t) && lv.off < 0 {
 			sd := c.structs[lv.t.Name]
 			c.emit("MOV", c.reg(0), c.imm(int64(sd.sizeSlots*8)))
@@ -1514,7 +1514,7 @@ func (c *compiler) genCall(name string, args []*Node) *Type {
 	}
 	if name == "upper" || name == "lower" {
 		c.genStringValue(args[0])
-		id := SysTOUPPER
+		id := int64(SysTOUPPER)
 		if name == "lower" {
 			id = SysTOLOWER
 		}

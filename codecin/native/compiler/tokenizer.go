@@ -55,6 +55,7 @@ var strEscapes = map[byte]byte{
 
 // tokenize 把 CIN 源码切分为 token 流 (含续行处理与 BOM 容忍)。
 func tokenize(source, filename string) ([]Token, error) {
+	source = strings.TrimPrefix(source, "\ufeff") // 容忍 UTF-8 BOM
 	var tokens []Token
 	i, line, n := 0, 1, len(source)
 
@@ -76,7 +77,7 @@ func tokenize(source, filename string) ([]Token, error) {
 			tokens = append(tokens, Token{kind: "NL", line: line})
 			line++
 			i++
-		case c == ' ' || c == '\t' || c == '\r' || c == '\ufeff':
+		case c == ' ' || c == '\t' || c == '\r':
 			i++
 		case c == '/' && i+1 < n && source[i+1] == '/':
 			for i < n && source[i] != '\n' {
