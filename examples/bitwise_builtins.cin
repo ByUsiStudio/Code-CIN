@@ -39,6 +39,6 @@ function main() -> int {
     int tl = strlen(t)             // 2
 
     // 返回各项之和 = 256
-    return a + b + c + d + e + f + g + q + r
-         + h + w + mn + mx + fl + ce + ro + ti + tl
+    return a + b + c + d + e + f + g + q + r +
+           h + w + mn + mx + fl + ce + ro + ti + tl
 }
