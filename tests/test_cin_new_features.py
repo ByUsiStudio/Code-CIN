@@ -20,8 +20,8 @@ function main() -> int {
     int e = ~0
     return a * 10000 + b * 1000 + c * 100 + d * 10 + (e == -1 ? 1 : 0)
 }"""
-    # a=8 b=14 c=6 d=16 e=-1 -> 8,14,6,16,1 => 81461
-    assert run_cin_source(src).regs.read(0) == 81461
+    # a=8 b=14 c=6 d=16 e=-1 -> 80000+14000+600+160+1 = 94761
+    assert run_cin_source(src).regs.read(0) == 94761
 
 
 def test_arithmetic_shift_right():
@@ -58,8 +58,11 @@ function main() -> int {
     int c = idiv(17, -5)
     return a + b + c
 }"""
-    # 3 + (-3) + (-3) = -3
-    assert run_cin_source(src).regs.read(0) == -3
+    # 3 + (-3) + (-3) = -3 (寄存器为 64 位无符号表示)
+    val = run_cin_source(src).regs.read(0)
+    if val >= (1 << 63):
+        val -= (1 << 64)
+    assert val == -3
 
 
 def test_string_char_index():

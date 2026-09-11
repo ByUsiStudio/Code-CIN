@@ -1,0 +1,45 @@
+// 临时功能验证 (位运算/整除/字符串下标/新内建)
+function main() -> int {
+    int a = 0b1100 & 0b1010       // 1000 = 8
+    println("& : " + a)
+    int b = 0b1100 | 0b1010       // 1110 = 14
+    println("| : " + b)
+    int c = 0b1100 ^ 0b1010       // 0110 = 6
+    println("^ : " + c)
+    int d = 1 << 4                // 16
+    println("<<: " + d)
+    int e = -16 >> 2              // 算术右移 = -4
+    println(">>: " + e)
+    int f = ~0                    // -1
+    println("~ : " + f)
+
+    int g = 7
+    g &= 3                        // 3
+    g |= 8                        // 11
+    g ^= 1                        // 10
+    g <<= 2                       // 40
+    g >>= 3                       // 5
+    println("compound: " + g)
+
+    int q = idiv(17, 5)           // 3
+    println("idiv: " + q)
+    int r = idiv(-17, 5)          // -3
+    println("idiv neg: " + r)
+
+    string s = "Hello, World!"
+    int ch = s[0]                 // 'H' = 72
+    println("s[0]: " + ch)
+    println("s[7]: " + s[7])      // 'W' = 87
+
+    println("min: " + min(5, 3) + " " + min(2.5, 1.5))
+    println("max: " + max(5, 3) + " " + max(2.5, 4.5))
+
+    println("floor: " + floor(3.7) + " ceil: " + ceil(3.2) + " round: " + round(2.5))
+
+    println("atoi: " + atoi(" 42 ") + " " + atoi("abc"))
+
+    string t = "  hi  "
+    println("trim: [" + trim(t) + "] ltrim:[" + ltrim(t) + "] rtrim:[" + rtrim(t) + "]")
+
+    return 0
+}
