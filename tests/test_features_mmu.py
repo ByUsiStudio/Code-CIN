@@ -2,8 +2,8 @@
 
 import pytest
 
-from ucpu.errors import MemoryAccessError, PageFaultError
-from ucpu.memory import FastMemory, Mmu
+from codecin.errors import MemoryAccessError, PageFaultError
+from codecin.memory import FastMemory, Mmu
 
 from tests.helpers import run_cin_source
 
@@ -101,7 +101,7 @@ def test_cpu_mmu_identity_same_result():
 
 
 def test_cpu_mmu_page_fault_aborts(capsys):
-    from ucpu.cin import CINCompiler
+    from codecin.cin import CINCompiler
     from tests.helpers import new_cpu
     src = """
 int g = 5

@@ -1,8 +1,8 @@
-# UCPU - 通用CPU模拟器
+# Code CIN - 通用CPU模拟器
 
 ---
 
-**UCPU - ByUsi Studio**
+**Code CIN - ByUsi Studio**
 
 **开发者: 北啊呢**
 
@@ -10,9 +10,9 @@
 
 ## 项目简介
 
-UCPU是一个功能完整的CPU模拟器，提供从高级语言到机器码的完整工具链。支持CIN高级语言、PL汇编和ASM汇编，包含ARM64和RISC-V指令集扩展，具备JIT编译、Go原生加速库、缓存系统、性能分析和调试功能。
+Code CIN是一个功能完整的CPU模拟器，提供从高级语言到机器码的完整工具链。支持CIN高级语言、PL汇编和ASM汇编，包含ARM64和RISC-V指令集扩展，具备JIT编译、Go原生加速库、缓存系统、性能分析和调试功能。
 
-模块化包结构（`ucpu/`），全线日志与错误输出基于 **rich**（彩色表格、面板、traceback），`--debug` 模式提供逐指令/寄存器/内存/栈/缓存的超详细追踪。
+模块化包结构（`codecin/`），全线日志与错误输出基于 **rich**（彩色表格、面板、traceback），`--debug` 模式提供逐指令/寄存器/内存/栈/缓存的超详细追踪。
 
 ## 文档
 
@@ -26,11 +26,11 @@ UCPU是一个功能完整的CPU模拟器，提供从高级语言到机器码的�
 
 ## 设计理念
 
-UCPU的设计围绕五个核心原则展开：
+Code CIN的设计围绕五个核心原则展开：
 
 ```mermaid
 mindmap
-  root((UCPU设计哲学))
+  root((Code CIN设计哲学))
     完整性
       完整工具链
       高级语言到机器码
@@ -196,7 +196,7 @@ sequenceDiagram
 ### 指令集总览
 
 ```mermaid
-pie title UCPU 指令集组成
+pie title Code CIN 指令集组成
     "Base ISA (28条)" : 28
     "ARM64 Ext (40条)" : 40
     "RISC-V Ext (27条)" : 27
@@ -205,14 +205,14 @@ pie title UCPU 指令集组成
     "SYS 宿主调用 (1条)" : 1
 ```
 
-> 指令总数与分组由 `python script/gen_isa_docs.py` 依据 `ucpu/isa.py` 自动生成/校验;
+> 指令总数与分组由 `python script/gen_isa_docs.py` 依据 `codecin/isa.py` 自动生成/校验;
 > 完整的逐条指令表见 [docs/ISA.md](docs/ISA.md)。ARM64 的 WFE/WFI/SEV 无事件模型, 语义等同 NOP。
 
 ### 指令分类
 
 ```mermaid
 graph TD
-    ISA[UCPU ISA<br/>112条指令]
+    ISA[Code CIN ISA<br/>112条指令]
     
     ISA --> BASE[Base ISA<br/>28条指令]
     ISA --> ARM[ARM64 Ext<br/>40条指令]
@@ -260,7 +260,7 @@ graph TD
 
 ADDS, SUBS, ADDC, SUBC, LSL, LSR, ASR, ROR, MVN, EOR, BIC, ORN, LDR, STR, LDP, STP, CBZ, CBNZ, TBZ, TBNZ, B, BL, BR, NOP, WFE, WFI, SEV, CSEL, CSINC, CSINV, CSNEG, SXTB, SXTH, SXTW, UXTB, UXTH, CLZ, CLS, RBIT, REV
 
-> WFE/WFI/SEV: 模拟器无中断/多核事件模型, 语义等同 NOP (见 `ucpu/cpu.py` `_OP_ALIASES`)。
+> WFE/WFI/SEV: 模拟器无中断/多核事件模型, 语义等同 NOP (见 `codecin/cpu.py` `_OP_ALIASES`)。
 
 ### RISC-V扩展 (27条)
 
@@ -370,15 +370,15 @@ flowchart TD
 
 1. 克隆项目并安装依赖:
    ```
-   git clone https://github.com/ByUsiStudio/ucpu.git
-   cd ucpu
+   git clone https://github.com/ByUsiStudio/codecin.git
+   cd codecin
    pip install -r requirements.txt        # 运行时依赖 (rich)
    pip install -r requirements-dev.txt    # (可选) 开发: pytest + ruff
    ```
 
 2. (可选) 编译 Go 原生加速库, 见 [开发者编译文档](docs/BUILDING.md#4-构建-go-原生加速库):
    ```
-   cd ucpu/native
+   cd codecin/native
    .\build.ps1        # Windows
    sh build.sh        # Linux / Termux / macOS
    ```
@@ -397,11 +397,11 @@ flowchart TD
 python -m pytest                            # 指令黄金 / 三路径一致性 / 断点回归 / 内存保护 / CLI
 python script/gen_isa_docs.py --check       # docs/ISA.md 与指令集同步
 python script/gen_native_isa.py --check     # Go 原生常量与指令集同步
-ruff check ucpu cpu.py script tests
+ruff check codecin cpu.py script tests
 ```
 
 仓库内置 GitHub Actions CI (`.github/workflows/ci.yml`): 多 Python 版本测试、ruff、Go 原生库编译校验;
-完整逐条指令表由 `script/gen_isa_docs.py` 从 `ucpu/isa.py` 生成至 [docs/ISA.md](docs/ISA.md)。
+完整逐条指令表由 `script/gen_isa_docs.py` 从 `codecin/isa.py` 生成至 [docs/ISA.md](docs/ISA.md)。
 
 ### 执行路径
 
@@ -544,7 +544,7 @@ Program completed
 
 ## 日志与调试 (rich)
 
-全线日志与错误输出基于 **rich**: 彩色表格、面板、进度与完整 traceback。模块不直接 `print`, 统一经 `ucpu/console.py` 适配层输出。
+全线日志与错误输出基于 **rich**: 彩色表格、面板、进度与完整 traceback。模块不直接 `print`, 统一经 `codecin/console.py` 适配层输出。
 
 ### 日志级别
 
@@ -728,7 +728,7 @@ flowchart TD
 ```c
 function main() {
     println("Hello, World!")
-    println("Welcome to UCPU")
+    println("Welcome to Code CIN")
     return 0
 }
 ```
@@ -804,12 +804,12 @@ size: .word 9
 
 ```mermaid
 graph TD
-    UCPU[UCPU]
+    Code CIN[Code CIN]
 
-    UCPU --> PY[Python 3.8+]
-    UCPU --> RICH[Rich Library]
-    UCPU --> GO[Go 1.21+ 原生库]
-    UCPU --> STDLIB[Standard Library]
+    Code CIN --> PY[Python 3.8+]
+    Code CIN --> RICH[Rich Library]
+    Code CIN --> GO[Go 1.21+ 原生库]
+    Code CIN --> STDLIB[Standard Library]
 
     RICH --> COLOR[彩色输出]
     RICH --> TABLE[表格渲染]
@@ -827,7 +827,7 @@ graph TD
 
 | 组件 | 技术 | 说明 |
 |------|------|------|
-| 语言 | Python 3.8+ | 核心实现语言 (模块化包 `ucpu/`) |
+| 语言 | Python 3.8+ | 核心实现语言 (模块化包 `codecin/`) |
 | UI/日志 | Rich | 彩色输出、表格、面板、traceback |
 | 原生加速 | Go 1.21+ (c-shared) | 原生 VM + CROM, 可选, 自动回退 |
 | 压缩 | zlib | CROM压缩 |
@@ -882,7 +882,7 @@ flowchart LR
 | 开发组织 | ByUsi Studio |
 | 主要开发者 | 北啊呢 |
 | 邮箱 | admin@byusistudio.fun |
-| GitHub | github.com/ByUsiStudio/ucpu |
+| GitHub | github.com/ByUsiStudio/codecin |
 
 ---
 
@@ -899,7 +899,7 @@ flowchart LR
 
 ---
 
-**UCPU - 让CPU模拟变得简单而强大**
+**Code CIN - 让CPU模拟变得简单而强大**
 
 ---
 

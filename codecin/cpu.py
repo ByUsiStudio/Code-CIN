@@ -1572,13 +1572,13 @@ class CPU:
 
     def display_state(self, title: str = "CPU State", opcode: Optional[str] = None,
                       args: Optional[List[Operand]] = None) -> None:
-        # 建议 6: 渲染逻辑迁移至 ucpu/debugger.py (状态显示与执行解耦)
+        # 建议 6: 渲染逻辑迁移至 codecin/debugger.py (状态显示与执行解耦)
         from .debugger import display_state as _render_state
         _render_state(self, title, opcode, args)
 
     @staticmethod
     def _fmt_operand(op: Operand) -> str:
-        # 建议 6: 操作数格式化迁移至 ucpu/debugger.py
+        # 建议 6: 操作数格式化迁移至 codecin/debugger.py
         from .debugger import fmt_operand
         return fmt_operand(op)
 
@@ -1591,7 +1591,7 @@ class CPU:
         self.logger.info(f"Breakpoint removed at PC={addr:#x}")
 
     def debug_command_loop(self) -> None:
-        """断点命中后的交互调试入口 (建议 6: 逻辑已迁移至 ucpu/debugger.DebugSession)。"""
+        """断点命中后的交互调试入口 (建议 6: 逻辑已迁移至 codecin/debugger.DebugSession)。"""
         from .debugger import DebugSession
         action = DebugSession(self).run()
         if action == 'halted':

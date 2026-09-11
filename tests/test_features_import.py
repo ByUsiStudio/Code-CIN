@@ -4,8 +4,8 @@ import os
 
 import pytest
 
-from ucpu.cin import CINCompiler, load_program_source
-from ucpu.errors import CompilerError
+from codecin.cin import CINCompiler, load_program_source
+from codecin.errors import CompilerError
 
 from tests.helpers import run_cin_file, run_cin_source
 

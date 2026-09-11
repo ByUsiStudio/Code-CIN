@@ -1,4 +1,4 @@
-// UCPU 纯 CIN 数学扩展 (B2 lib/math.cin)
+// Code CIN 纯 CIN 数学扩展 (B2 lib/math.cin)
 // 用法: import "lib/math.cin"
 // 说明: '/' 为浮点除法; 这里提供显式取整/最值/夹取辅助函数。
 

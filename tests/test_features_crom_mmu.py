@@ -4,9 +4,9 @@ import os
 
 import pytest
 
-from ucpu import crom
-from ucpu.errors import MemoryAccessError, PageFaultError
-from ucpu.memory import FastMemory, Mmu
+from codecin import crom
+from codecin.errors import MemoryAccessError, PageFaultError
+from codecin.memory import FastMemory, Mmu
 
 PAGE = Mmu.PAGE_SIZE
 SIZE = 4 * PAGE

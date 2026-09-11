@@ -2,7 +2,7 @@
 
 import pytest
 
-from ucpu.errors import ExecutionError
+from codecin.errors import ExecutionError
 
 from tests.helpers import imm, mem, new_cpu, reg, run_program
 

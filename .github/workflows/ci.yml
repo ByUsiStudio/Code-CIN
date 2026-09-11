@@ -39,7 +39,7 @@ jobs:
         with:
           python-version: "3.11"
       - run: python -m pip install ruff
-      - run: ruff check ucpu cpu.py script tests
+      - run: ruff check codecin cpu.py script tests
 
   native:
     name: Go native (build check)
@@ -48,7 +48,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version-file: ucpu/native/go.mod
+          go-version-file: codecin/native/go.mod
       - name: Build c-shared (Linux)
-        run: go build -buildmode=c-shared -o /tmp/libucpu_native.so .
-        working-directory: ucpu/native
+        run: go build -buildmode=c-shared -o /tmp/libcodecin_native.so .
+        working-directory: codecin/native

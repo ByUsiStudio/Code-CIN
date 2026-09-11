@@ -1,5 +1,5 @@
 #!/usr/bin/env sh
-# UCPU 原生库构建脚本 (Linux / Termux / macOS)
+# Code CIN 原生库构建脚本 (Linux / Termux / macOS)
 # 依赖: Go 1.21+ 且启用 cgo
 #   Linux:  安装 gcc (如 apt install gcc golang)
 #   Termux: pkg install golang (自带 cgo 工具链, 支持 -buildmode=c-shared)
@@ -10,15 +10,15 @@ cd "$(dirname "$0")"
 
 case "$(uname -s)" in
     Darwin)
-        OUT="../libucpu_native.dylib"
+        OUT="../libcodecin_native.dylib"
         ;;
     *)
-        OUT="../libucpu_native.so"
+        OUT="../libcodecin_native.so"
         ;;
 esac
 
 go build -buildmode=c-shared -o "$OUT" .
 
 # c-shared 附带的头文件, Python ctypes 不需要
-rm -f ../ucpu_native.h ../libucpu_native.h
+rm -f ../codecin_native.h ../libcodecin_native.h
 echo "Built: $OUT"

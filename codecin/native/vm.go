@@ -1,6 +1,6 @@
 package main
 
-// UCPU 原生字节码 VM。语义与 ucpu/cpu.py 解释器严格一致:
+// Code CIN 原生字节码 VM。语义与 codecin/cpu.py 解释器严格一致:
 //   - PC 语义: 取指后先 pc++ 再执行; CALL/BL 压入的是已自增的 pc
 //   - 栈: 8 字节 qword, 自顶向下; sp 初值由调用方传入
 //   - 寄存器: 33 个槽, R[31]=XZR 只读, R[32]=SP
@@ -20,7 +20,7 @@ import (
 )
 
 // 操作数种类/操作码/SYS 功能号常量由 isa_gen.go 提供 (单一事实来源:
-// python script/gen_native_isa.py 自 ucpu/isa.py 生成, 请勿在此重复定义)。
+// python script/gen_native_isa.py 自 codecin/isa.py 生成, 请勿在此重复定义)。
 
 const mask64 = uint64(0xFFFFFFFFFFFFFFFF)
 

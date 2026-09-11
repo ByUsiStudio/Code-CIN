@@ -1,7 +1,7 @@
 """CIN 高级语言编译器。
 
 将 CIN 源码 (类 C 语法: 函数/struct/多维数组/字符串/浮点/控制流)
-编译为 UCPU 字节码 IR。
+编译为 Code CIN 字节码 IR。
 
 语法扩展 (2026):
   - 语句: break/continue, do-while, switch/case/default (case 常量表达式)
@@ -144,7 +144,7 @@ def tokenize(source: str,
             tokens.append(Token('NL', '\n', line))
             line += 1
             i += 1
-        elif c in ' \t\r':
+        elif c in ' \t\r\ufeff':
             i += 1
         elif c == '/' and i + 1 < n and source[i + 1] == '/':
             while i < n and source[i] != '\n':
@@ -321,18 +321,18 @@ def tokenize(source: str,
 
 _IMPORT_RE = re.compile(r'^import\s+["\']([^"\']+)["\']\s*;?\s*$')
 
-_UCPU_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_CODECIN_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 
 def _resolve_import(name: str, source_dir: str, lib_dir: str) -> str:
     candidates = [os.path.join(source_dir, name),
                   os.path.join(lib_dir, name) if lib_dir else '',
-                  os.path.join(_UCPU_ROOT, name)]
+                  os.path.join(_CODECIN_ROOT, name)]
     for cand in candidates:
         if cand and os.path.isfile(cand):
             return cand
     raise CompilerError(f"Import file not found: {name!r} (searched "
-                        f"{source_dir}, {lib_dir}, {_UCPU_ROOT})")
+                        f"{source_dir}, {lib_dir}, {_CODECIN_ROOT})")
 
 
 def _collect_module_lines(path: str, loaded: set, active: set,
@@ -354,7 +354,7 @@ def _collect_module_lines(path: str, loaded: set, active: set,
         if m:
             target = _resolve_import(
                 m.group(1), os.path.dirname(real),
-                os.path.join(_UCPU_ROOT, 'lib'))
+                os.path.join(_CODECIN_ROOT, 'lib'))
             _collect_module_lines(target, loaded, active, out)
             continue
         out.append((real, line))

@@ -23,7 +23,7 @@ thin_line() { echo -e "${DIM}─────────────────
 start_time=$(date +%s)
 
 clear
-echo -e "${MAGENTA}${BOLD}欢迎使用 UCPU 程序${NC}"
+echo -e "${MAGENTA}${BOLD}欢迎使用 Code CIN 程序${NC}"
 echo -e "${DIM}启动时间: $(date '+%Y-%m-%d %H:%M:%S')${NC}"
 line
 echo -e "${WHITE}${BOLD}系统环境${NC}"
@@ -64,7 +64,7 @@ pkg install -y git python python-pip uv
 finish_step "安装基础工具"
 
 step_func "创建工作目录"
-WORK_DIR="$HOME/.ByUsi Studio/UCPU"
+WORK_DIR="$HOME/.ByUsi Studio/Code CIN"
 mkdir -p "$WORK_DIR"
 cd "$WORK_DIR"
 success "工作目录: $(pwd)"
@@ -72,9 +72,9 @@ thin_line
 true
 finish_step "创建工作目录"
 
-step_func "克隆或更新 UCPU 仓库"
+step_func "克隆或更新 Code CIN 仓库"
 if [ -n "$(ls -A .)" ]; then
-    warning "当前目录非空，已存在 UCPU 项目文件。"
+    warning "当前目录非空，已存在 Code CIN 项目文件。"
     if git rev-parse --git-dir >/dev/null 2>&1; then
         echo -n "是否进行拉取更新？ (y/N): "
         read answer
@@ -98,7 +98,7 @@ if [ -n "$(ls -A .)" ]; then
             success "用户选择清空目录"
             find . -mindepth 1 -delete
             success "目录已清空"
-            git clone https://gitee.com/byusistudio/ucpu .
+            git clone https://gitee.com/byusistudio/codecin .
             if [ $? -ne 0 ]; then
                 error "克隆失败"
                 exit 1
@@ -110,13 +110,13 @@ if [ -n "$(ls -A .)" ]; then
     fi
 else
     info "目录为空，直接克隆"
-    git clone https://gitee.com/byusistudio/ucpu .
+    git clone https://gitee.com/byusistudio/codecin .
     if [ $? -ne 0 ]; then
         error "克隆失败"
         exit 1
     fi
 fi
-finish_step "克隆或更新 UCPU 仓库"
+finish_step "克隆或更新 Code CIN 仓库"
 
 step_func "创建/更新虚拟环境"
 if [ ! -d ".venv" ]; then
@@ -139,8 +139,8 @@ if [ $? -ne 0 ]; then
 fi
 finish_step "同步 Python 依赖"
 
-step_func "生成启动脚本 (ucpu-cli)"
-cat > ucpu-cli << 'EOF'
+step_func "生成启动脚本 (codecin-cli)"
+cat > codecin-cli << 'EOF'
 #!/bin/bash
 original_pwd="$PWD"
 cd "$(dirname "$0")" || exit
@@ -158,19 +158,19 @@ for arg in "$@"; do
 done
 uv run python cpu.py "${args[@]}"
 EOF
-chmod +x ucpu-cli
-success "启动脚本已创建: $(pwd)/ucpu-cli"
+chmod +x codecin-cli
+success "启动脚本已创建: $(pwd)/codecin-cli"
 thin_line
 true
 finish_step "生成启动脚本"
 
 step_func "配置环境变量"
-UCPU_INSTALL="$HOME/../usr/etc/profile.d/ucpu_init.sh"
-mkdir -p "$(dirname "$UCPU_INSTALL")"
+Code CIN_INSTALL="$HOME/../usr/etc/profile.d/codecin_init.sh"
+mkdir -p "$(dirname "$Code CIN_INSTALL")"
 PROJECT_ROOT="$(pwd)"
-echo "export PATH=\"\$PATH:$PROJECT_ROOT\"" > "$UCPU_INSTALL"
-chmod +x "$UCPU_INSTALL"
-success "环境变量已添加到 $UCPU_INSTALL"
+echo "export PATH=\"\$PATH:$PROJECT_ROOT\"" > "$Code CIN_INSTALL"
+chmod +x "$Code CIN_INSTALL"
+success "环境变量已添加到 $Code CIN_INSTALL"
 thin_line
 true
 finish_step "配置环境变量"
@@ -184,6 +184,6 @@ echo -e "${DIM}总耗时: ${total_duration}秒${NC}"
 echo -e "${DIM}完成时间: $(date '+%Y-%m-%d %H:%M:%S')${NC}"
 line
 echo -e "${YELLOW}提示: 请运行以下命令使环境变量生效:${NC}"
-echo -e "  ${BOLD}source $UCPU_INSTALL${NC}"
+echo -e "  ${BOLD}source $Code CIN_INSTALL${NC}"
 echo -e "或重新打开终端。"
-echo -e "之后您可以直接在任意位置执行 ${GREEN}ucpu-cli${NC} 命令。"
+echo -e "之后您可以直接在任意位置执行 ${GREEN}codecin-cli${NC} 命令。"

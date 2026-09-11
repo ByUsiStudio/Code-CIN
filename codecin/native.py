@@ -1,10 +1,10 @@
 """Go 原生库桥接 (c-shared)。
 
-通过 ctypes 加载 Go 编译的共享库 (Windows: ucpu_native.dll,
-Linux/Termux: libucpu_native.so, macOS: libucpu_native.dylib),
+通过 ctypes 加载 Go 编译的共享库 (Windows: codecin_native.dll,
+Linux/Termux: libcodecin_native.so, macOS: libcodecin_native.dylib),
 提供:
-  1. 原生字节码 VM (ucpu_run)  -- 整程序高速执行
-  2. CROM 压缩/解压 (ucpu_crom_pack / ucpu_crom_unpack)
+  1. 原生字节码 VM (codecin_run)  -- 整程序高速执行
+  2. CROM 压缩/解压 (codecin_crom_pack / codecin_crom_unpack)
 
 库不存在或加载失败时所有接口返回 None, 调用方自动回退纯 Python。
 
@@ -146,14 +146,14 @@ def _lib_candidates() -> List[str]:
     here = os.path.dirname(os.path.abspath(__file__))
     system = platform.system()
     if system == 'Windows':
-        names = ['ucpu_native.dll']
+        names = ['codecin_native.dll']
     elif system == 'Darwin':
-        names = ['libucpu_native.dylib', 'ucpu_native.dylib']
+        names = ['libcodecin_native.dylib', 'codecin_native.dylib']
     else:
-        names = ['libucpu_native.so', 'ucpu_native.so']
+        names = ['libcodecin_native.so', 'codecin_native.so']
     candidates = [os.path.join(here, 'native', n) for n in names]
     candidates += [os.path.join(here, n) for n in names]
-    env = os.environ.get('UCPU_NATIVE_LIB')
+    env = os.environ.get('CODECIN_NATIVE_LIB')
     if env:
         candidates.insert(0, env)
     if getattr(sys, 'frozen', False):
@@ -172,32 +172,32 @@ class NativeEngine:
 
     def _configure(self) -> None:
         lib = self.lib
-        lib.ucpu_run.argtypes = [
+        lib.codecin_run.argtypes = [
             ctypes.c_void_p, ctypes.c_int,       # bytecode, len
             ctypes.c_void_p, ctypes.c_int,       # mem, len
             ctypes.c_longlong, ctypes.c_longlong, ctypes.c_longlong,  # entry, sp, heap
             ctypes.c_void_p, ctypes.c_int,       # input, len
             ctypes.c_longlong,                   # max steps
         ]
-        lib.ucpu_run.restype = ctypes.c_void_p
-        lib.ucpu_free.argtypes = [ctypes.c_void_p]
-        lib.ucpu_free.restype = None
-        lib.ucpu_crom_pack.argtypes = [
+        lib.codecin_run.restype = ctypes.c_void_p
+        lib.codecin_free.argtypes = [ctypes.c_void_p]
+        lib.codecin_free.restype = None
+        lib.codecin_crom_pack.argtypes = [
             ctypes.c_void_p, ctypes.c_int, ctypes.c_int,
             ctypes.POINTER(ctypes.c_int),
         ]
-        lib.ucpu_crom_pack.restype = ctypes.c_void_p
-        lib.ucpu_crom_unpack.argtypes = [
+        lib.codecin_crom_pack.restype = ctypes.c_void_p
+        lib.codecin_crom_unpack.argtypes = [
             ctypes.c_void_p, ctypes.c_int,
             ctypes.POINTER(ctypes.c_int), ctypes.POINTER(ctypes.c_int),
         ]
-        lib.ucpu_crom_unpack.restype = ctypes.c_void_p
-        lib.ucpu_version.argtypes = []
-        lib.ucpu_version.restype = ctypes.c_char_p
+        lib.codecin_crom_unpack.restype = ctypes.c_void_p
+        lib.codecin_version.argtypes = []
+        lib.codecin_version.restype = ctypes.c_char_p
 
     def version(self) -> str:
         try:
-            return self.lib.ucpu_version().decode()
+            return self.lib.codecin_version().decode()
         except Exception:
             return "unknown"
 
@@ -209,7 +209,7 @@ class NativeEngine:
         mem_buf = ctypes.create_string_buffer(bytes(mem), len(mem))
         in_buf = ctypes.create_string_buffer(input_data) if input_data else None
 
-        ptr = self.lib.ucpu_run(
+        ptr = self.lib.codecin_run(
             ctypes.cast(bc_buf, ctypes.c_void_p), len(bytecode),
             ctypes.cast(mem_buf, ctypes.c_void_p), len(mem),
             entry, sp, heap_base,
@@ -222,7 +222,7 @@ class NativeEngine:
         try:
             return self._parse_result(ptr)
         finally:
-            self.lib.ucpu_free(ptr)
+            self.lib.codecin_free(ptr)
 
     def _parse_result(self, ptr: int) -> Dict[str, Any]:
         base = ptr
@@ -275,7 +275,7 @@ class NativeEngine:
     def crom_pack(self, mem: bytes, compress: bool) -> Optional[bytes]:
         buf = ctypes.create_string_buffer(bytes(mem), len(mem))
         out_len = ctypes.c_int(0)
-        ptr = self.lib.ucpu_crom_pack(
+        ptr = self.lib.codecin_crom_pack(
             ctypes.cast(buf, ctypes.c_void_p), len(mem),
             1 if compress else 0, ctypes.byref(out_len))
         if not ptr:
@@ -283,13 +283,13 @@ class NativeEngine:
         try:
             return bytes(ctypes.string_at(ptr, out_len.value))
         finally:
-            self.lib.ucpu_free(ptr)
+            self.lib.codecin_free(ptr)
 
     def crom_unpack(self, data: bytes) -> Optional[bytes]:
         buf = ctypes.create_string_buffer(data, len(data))
         mem_len = ctypes.c_int(0)
         flags = ctypes.c_int(0)
-        ptr = self.lib.ucpu_crom_unpack(
+        ptr = self.lib.codecin_crom_unpack(
             ctypes.cast(buf, ctypes.c_void_p), len(data),
             ctypes.byref(mem_len), ctypes.byref(flags))
         if not ptr:
@@ -297,7 +297,7 @@ class NativeEngine:
         try:
             return bytes(ctypes.string_at(ptr, mem_len.value))
         finally:
-            self.lib.ucpu_free(ptr)
+            self.lib.codecin_free(ptr)
 
 
 def get_engine(logger=None) -> Optional[NativeEngine]:

@@ -28,10 +28,10 @@ class Logger:
         self.console = console or Console()
         self.level = self._parse_level(level)
 
-        self._log = logging.getLogger('ucpu')
+        self._log = logging.getLogger('codecin')
         self._log.propagate = False
         self._log.setLevel(logging.DEBUG)   # handler 负责过滤
-        # 本类独占 'ucpu' logger, 避免重复 handler
+        # 本类独占 'codecin' logger, 避免重复 handler
         for h in list(self._log.handlers):
             self._log.removeHandler(h)
 
@@ -55,9 +55,9 @@ class Logger:
     # ---------------- 级别控制 ----------------
 
     @staticmethod
-    def _to_logging_level(ucpu_level: int) -> int:
-        # ucpu: DEBUG=0..CRITICAL=4  -> logging: 10..50
-        return (ucpu_level + 1) * 10
+    def _to_logging_level(codecin_level: int) -> int:
+        # codecin: DEBUG=0..CRITICAL=4  -> logging: 10..50
+        return (codecin_level + 1) * 10
 
     def _parse_level(self, level: str) -> int:
         return self.LEVELS.get(str(level).upper(), 1)

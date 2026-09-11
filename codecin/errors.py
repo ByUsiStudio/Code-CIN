@@ -2,7 +2,7 @@ from typing import Any, Optional
 
 
 class CPUSimulatorError(Exception):
-    """所有 UCPU 错误的基类。"""
+    """所有 Code CIN 错误的基类。"""
 
     def __init__(self, message: str, detail: Optional[Any] = None):
         self.message = message

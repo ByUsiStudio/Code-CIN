@@ -12,15 +12,15 @@ from typing import List, Optional
 from .config import Config
 from .console import Colors, Console, Panel
 
-HELP_INTRO = f"""{Colors.colorize('UCPU Simulator v5.2', Colors.CYAN, True)}
+HELP_INTRO = f"""{Colors.colorize('Code CIN v5.3', Colors.CYAN, True)}
 
 {Colors.colorize('Usage:', Colors.YELLOW)}
   python cpu.py <program.[cin|pl|asm|bin]> [options]
 
 {Colors.colorize('Supported formats:', Colors.YELLOW)}
   .cin   CIN 高级语言 (函数/struct/数组/浮点/字符串)
-  .pl    UCPU 汇编语言 (PL 关键字风格)
-  .asm   UCPU 汇编
+  .pl    Code CIN 汇编语言 (PL 关键字风格)
+  .asm   Code CIN 汇编
   .bin   UCBC 字节码 (由 --compile 生成)
 """
 
@@ -29,7 +29,7 @@ def build_parser() -> argparse.ArgumentParser:
     """参数表单一来源 (与 Config 字段一一对应)。"""
     p = argparse.ArgumentParser(
         prog='cpu.py',
-        description='UCPU - 通用CPU模拟器 (CIN/PL/ASM 工具链 + 多执行路径)',
+        description='Code CIN - 通用CPU模拟器 (CIN/PL/ASM 工具链 + 多执行路径)',
         add_help=False,          # 帮助由 main 以彩色形式打印 (见 --help)
     )
     p.add_argument('program', nargs='?', default=None,

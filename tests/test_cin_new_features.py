@@ -3,8 +3,8 @@ min/max、floor/ceil/round、atoi、trim/ltrim/rtrim (解释/JIT/原生三路径
 
 import pytest
 
-from ucpu.cin import CINCompiler
-from ucpu.errors import CompilerError
+from codecin.cin import CINCompiler
+from codecin.errors import CompilerError
 
 from tests.helpers import run_cin_source
 
@@ -177,3 +177,8 @@ def test_bitwise_compound_on_float_is_error():
     with pytest.raises(CompilerError):
         CINCompiler().compile_source(
             "function main() -> int { float f = 3.0\nf <<= 1\nreturn 0 }\n")
+
+
+def test_utf8_bom_is_tolerated():
+    src = "\ufefffunction main() -> int { return 42 }\n"
+    assert run_cin_source(src).regs.read(0) == 42

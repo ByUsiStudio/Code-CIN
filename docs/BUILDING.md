@@ -1,4 +1,4 @@
-# UCPU 开发者编译文档 (BUILDING)
+# Code CIN 开发者编译文档 (BUILDING)
 
 > 本文档面向开发者: 环境搭建、Go 原生库编译、字节码/CROM 构建产物、独立可执行文件打包、日志与调试、扩展指南。
 > CIN 语言使用方法见 [CIN 编程指南](CIN_GUIDE.md)。
@@ -23,9 +23,9 @@
 ## 1. 项目结构
 
 ```
-UCPU/
-├── cpu.py                  # 入口 (转发到 ucpu.cli)
-├── ucpu/                   # 主 Python 包
+Code CIN/
+├── cpu.py                  # 入口 (转发到 codecin.cli)
+├── codecin/                   # 主 Python 包
 │   ├── __init__.py         # 包导出: CPU / Config / Opcode / 异常类
 │   ├── cli.py              # 命令行入口: 参数解析 -> 加载 -> 运行
 │   ├── config.py           # 运行配置 (dataclass) 与 CLI 参数映射
@@ -46,14 +46,14 @@ UCPU/
 │   └── errors.py           # 异常层次: CPUSimulatorError 及子类
 │   └── native/             # Go 原生库源码
 │       ├── go.mod          # Go 模块定义
-│       ├── main.go         # 导出符号: ucpu_run / ucpu_crom_pack / ...
+│       ├── main.go         # 导出符号: codecin_run / codecin_crom_pack / ...
 │       ├── vm.go           # 原生字节码 VM
 │       ├── crom.go         # CROM 压缩/解压 (Go 端)
 │       ├── build.ps1       # Windows 构建脚本
 │       └── build.sh        # Linux / Termux / macOS 构建脚本
 ├── basic.cin               # CIN 综合示例 (回归基准)
 ├── test_asm.asm            # 汇编测试样例
-├── ucpu.spec               # PyInstaller 打包配置
+├── codecin.spec               # PyInstaller 打包配置
 └── docs/                   # 文档 (本目录)
 ```
 
@@ -93,8 +93,8 @@ pip install rich
 ## 3. 从源码运行
 
 ```bash
-git clone https://github.com/ByUsiStudio/ucpu.git
-cd ucpu
+git clone https://github.com/ByUsiStudio/codecin.git
+cd codecin
 
 python cpu.py basic.cin              # CIN 程序 (优先尝试 Go 原生)
 python cpu.py basic.cin --no-native  # 强制纯 Python 解释执行
@@ -131,49 +131,49 @@ python cpu.py --help                 # 完整帮助
 
 > 注意: `--debug` 与 `--jit` 互斥 (debug 需要逐指令解释追踪); 同时给出时 debug 优先。
 
-> CLI 参数表唯一来源为 `ucpu/cli.py: build_parser()` (argparse); 本文档仅作摘要,
+> CLI 参数表唯一来源为 `codecin/cli.py: build_parser()` (argparse); 本文档仅作摘要,
 > 完整列表与最新选项请以 `python cpu.py --help` 为准。
 
 ---
 
 ## 4. 构建 Go 原生加速库
 
-原生库通过 Go `-buildmode=c-shared` 编译为共享库, 由 `ucpu/native.py` 用 ctypes 加载。导出接口:
+原生库通过 Go `-buildmode=c-shared` 编译为共享库, 由 `codecin/native.py` 用 ctypes 加载。导出接口:
 
 | 符号 | 功能 |
 |------|------|
-| `ucpu_run` | 原生字节码 VM, 一次载入整程序执行, 返回完整状态快照 |
-| `ucpu_free` | 释放返回缓冲区 |
-| `ucpu_crom_pack` | CROM 打包 (含 zlib 压缩) |
-| `ucpu_crom_unpack` | CROM 解包校验 |
-| `ucpu_version` | 版本字符串 |
+| `codecin_run` | 原生字节码 VM, 一次载入整程序执行, 返回完整状态快照 |
+| `codecin_free` | 释放返回缓冲区 |
+| `codecin_crom_pack` | CROM 打包 (含 zlib 压缩) |
+| `codecin_crom_unpack` | CROM 解包校验 |
+| `codecin_version` | 版本字符串 |
 
 ### Windows (PowerShell)
 
 依赖: Go 1.21+ 与 cgo 可用的 C 编译器 (MinGW-w64 / TDM-GCC 的 `gcc`, 需在 PATH)。
 
 ```powershell
-cd ucpu\native
+cd codecin\native
 .\build.ps1
 ```
 
-产物: `ucpu/ucpu_native.dll` (c-shared 附带的 `ucpu_native.h` 会被脚本自动删除)。
+产物: `codecin/codecin_native.dll` (c-shared 附带的 `codecin_native.h` 会被脚本自动删除)。
 
 ### Linux
 
 ```bash
 sudo apt install golang gcc    # 或使用发行版等价命令
-cd ucpu/native
+cd codecin/native
 sh build.sh
 ```
 
-产物: `ucpu/libucpu_native.so`
+产物: `codecin/libcodecin_native.so`
 
 ### Termux (Android)
 
 ```bash
 pkg install golang
-cd ucpu/native
+cd codecin/native
 sh build.sh    # Termux 自带 cgo 工具链, 支持 c-shared
 ```
 
@@ -182,24 +182,24 @@ sh build.sh    # Termux 自带 cgo 工具链, 支持 c-shared
 ```bash
 xcode-select --install   # clang
 brew install go
-cd ucpu/native
+cd codecin/native
 sh build.sh
 ```
 
-产物: `ucpu/libucpu_native.dylib`
+产物: `codecin/libcodecin_native.dylib`
 
 ### 验证
 
 ```bash
-python -c "from ucpu import native; print(native.load_native_library())"
+python -c "from codecin import native; print(native.load_native_library())"
 ```
 
 输出非 `None` 即加载成功。之后运行程序时日志会出现原生库路径; 若失败可看到回退 warning, 加 `--no-native` 可复现纯 Python 行为。
 
-> 手动编译等价命令: `go build -buildmode=c-shared -o ../ucpu_native.dll .` (在 `ucpu/native/` 目录)。
+> 手动编译等价命令: `go build -buildmode=c-shared -o ../codecin_native.dll .` (在 `codecin/native/` 目录)。
 
-> **常量单一事实来源**: Go 端操作码/操作数类型/SYS 功能号常量由 `ucpu/native/isa_gen.go`
-> 提供, 该文件由 `python script/gen_native_isa.py` 从 `ucpu/isa.py` **自动生成** (勿手工改动)。
+> **常量单一事实来源**: Go 端操作码/操作数类型/SYS 功能号常量由 `codecin/native/isa_gen.go`
+> 提供, 该文件由 `python script/gen_native_isa.py` 从 `codecin/isa.py` **自动生成** (勿手工改动)。
 > 修改指令集后: `python script/gen_native_isa.py` → 重新编译原生库 → 跑 `python -m pytest`。
 > CI 中的 `script/gen_native_isa.py --check` 会拦截两者漂移。
 
@@ -251,23 +251,23 @@ python cpu.py --crom basic.crom                 # 加载镜像运行
 
 ## 6. 打包独立可执行文件
 
-使用 PyInstaller, **唯一入口为 `ucpu.spec`** (Windows 下直接运行 `build_win.bat`):
+使用 PyInstaller, **唯一入口为 `codecin.spec`** (Windows 下直接运行 `build_win.bat`):
 
 ```bash
 pip install -r requirements.txt pyinstaller   # 建议在干净 venv 中执行
 build_win.bat                                  # Windows
 # 或任意平台:
-pyinstaller --noconfirm --clean ucpu.spec
+pyinstaller --noconfirm --clean codecin.spec
 ```
 
 spec 要点 (见文件内注释):
 
-- `binaries` 已携带 `ucpu/ucpu_native.dll` (ctypes 运行时加载, 静态分析发现不了);
+- `binaries` 已携带 `codecin/codecin_native.dll` (ctypes 运行时加载, 静态分析发现不了);
 - `excludes` 列出 numpy/scipy/matplotlib/pywin32/cryptography 等无关重型库 — 在**只装
   `requirements.txt` 的干净环境**构建可把产物从 ~100 MB 瘦身到几十 MB;
-- 冻结产物下的原生库搜索路径见 `ucpu/native.py: _lib_candidates` (exe 目录与 `_MEIPASS`)。
+- 冻结产物下的原生库搜索路径见 `codecin/native.py: _lib_candidates` (exe 目录与 `_MEIPASS`)。
 
-产物在 `dist/ucpu/`。`--debug`/`--step` 的 rich 输出依赖终端, spec 中保持 `console=True`。
+产物在 `dist/codecin/`。`--debug`/`--step` 的 rich 输出依赖终端, spec 中保持 `console=True`。
 
 ---
 
@@ -275,8 +275,8 @@ spec 要点 (见文件内注释):
 
 ### 架构
 
-- `ucpu/console.py`: rich 的适配层。所有模块禁止直接 `print`, 统一经 `Console.print` / `Panel` / `Table` / `Colors` 输出。
-- `ucpu/logger.py`: 基于 `rich.logging.RichHandler` 的日志器, 级别 `DEBUG < INFO < WARNING < ERROR`, 支持 `--log-file` 重定向。
+- `codecin/console.py`: rich 的适配层。所有模块禁止直接 `print`, 统一经 `Console.print` / `Panel` / `Table` / `Colors` 输出。
+- `codecin/logger.py`: 基于 `rich.logging.RichHandler` 的日志器, 级别 `DEBUG < INFO < WARNING < ERROR`, 支持 `--log-file` 重定向。
 - 错误统一 rich 面板化: 加载/汇编/编译/运行错误均输出红色 `Panel`; debug 模式下附带 `rich` 彩色完整 traceback (`Console.print_exception`)。
 
 ### 日志级别行为
@@ -306,7 +306,7 @@ spec 要点 (见文件内注释):
 ### 文件日志
 
 ```bash
-python cpu.py basic.cin --debug --log-file ucpu.log
+python cpu.py basic.cin --debug --log-file codecin.log
 ```
 
 ---
@@ -318,9 +318,9 @@ python cpu.py basic.cin --debug --log-file ucpu.log
 ```bash
 pip install -r requirements-dev.txt   # rich + pytest + ruff
 python -m pytest                      # 指令级黄金 / 三路径一致性 / 断点回归 / memory 保护 / CLI
-python script/gen_isa_docs.py --check     # docs/ISA.md 与 ucpu/isa.py 同步
-python script/gen_native_isa.py --check   # native/isa_gen.go 与 ucpu/isa.py 同步
-ruff check ucpu cpu.py script tests
+python script/gen_isa_docs.py --check     # docs/ISA.md 与 codecin/isa.py 同步
+python script/gen_native_isa.py --check   # native/isa_gen.go 与 codecin/isa.py 同步
+ruff check codecin cpu.py script tests
 ```
 
 测试内容概要 (`tests/`):
@@ -358,25 +358,25 @@ python cpu.py basic.cin --compile-only && python cpu.py basic.bin  # 字节码�
 
 新增一条指令需要同步改动的位置 (以 `MINUS` 为例):
 
-1. `ucpu/isa.py`
+1. `codecin/isa.py`
    - `Opcode` 枚举追加成员 (新编号);
    - `Constants.OPCODE_NAMES` / `OPCODE_NAME_TO_ENUM` 加显示名;
    - `Constants.ARG_COUNTS` 声明参数个数 (`-1` 为变长);
    - 如是分支/浮点类, 加入 `BRANCH_OPS` / `FP_OPS` 集合 (统计用)。
-2. `ucpu/cpu.py` — 解释路径实现: 定义 `def _op_XXX(self, args)`。dispatch 表按 `_op_`
+2. `codecin/cpu.py` — 解释路径实现: 定义 `def _op_XXX(self, args)`。dispatch 表按 `_op_`
    前缀**自动注册** (见 `_init_dispatch`), 无需手工登记; 无事件模型的别名指令
    (如 WFE/WFI/SEV) 在 `CPU._OP_ALIASES` 声明。
-3. `ucpu/jit.py` — JIT 代码生成加分支 (否则该指令所在块会回退解释执行)。
-4. `ucpu/native/vm.go` — 原生 VM `switch` 加实现; 不实现时返回 `statusUnsupported`,
+3. `codecin/jit.py` — JIT 代码生成加分支 (否则该指令所在块会回退解释执行)。
+4. `codecin/native/vm.go` — 原生 VM `switch` 加实现; 不实现时返回 `statusUnsupported`,
    Python 端自动回退。Go 侧常量来自生成的 `isa_gen.go`, **不要手工改**。
-5. `ucpu/assembler.py` — 若有特殊操作数语法, 在汇编器适配; 常规 `reg/imm/label/mem` 自动支持。
-6. `ucpu/cin.py` — 如需暴露给 CIN, 在 `Syscall` 加功能号并在 `cpu.py`/`vm.go` 的 SYS handler 实现宿主调用。
+5. `codecin/assembler.py` — 若有特殊操作数语法, 在汇编器适配; 常规 `reg/imm/label/mem` 自动支持。
+6. `codecin/cin.py` — 如需暴露给 CIN, 在 `Syscall` 加功能号并在 `cpu.py`/`vm.go` 的 SYS handler 实现宿主调用。
 
 新增后同步 (防止文档/原生常量漂移):
 
 ```bash
 python script/gen_isa_docs.py      # 重写 docs/ISA.md
-python script/gen_native_isa.py    # 重写 ucpu/native/isa_gen.go
+python script/gen_native_isa.py    # 重写 codecin/native/isa_gen.go
 python script/gen_native_isa.py --check && python script/gen_isa_docs.py --check
 go build -buildmode=c-shared ...   # 重新编译原生库 (见第 4 节)
 python -m pytest

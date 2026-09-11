@@ -1,6 +1,6 @@
 """CROM 内存镜像 (v3: zlib 压缩 + CRC32 校验) 与 CPUSA 二进制程序格式。
 
-优先调用 Go 原生库 (ucpu.native) 进行压缩/解压, 无原生库时回退到 zlib。
+优先调用 Go 原生库 (codecin.native) 进行压缩/解压, 无原生库时回退到 zlib。
 """
 
 import os

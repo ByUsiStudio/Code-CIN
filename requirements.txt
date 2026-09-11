@@ -1,3 +1,3 @@
-# UCPU 运行时依赖
+# Code CIN 运行时依赖
 # Python 3.8+ (见 docs/BUILDING.md)
 rich>=13,<15

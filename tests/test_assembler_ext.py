@@ -2,9 +2,9 @@
 
 import pytest
 
-from ucpu.assembler import Assembler
-from ucpu.errors import AssemblerError
-from ucpu.memory import FastMemory
+from codecin.assembler import Assembler
+from codecin.errors import AssemblerError
+from codecin.memory import FastMemory
 
 from tests.helpers import asm_program
 

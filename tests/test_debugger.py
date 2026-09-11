@@ -2,7 +2,7 @@
 
 import builtins
 
-from ucpu.debugger import ConditionalBreakpoint, DebugServer
+from codecin.debugger import ConditionalBreakpoint, DebugServer
 
 from tests.helpers import imm, new_cpu, reg
 

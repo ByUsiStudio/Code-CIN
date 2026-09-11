@@ -4,11 +4,11 @@ import os
 
 import pytest
 
-from ucpu import crom
-from ucpu.cin import CINCompiler
-from ucpu.disasm import _extract_from_cpusa, disassemble_bytes, disassemble_file
-from ucpu.errors import CPUSimulatorError
-from ucpu.native import decode_program
+from codecin import crom
+from codecin.cin import CINCompiler
+from codecin.disasm import _extract_from_cpusa, disassemble_bytes, disassemble_file
+from codecin.errors import CPUSimulatorError
+from codecin.native import decode_program
 
 from tests.helpers import asm_program, run_cin_source
 

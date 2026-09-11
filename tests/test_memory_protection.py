@@ -2,8 +2,8 @@
 
 import pytest
 
-from ucpu.errors import MemoryAccessError
-from ucpu.memory import FastMemory
+from codecin.errors import MemoryAccessError
+from codecin.memory import FastMemory
 
 
 def _mem():

@@ -1,6 +1,6 @@
 // 类型别名 / 字面量 / 自增自减 / 转换内建函数
 // 运行: python cpu.py examples/literals_types.cin
-// 说明: UCPU 值均为 64 位槽; char/short/long/unsigned 为语法别名 (与 int 同宽)。
+// 说明: Code CIN 值均为 64 位槽; char/short/long/unsigned 为语法别名 (与 int 同宽)。
 
 function main() -> int {
     unsigned int big = 4000000000

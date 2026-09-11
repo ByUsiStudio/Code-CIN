@@ -1,11 +1,11 @@
 """调试器: 条件断点、执行历史(前进/后退)、TCP 远程调试服务与交互式调试会话。
 
-职责 (自 ucpu/cpu.py 拆分):
+职责 (自 codecin/cpu.py 拆分):
   - DebugSession   交互式调试会话 (断点命中 / --step 统一命令集)
   - display_state  终端状态渲染 (寄存器/内存/缓存)
   - DebugServer    条件断点 + 执行历史 + TCP 远程调试服务
 
-设计约束: 本模块不 import ucpu.cpu (仅 TYPE_CHECKING), 通过属性访问 CPU。
+设计约束: 本模块不 import codecin.cpu (仅 TYPE_CHECKING), 通过属性访问 CPU。
 """
 
 import socket
@@ -381,7 +381,7 @@ class DebugServer:
         self.connected = True
         cpu.logger.info(f"Debug client connected from {addr}")
         try:
-            self._send(conn, 'UCPU remote debug ready '
+            self._send(conn, 'Code CIN remote debug ready '
                              '(step/continue/break/delete/watch/regs/mem/pc/'
                              'history/info/quit)')
             halted = False

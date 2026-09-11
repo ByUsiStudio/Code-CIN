@@ -4,9 +4,9 @@ import os
 import subprocess
 import sys
 
-from ucpu import Config
-from ucpu.cpu import CPU
-from ucpu.isa import Opcode
+from codecin import Config
+from codecin.cpu import CPU
+from codecin.isa import Opcode
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -64,7 +64,7 @@ def test_gen_isa_docs_up_to_date():
 
 
 def test_gen_native_isa_up_to_date():
-    """ucpu/native/isa_gen.go 必须与 isa.py 同步 (建议 10)。"""
+    """codecin/native/isa_gen.go 必须与 isa.py 同步 (建议 10)。"""
     r = subprocess.run([sys.executable,
                         os.path.join(ROOT, 'script', 'gen_native_isa.py'),
                         '--check'], capture_output=True, text=True,

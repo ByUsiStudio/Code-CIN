@@ -2,7 +2,7 @@
 a = Analysis(
     ['cpu.py'],
     pathex=[],
-    binaries=[('ucpu/ucpu_native.dll', '.')],
+    binaries=[('codecin/codecin_native.dll', '.')],
     datas=[],
     hiddenimports=[],
     hookspath=[],
@@ -25,7 +25,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name='ucpu',
+    name='codecin',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -44,5 +44,5 @@ coll = COLLECT(
     strip=False,
     upx=True,
     upx_exclude=[],
-    name='ucpu',
+    name='codecin',
 )

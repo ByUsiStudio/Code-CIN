@@ -10,7 +10,7 @@ import (
 	"unsafe"
 )
 
-// 结果结构布局 (与 ucpu/native.py _parse_result 严格一致):
+// 结果结构布局 (与 codecin/native.py _parse_result 严格一致):
 //   status u8 + 3B pad
 //   pc u64  sp u64  heap_ptr u64  steps u64
 //   regs 33×u64
@@ -26,8 +26,8 @@ const (
 	statusError       = 3
 )
 
-//export ucpu_run
-func ucpu_run(bcPtr unsafe.Pointer, bcLen C.int,
+//export codecin_run
+func codecin_run(bcPtr unsafe.Pointer, bcLen C.int,
 	memPtr unsafe.Pointer, memLen C.int,
 	entry C.longlong, sp C.longlong, heapBase C.longlong,
 	inPtr unsafe.Pointer, inLen C.int,
@@ -99,15 +99,15 @@ func ucpu_run(bcPtr unsafe.Pointer, bcLen C.int,
 	return cbuf
 }
 
-//export ucpu_free
-func ucpu_free(ptr unsafe.Pointer) {
+//export codecin_free
+func codecin_free(ptr unsafe.Pointer) {
 	if ptr != nil {
 		C.free(ptr)
 	}
 }
 
-//export ucpu_crom_pack
-func ucpu_crom_pack(dataPtr unsafe.Pointer, dataLen C.int, compress C.int, outLen *C.int) unsafe.Pointer {
+//export codecin_crom_pack
+func codecin_crom_pack(dataPtr unsafe.Pointer, dataLen C.int, compress C.int, outLen *C.int) unsafe.Pointer {
 	data := C.GoBytes(dataPtr, dataLen)
 	packed := cromPack(data, compress != 0)
 	if packed == nil {
@@ -119,8 +119,8 @@ func ucpu_crom_pack(dataPtr unsafe.Pointer, dataLen C.int, compress C.int, outLe
 	return cbuf
 }
 
-//export ucpu_crom_unpack
-func ucpu_crom_unpack(dataPtr unsafe.Pointer, dataLen C.int,
+//export codecin_crom_unpack
+func codecin_crom_unpack(dataPtr unsafe.Pointer, dataLen C.int,
 	memLen *C.int, flags *C.int) unsafe.Pointer {
 	data := C.GoBytes(dataPtr, dataLen)
 	raw, flg, ok := cromUnpack(data)
@@ -134,9 +134,9 @@ func ucpu_crom_unpack(dataPtr unsafe.Pointer, dataLen C.int,
 	return cbuf
 }
 
-//export ucpu_version
-func ucpu_version() *C.char {
-	return C.CString("ucpu-native 1.0 (Go)")
+//export codecin_version
+func codecin_version() *C.char {
+	return C.CString("codecin-native 1.0 (Go)")
 }
 
 func main() {}

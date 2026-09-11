@@ -114,7 +114,7 @@ class Opcode(Enum):
     JAL = 108
     LUI = 109
     AUIPC = 110
-    # UCPU 扩展: 宿主系统调用 (CIN 内建函数 / 浮点运算支撑)
+    # Code CIN 扩展: 宿主系统调用 (CIN 内建函数 / 浮点运算支撑)
     SYS = 111
 
 

@@ -42,7 +42,7 @@ class Config:
     # A4: 远程调试服务端口 (None = 不启动)
     debug_server_port: Optional[int] = None
 
-    # 命令行解析请使用 ucpu/cli.py build_parser() (argparse, 单一来源)。
+    # 命令行解析请使用 codecin/cli.py build_parser() (argparse, 单一来源)。
     # Config 仅承载运行配置, 由 cli._apply_namespace 填充。
 
     def validate(self) -> None:

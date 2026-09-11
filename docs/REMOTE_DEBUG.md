@@ -1,8 +1,8 @@
-# UCPU 远程调试协议 (REMOTE_DEBUG)
+# Code CIN 远程调试协议 (REMOTE_DEBUG)
 
 > 本文档固化 `--debug-server <port>` 使用的**换行文本协议** (v1)。
-> 实现位置: `ucpu/debugger.py` → `DebugServer.drive()` / `_burst()` / `_process_command()`;
-> 入口: `ucpu/cli.py` (`--debug-server`), `ucpu/cpu.py` (`CPU._run_remote`)。
+> 实现位置: `codecin/debugger.py` → `DebugServer.drive()` / `_burst()` / `_process_command()`;
+> 入口: `codecin/cli.py` (`--debug-server`), `codecin/cpu.py` (`CPU._run_remote`)。
 > 目标是让 IDE / VS Code / 网页调试前端可以按此协议接入。
 
 ---
@@ -21,7 +21,7 @@ python -c "import socket,threading; ..." # 自行封装
 连接建立后服务端发送一行欢迎语:
 
 ```
-UCPU remote debug ready (step/continue/break/delete/watch/regs/mem/pc/history/info/quit)
+Code CIN remote debug ready (step/continue/break/delete/watch/regs/mem/pc/history/info/quit)
 ```
 
 `--debug-server` 模式下程序**不自动运行**, 等待客户端命令驱动; 该模式走纯解释路径
@@ -135,7 +135,7 @@ Breakpoints:
 
 ```
 $ nc localhost 9999
-UCPU remote debug ready (step/continue/break/delete/watch/regs/mem/pc/history/info/quit)
+Code CIN remote debug ready (step/continue/break/delete/watch/regs/mem/pc/history/info/quit)
 break 1
 OK: Breakpoint at 0x1
 continue

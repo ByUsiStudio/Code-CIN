@@ -2,7 +2,7 @@
 
 import os
 
-from ucpu import CPU, Config
+from codecin import CPU, Config
 
 
 def reg(n: int):
@@ -36,7 +36,7 @@ def run_program(program, **cfg) -> CPU:
 
 def run_cin_source(source: str, **cfg) -> CPU:
     """编译并运行 CIN 源码 (内存内, 无需文件; 支持三执行路径)。"""
-    from ucpu.cin import CINCompiler
+    from codecin.cin import CINCompiler
     bounds = cfg.pop('bounds_check', False)
     res = CINCompiler().compile_source(source, bounds_check=bounds)
     cpu = new_cpu(**cfg)
