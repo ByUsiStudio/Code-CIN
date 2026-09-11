@@ -1325,7 +1325,7 @@ class CPU:
         elif call_id in (Syscall.AUDIOPLAY, Syscall.AUDIOSTOP, Syscall.AUDIOVOL,
                          Syscall.AUDIOWAIT, Syscall.CANVASNEW, Syscall.CANVASSET,
                          Syscall.CANVASRECT, Syscall.CANVASCIRC, Syscall.CANVASTEXT,
-                         Syscall.CANVASLINE, Syscall.CANVASSAVE):
+                         Syscall.CANVASLINE, Syscall.CANVASSAVE, Syscall.CANVASSHOW):
             raise ExecutionError(
                 "GUI/audio builtins require the native Go runtime "
                 "(run without --no-native)")

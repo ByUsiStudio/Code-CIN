@@ -1374,7 +1374,7 @@ func (c *compiler) builtinRetType(name string) *Type {
 	case "sin", "cos", "tan", "sqrt", "pow", "floor", "ceil", "round":
 		return scalarT(kFloat)
 	case "strlen", "strcmp", "rand", "time", "abs", "input", "idiv", "atoi",
-		"audio_play", "save_png":
+		"audio_play", "save_png", "show_canvas":
 		return scalarT(kInt)
 	case "strcpy", "int_to_str", "itoa", "float_to_str", "ftoa", "bool_to_str",
 		"substr", "upper", "lower", "trim", "ltrim", "rtrim":
@@ -1576,6 +1576,10 @@ func (c *compiler) genCall(name string, args []*Node) *Type {
 	}
 	if name == "save_png" {
 		c.genHostSys(SysCANVASSAVE, []*Node{args[0]})
+		return scalarT(kInt)
+	}
+	if name == "show_canvas" {
+		c.genHostSys(SysCANVASSHOW, nil)
 		return scalarT(kInt)
 	}
 

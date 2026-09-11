@@ -295,3 +295,4 @@ const sysCANVASCIRC = 46
 const sysCANVASTEXT = 47
 const sysCANVASLINE = 48
 const sysCANVASSAVE = 49
+const sysCANVASSHOW = 50

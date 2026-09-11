@@ -49,7 +49,8 @@ def test_audio_canvas_builtins_compile_without_native():
 function main() -> int {
     canvas(10, 10)
     audio_stop()
-    return 0
+    int r = show_canvas()
+    return r
 }'''
     # 仅编译 (不运行), 验证内置函数名可解析
     from codecin.cin import CINCompiler

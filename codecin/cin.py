@@ -2176,7 +2176,7 @@ class CodeGen:
         if name in ('sin', 'cos', 'tan', 'sqrt', 'pow', 'floor', 'ceil', 'round'):
             return 'float'
         if name in ('strlen', 'strcmp', 'rand', 'time', 'abs', 'input',
-                    'idiv', 'atoi', 'audio_play', 'save_png'):
+                    'idiv', 'atoi', 'audio_play', 'save_png', 'show_canvas'):
             return 'int'
         if name in ('strcpy', 'int_to_str', 'itoa', 'float_to_str', 'ftoa',
                     'bool_to_str', 'substr', 'upper', 'lower',
@@ -2356,6 +2356,9 @@ class CodeGen:
             return 'void'
         if name == 'save_png':
             self._gen_host_sys(Syscall.CANVASSAVE, [args[0]])
+            return 'int'
+        if name == 'show_canvas':
+            self._gen_host_sys(Syscall.CANVASSHOW, [])
             return 'int'
         if name == 'time':
             self.emit('SYS', self.imm(Syscall.TIME))
