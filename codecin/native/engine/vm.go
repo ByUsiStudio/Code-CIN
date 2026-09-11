@@ -184,9 +184,9 @@ func opcodeSupported(op uint8) bool {
 }
 
 // syscallSupported: 原生 VM 已实现的 SYS 功能号。
-// 现已在 Go 侧实现全部宿主调用 (0..sysCANVASSAVE), 供独立 Go CLI 使用。
+// 现已在 Go 侧实现全部宿主调用 (0..sysCANVASSHOW), 供独立 Go CLI 使用。
 func syscallSupported(id uint64) bool {
-	return id <= sysCANVASSAVE
+	return id <= sysCANVASSHOW
 }
 
 // ---------------- 操作数/寄存器/内存 ----------------
@@ -990,6 +990,8 @@ func (vm *vmState) doSyscall(id uint64) string {
 		vm.canvasLine(x0, x1, vm.reg(2), vm.reg(3))
 	case sysCANVASSAVE:
 		vm.setReg(0, vm.canvasSave(vm.readCString(x0)))
+	case sysCANVASSHOW:
+		vm.setReg(0, vm.canvasShow())
 	default:
 		return "Unknown SYS call id"
 	}

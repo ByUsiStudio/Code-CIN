@@ -173,6 +173,7 @@ class Syscall(IntEnum):
     CANVASTEXT = 47 # text(x=x0, y=x1, s=x2 指针): 绘制文本 (内置 8x8 点阵字库)
     CANVASLINE = 48 # line(x0,y0,x1,y1): 画线 (x0,x1,y0=x1? 见参数说明)
     CANVASSAVE = 49 # save(x0=路径) -> 0 成功 / -1 失败 (PNG 编码写盘)
+    CANVASSHOW = 50 # show_canvas(): 保存当前画布到临时 PNG 并用系统查看器打开 (窗口)
 
 
 class Cond:

@@ -1,11 +1,16 @@
 package engine
 
 import (
+	"fmt"
 	"image"
 	"image/color"
 	"image/png"
 	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
 	"strings"
+	"time"
 )
 
 // 2D 绘图画布 (Go 标准库 image/png 实现): 新建画布 → 着色 → 绘制形状/文本 → 导出 PNG。
@@ -230,4 +235,37 @@ func (vm *vmState) canvasSave(path string) uint64 {
 		return mask64
 	}
 	return 0
+}
+
+// canvasShow 保存当前画布到临时 PNG 并用系统查看器打开 (跨平台 "窗口")。
+func (vm *vmState) canvasShow() uint64 {
+	if curCanvas == nil {
+		return mask64 // -1
+	}
+	path := filepath.Join(os.TempDir(),
+		fmt.Sprintf("codecin_canvas_%d.png", time.Now().UnixNano()))
+	f, err := os.Create(path)
+	if err != nil {
+		return mask64
+	}
+	if err := png.Encode(f, curCanvas); err != nil {
+		_ = f.Close()
+		return mask64
+	}
+	_ = f.Close()
+	openViewer(path)
+	return 0
+}
+
+func openViewer(path string) {
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "windows":
+		cmd = exec.Command("cmd", "/c", "start", "", path)
+	case "darwin":
+		cmd = exec.Command("open", path)
+	default:
+		cmd = exec.Command("xdg-open", path)
+	}
+	_ = cmd.Start()
 }
