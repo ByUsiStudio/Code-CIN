@@ -118,7 +118,7 @@ func runVM(bc []byte, mem []byte, entry, sp, heapBase int64, inData []byte, maxS
 		// 未知 SYS 功能号: 交给解释器 (pc 不自增)
 		if ins.opcode == opSYS {
 			if len(ins.args) == 0 || ins.args[0].kind != kindImm ||
-				uint64(ins.args[0].value) > 26 {
+				!syscallSupported(uint64(ins.args[0].value)) {
 				return 2, vm, ""
 			}
 		}
@@ -145,6 +145,18 @@ func opcodeSupported(op uint8) bool {
 		return true
 	}
 	return false
+}
+
+// syscallSupported: 原生 VM 已实现的 SYS 功能号 (其余交给解释器回退)。
+// ABORT/SUBSTR/INDEXOF/TOUPPER/TOLOWER 保持回退, 与既有行为一致。
+func syscallSupported(id uint64) bool {
+	switch id {
+	case sysABORT, sysSUBSTR, sysINDEXOF, sysTOUPPER, sysTOLOWER:
+		return false
+	case sysFLOOR, sysCEIL, sysROUND, sysATOI, sysTRIM, sysLTRIM, sysRTRIM:
+		return true
+	}
+	return id <= sysBOOLSTR
 }
 
 // ---------------- 操作数/寄存器/内存 ----------------
@@ -845,10 +857,59 @@ func (vm *vmState) doSyscall(id uint64) string {
 			return e
 		}
 		vm.setReg(0, addr)
+	case sysFLOOR:
+		vm.setReg(0, fToBits(math.Floor(bitsToF(x0))))
+	case sysCEIL:
+		vm.setReg(0, fToBits(math.Ceil(bitsToF(x0))))
+	case sysROUND:
+		// 与 Python 侧 floor(x + 0.5) 一致 (半值向 +inf)
+		vm.setReg(0, fToBits(math.Floor(bitsToF(x0)+0.5)))
+	case sysATOI:
+		s := strings.TrimSpace(vm.readCString(x0))
+		n, err := strconv.ParseInt(s, 10, 64)
+		if err != nil {
+			vm.setReg(0, 0)
+		} else {
+			vm.setReg(0, uint64(n)&mask64)
+		}
+	case sysTRIM:
+		p, e := vm.heapDupString(strings.TrimSpace(vm.readCString(x0)))
+		if e != "" {
+			return e
+		}
+		vm.setReg(0, p)
+	case sysLTRIM:
+		p, e := vm.heapDupString(strings.TrimLeft(vm.readCString(x0), " \t\n\r\v\f"))
+		if e != "" {
+			return e
+		}
+		vm.setReg(0, p)
+	case sysRTRIM:
+		p, e := vm.heapDupString(strings.TrimRight(vm.readCString(x0), " \t\n\r\v\f"))
+		if e != "" {
+			return e
+		}
+		vm.setReg(0, p)
 	default:
 		return "Unknown SYS call id"
 	}
 	return ""
+}
+
+// heapDupString 在堆上分配 NUL 结尾字符串副本, 返回 (指针, 错误)。
+func (vm *vmState) heapDupString(s string) (uint64, string) {
+	data := []byte(s + "\x00")
+	size := (uint64(len(data)) + 15) &^ uint64(15)
+	ptr := vm.heapPtr
+	vm.heapPtr += size
+	if vm.heapPtr > vm.sp {
+		return 0, "Heap exhausted (string operation)"
+	}
+	if e := vm.checkAddr(ptr, len(data)); e != "" {
+		return 0, e
+	}
+	copy(vm.mem[ptr:ptr+uint64(len(data))], data)
+	return ptr, ""
 }
 
 func abs64(v int64) int64 {
