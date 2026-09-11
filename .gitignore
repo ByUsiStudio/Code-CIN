@@ -13,3 +13,9 @@ __pycache__/
 /pytest-tmp-*
 *cache*
 *tmp*
+# 编译产物: Go CLI 二进制 (由 install 脚本 / go build 生成)
+/codecin/codecin
+/codecin/codecin.exe
+/codecin/native/codecin
+/codecin/native/codecin.exe
+/*.png

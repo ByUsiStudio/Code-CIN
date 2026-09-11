@@ -416,9 +416,13 @@ ruff check codecin cpu.py script tests
 
 | 路径 | 启用方式 | 特点 |
 |------|----------|------|
-| Go 原生 | 默认优先 (需编译库) | 整程序一次执行, 速度最快 |
+| Go 独立 CLI | `codecin program.cin` | **全 Go 链路**: Go 版 CIN 编译器 + Go VM, 不依赖 Python |
+| Go 原生 | 默认优先 (需编译库) | Python 编译 + Go VM 整程序一次执行, 速度最快 |
 | JIT | `--jit` | 基本块动态编译, 与 `--debug` 互斥 |
 | 解释执行 | `--no-native` 或回退 | 支持全部 debug/step 功能 |
+
+> Go 版编译器 (`codecin/native/compiler/`) 与 Python 编译器产物逐字节等价, 由
+> `script/diff_go_python.py` 差分校验 (含 `basic.cin` 400 行综合示例)。
 
 ### 命令行选项
 

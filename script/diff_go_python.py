@@ -25,9 +25,9 @@ from codecin.config import Config            # noqa: E402
 
 
 def run_python(path: str):
-    """Python 解释路径: 编译 + 运行, 返回 (输出, 退出/异常)。"""
+    """Python 编译 + Go 原生 VM 执行 (与 Go CLI 共用 VM, 以隔离编译器差异)。"""
     res = CINCompiler().compile(path)
-    cpu = CPU(Config(interactive_mode=False, log_level='ERROR', use_native=False))
+    cpu = CPU(Config(interactive_mode=False, log_level='ERROR', use_native=True))
     cpu.instructions = res.instructions
     cpu.labels = res.labels
     cpu.data_labels = res.data_labels
@@ -45,7 +45,8 @@ def run_python(path: str):
 
 def run_go(path: str):
     """Go CLI: 编译 + 运行, 返回 (stdout, returncode, stderr)。"""
-    r = subprocess.run([GO_CLI, path], capture_output=True, text=True, cwd=ROOT)
+    r = subprocess.run([GO_CLI, path], capture_output=True, text=True,
+                       encoding='utf-8', errors='replace', cwd=ROOT)
     return r.stdout, r.returncode, r.stderr
 
 
@@ -53,8 +54,10 @@ def main(argv):
     if argv:
         files = argv
     else:
-        files = [os.path.join(ROOT, 'examples', f) for f in sorted(os.listdir(
-            os.path.join(ROOT, 'examples'))) if f.endswith('.cin')]
+        ex_dir = os.path.join(ROOT, 'examples')
+        files = [os.path.join(ex_dir, f) for f in sorted(os.listdir(ex_dir))
+                 if f.endswith('.cin')]
+        files.append(os.path.join(ROOT, 'basic.cin'))
     failed = 0
     for path in files:
         py_out, py_err = run_python(path)

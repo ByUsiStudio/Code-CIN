@@ -1,6 +1,9 @@
 package compiler
 
-import "fmt"
+import (
+	"fmt"
+	"strconv"
+)
 
 // ---------------- 语法分析 ----------------
 
@@ -712,7 +715,13 @@ func (p *parser) parseCpuStmt() (*Node, error) {
 	var operands [][2]string
 	for p.peek().kind != "NL" && p.peek().kind != "SEMI" && p.peek().kind != "EOF" {
 		tok := p.next()
-		operands = append(operands, [2]string{tok.kind, tok.sval})
+		val := tok.sval
+		if tok.kind == "NUMBER" {
+			val = strconv.FormatInt(tok.ival, 10)
+		} else if tok.kind == "FLOAT" {
+			val = strconv.FormatFloat(tok.fval, 'g', -1, 64)
+		}
+		operands = append(operands, [2]string{tok.kind, val})
 	}
 	p.accept("SEMI")
 	return &Node{Kind: "cpu", Name: op, Operands: operands}, nil
