@@ -716,6 +716,10 @@ xychart-beta
 > **CIN 位运算/整除/字符串下标/更多内建**: `& | ^ ~ << >>` (及复合赋值)、`idiv()` 整数除法、
 > `s[i]` 单字节读取、`floor/ceil/round/min/max/atoi/trim/ltrim/rtrim` 内建函数 (详见
 > [CIN 编程指南 · 运算符/内建](docs/CIN_GUIDE.md))。
+>
+> **CIN 宿主能力 (GUI / 联网音频)**: 2D 绘图画布 `canvas/set_color/fill_rect/fill_circle/draw_line/draw_text`
+> + `save_png()` 导出 / `show_canvas()` 弹窗查看; 联网音频 `audio_play(url)` / `audio_stop` /
+> `audio_volume` / `audio_wait` (http 下载 + WAV 播放)。
 
 ### 程序执行流程图
 
