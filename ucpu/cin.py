@@ -87,6 +87,8 @@ BASE_TYPE_WORDS = ('int', 'float', 'bool', 'string', 'char', 'short', 'long',
 _COMPOUND_ASSIGN = {
     'PLUSEQ': '+=', 'MINUSEQ': '-=', 'STAREQ': '*=',
     'SLASHEQ': '/=', 'PERCENTEQ': '%=',
+    'ANDEQ': '&=', 'OREQ': '|=', 'XOREQ': '^=',
+    'SHLEQ': '<<=', 'SHREQ': '>>=',
 }
 
 _SINGLE_OPS = {
@@ -95,6 +97,13 @@ _SINGLE_OPS = {
     '+': 'PLUS', '-': 'MINUS', '*': 'STAR', '/': 'SLASH', '%': 'PERCENT',
     '=': 'ASSIGN', '<': 'LT', '>': 'GT', '!': 'BANG', '.': 'DOT',
     '?': 'QUESTION', ':': 'COLON',
+    '&': 'AMP', '|': 'PIPE', '^': 'CARET', '~': 'TILDE',
+}
+
+# 复合赋值运算符 -> 底层运算符
+_COMPOUND_TO_BASE = {
+    '+=': '+', '-=': '-', '*=': '*', '/=': '/', '%=': '%',
+    '&=': '&', '|=': '|', '^=': '^', '<<=': '<<', '>>=': '>>',
 }
 
 
@@ -241,6 +250,18 @@ def tokenize(source: str,
                     '/': 'SLASHEQ', '%': 'PERCENTEQ'}[c]
             tokens.append(Token(kind, c + '=', line))
             i += 2
+        elif c in ('&', '|', '^') and i + 1 < n and source[i + 1] == '=':
+            kind = {'&': 'ANDEQ', '|': 'OREQ', '^': 'XOREQ'}[c]
+            tokens.append(Token(kind, c + '=', line))
+            i += 2
+        elif c in ('<', '>') and i + 2 < n and source[i + 1] == c \
+                and source[i + 2] == '=':
+            tokens.append(Token('SHLEQ' if c == '<' else 'SHREQ',
+                                c + c + '=', line))
+            i += 3
+        elif c in ('<', '>') and i + 1 < n and source[i + 1] == c:
+            tokens.append(Token('SHL' if c == '<' else 'SHR', c + c, line))
+            i += 2
         elif c == '+' and i + 1 < n and source[i + 1] == '+':
             tokens.append(Token('INC', '++', line))
             i += 2
@@ -273,7 +294,9 @@ def tokenize(source: str,
     continue_ops = {'PLUS', 'MINUS', 'STAR', 'SLASH', 'PERCENT', 'ASSIGN',
                     'LT', 'GT', 'LE', 'GE', 'EQ', 'NEQ', 'AND', 'OR', 'COMMA',
                     'ARROW', 'DOT', 'PLUSEQ', 'MINUSEQ', 'STAREQ', 'SLASHEQ',
-                    'PERCENTEQ', 'INC', 'DEC'}
+                    'PERCENTEQ', 'INC', 'DEC',
+                    'AMP', 'PIPE', 'CARET', 'TILDE', 'SHL', 'SHR',
+                    'ANDEQ', 'OREQ', 'XOREQ', 'SHLEQ', 'SHREQ'}
     for idx, tok in enumerate(tokens):
         if tok.kind in open_kw:
             depth += 1
@@ -806,11 +829,35 @@ class Parser:
         return left
 
     def parse_and(self):
-        left = self.parse_equality()
+        left = self.parse_bit_or()
         while self.peek().kind == 'AND':
             self.next()
-            right = self.parse_equality()
+            right = self.parse_bit_or()
             left = ('binop', '&&', left, right)
+        return left
+
+    def parse_bit_or(self):
+        left = self.parse_bit_xor()
+        while self.peek().kind == 'PIPE':
+            self.next()
+            right = self.parse_bit_xor()
+            left = ('binop', '|', left, right)
+        return left
+
+    def parse_bit_xor(self):
+        left = self.parse_bit_and()
+        while self.peek().kind == 'CARET':
+            self.next()
+            right = self.parse_bit_and()
+            left = ('binop', '^', left, right)
+        return left
+
+    def parse_bit_and(self):
+        left = self.parse_equality()
+        while self.peek().kind == 'AMP':
+            self.next()
+            right = self.parse_equality()
+            left = ('binop', '&', left, right)
         return left
 
     def parse_equality(self):
@@ -822,10 +869,18 @@ class Parser:
         return left
 
     def parse_relational(self):
-        left = self.parse_additive()
+        left = self.parse_shift()
         while self.peek().kind in ('LT', 'GT', 'LE', 'GE'):
             tok = self.next()
             op = {'LT': '<', 'GT': '>', 'LE': '<=', 'GE': '>='}[tok.kind]
+            right = self.parse_shift()
+            left = ('binop', op, left, right)
+        return left
+
+    def parse_shift(self):
+        left = self.parse_additive()
+        while self.peek().kind in ('SHL', 'SHR'):
+            op = '<<' if self.next().kind == 'SHL' else '>>'
             right = self.parse_additive()
             left = ('binop', op, left, right)
         return left
@@ -851,6 +906,9 @@ class Parser:
         if self.peek().kind == 'BANG':
             self.next()
             return ('not', self.parse_unary())
+        if self.peek().kind == 'TILDE':
+            self.next()
+            return ('bitnot', self.parse_unary())
         if self.peek().kind == 'MINUS':
             self.next()
             return ('neg', self.parse_unary())
@@ -1081,6 +1139,11 @@ class CodeGen:
             if inner[2]:
                 return 'float', struct.unpack('<Q', struct.pack('<d', -inner[1]))[0]
             return 'int', (-inner[1]) & 0xFFFFFFFFFFFFFFFF
+        if kind == 'bitnot':
+            ctype, raw = self._const_value(node[1])
+            if ctype not in ('int', 'bool'):
+                raise CompilerError(f"Bitwise NOT requires integer, got: {ctype}")
+            return 'int', (~raw) & 0xFFFFFFFFFFFFFFFF
         raise CompilerError(f"Non-constant global initializer: {kind}")
 
     def emit_globals_init(self, globals_: List[GlobalVar]) -> None:
@@ -1590,6 +1653,12 @@ class CodeGen:
             t = self.gen_value(node[1])
             self.emit('XORI', self.reg(0), self.reg(0), self.imm(1))
             return 'bool'
+        if kind == 'bitnot':
+            t = self.gen_value(node[1])
+            if t in ('float', 'string'):
+                raise CompilerError("Bitwise NOT '~' requires an integer operand")
+            self.emit('MVN', self.reg(0), self.reg(0))
+            return 'int'
         if kind in ('preinc', 'predec', 'postinc', 'postdec'):
             return self._gen_incdec(kind, node[1])
         if kind == 'cond':
@@ -1668,7 +1737,17 @@ class CodeGen:
         return t
 
     def _gen_index(self, base_node, idx_node, lvalue: bool):
-        base_t = self.gen_value(base_node)  # 定长数组=块地址; ptrarray=指针
+        base_t = self.gen_value(base_node)  # 定长数组=块地址; ptrarray=指针; string=ptr
+        if base_t == 'string':
+            if lvalue:
+                raise CompilerError(
+                    "Cannot assign to string element (strings are immutable)")
+            self.emit('MOV', self.reg(3), self.reg(0))   # x3 = 字符串基址
+            self.gen_value(idx_node)                    # x0 = index
+            self.emit('ADD', self.reg(0), self.reg(3))  # x0 = base + i (字节偏移)
+            self.emit('LB', self.reg(0), ('mem', 0, 0))  # 读 1 字节 (符号扩展)
+            self.emit('ANDI', self.reg(0), self.reg(0), self.imm(0xFF))  # 0..255
+            return 'int'
         if _is_fixed_array(base_t):
             elem_t = _array_elem(base_t)
         elif _is_ptr_array(base_t):
@@ -1745,6 +1824,8 @@ class CodeGen:
                 return ftype
         if kind == 'index':
             base_t = self._expr_type(node[1])
+            if base_t == 'string':
+                return 'int'
             if _is_fixed_array(base_t):
                 elem = _array_elem(base_t)
             elif _is_ptr_array(base_t):
@@ -1758,6 +1839,10 @@ class CodeGen:
             f = self.functions.get(node[1])
             if f:
                 return f.ret_type
+            if node[1] in ('min', 'max'):
+                at = self._expr_type(node[2][0])
+                bt = self._expr_type(node[2][1])
+                return 'float' if (at == 'float' or bt == 'float') else 'int'
             return self._builtin_ret_type(node[1])
         if kind == 'num':
             return 'float' if node[2] else 'int'
@@ -1766,8 +1851,11 @@ class CodeGen:
         if kind == 'str':
             return 'string'
         if kind == 'binop':
-            if node[1] in ('+=', '-=', '*=', '/=', '%='):
+            if node[1] in ('+=', '-=', '*=', '/=', '%=',
+                           '&=', '|=', '^=', '<<=', '>>='):
                 return self._expr_type(node[2])
+            if node[1] in ('&', '|', '^', '<<', '>>'):
+                return 'int'
             if node[1] in ('+', '-', '*', '%'):
                 lt = self._expr_type(node[2])
                 rt = self._expr_type(node[3])
@@ -1792,6 +1880,8 @@ class CodeGen:
             return 'float' if it == 'float' else 'int'
         if kind == 'not':
             return 'bool'
+        if kind == 'bitnot':
+            return 'int'
         return None
 
     # ---------------- 二元运算 ----------------
@@ -1799,10 +1889,12 @@ class CodeGen:
     def _gen_binop(self, op, left, right):
         if op == '=':
             return self._gen_assign(left, right)
-        if op in ('+=', '-=', '*=', '/=', '%='):
-            return self._gen_compound(left, op[0], right)
+        if op in _COMPOUND_TO_BASE:
+            return self._gen_compound(left, _COMPOUND_TO_BASE[op], right)
         if op == '&&' or op == '||':
             return self._gen_logical(op, left, right)
+        if op in ('&', '|', '^', '<<', '>>'):
+            return self._gen_bitwise(op, left, right)
 
         lt = self._expr_type(left)
         rt = self._expr_type(right)
@@ -1874,15 +1966,40 @@ class CodeGen:
         self.label(l_end)
         return 'bool'
 
+    def _gen_bitwise(self, op, left, right) -> Any:
+        """位运算 & | ^ << >> (整数); >> 为算术右移 (保留符号)。"""
+        lt = self._expr_type(left)
+        rt = self._expr_type(right)
+        if lt in ('float', 'string') or rt in ('float', 'string'):
+            raise CompilerError(
+                f"Bitwise operator '{op}' requires integer operands "
+                f"(got {lt} and {rt})")
+        self.gen_value(left)
+        self.emit('PUSH', self.reg(0))
+        self.gen_value(right)
+        self.emit('MOV', self.reg(1), self.reg(0))
+        self.emit('POP', self.reg(0))
+        if op == '&':
+            self.emit('AND', self.reg(0), self.reg(1))
+        elif op == '|':
+            self.emit('OR', self.reg(0), self.reg(1))
+        elif op == '^':
+            self.emit('XOR', self.reg(0), self.reg(1))
+        elif op == '<<':
+            self.emit('SHL', self.reg(0), self.reg(1))
+        else:  # '>>'
+            self.emit('ASR', self.reg(0), self.reg(0), self.reg(1))
+        return 'int'
+
     # ---------------- 复合赋值 / 自增自减 / 三目 ----------------
 
     def _gen_compound(self, target, op: str, value_node) -> Any:
-        """target op= value (op ∈ + - * / %); 左值地址只求值一次。"""
+        """target op= value (op ∈ + - * / % & | ^ << >>); 左值地址只求值一次。"""
         tt = self._expr_type(target)
         if tt not in ('int', 'bool', 'float'):
             raise CompilerError(f"Cannot apply '{op}=' to type: {tt}")
-        if tt == 'float' and op == '%':
-            raise CompilerError("Float modulo not supported")
+        if tt == 'float' and op not in ('+', '-', '*', '/'):
+            raise CompilerError(f"Cannot apply '{op}=' to float")
         float_mode = tt == 'float'
 
         self._gen_lvalue_addr(target)
@@ -1905,7 +2022,7 @@ class CodeGen:
             self.emit('MUL', self.reg(0), self.reg(1))
         elif op == '/':
             self.emit('DIV', self.reg(0), self.reg(1))
-        else:  # %
+        elif op == '%':
             self.emit('MOV', self.reg(3), self.reg(1))  # 除数备份
             self.emit('PUSH', self.reg(0))
             self.emit('DIV', self.reg(0), self.reg(3))
@@ -1913,6 +2030,18 @@ class CodeGen:
             self.emit('MOV', self.reg(1), self.reg(0))
             self.emit('POP', self.reg(0))
             self.emit('SUB', self.reg(0), self.reg(1))
+        elif op == '&':
+            self.emit('AND', self.reg(0), self.reg(1))
+        elif op == '|':
+            self.emit('OR', self.reg(0), self.reg(1))
+        elif op == '^':
+            self.emit('XOR', self.reg(0), self.reg(1))
+        elif op == '<<':
+            self.emit('SHL', self.reg(0), self.reg(1))
+        elif op == '>>':
+            self.emit('ASR', self.reg(0), self.reg(0), self.reg(1))
+        else:
+            raise CompilerError(f"Unsupported compound operator: {op}=")
 
         self.emit('SD', self.reg(0), ('mem', 2, 0))
         self.emit('ADDI', self.reg(32), self.reg(32), self.imm(8))
@@ -2003,12 +2132,14 @@ class CodeGen:
     # ---------------- 函数调用 ----------------
 
     def _builtin_ret_type(self, name: str):
-        if name in ('sin', 'cos', 'tan', 'sqrt', 'pow'):
+        if name in ('sin', 'cos', 'tan', 'sqrt', 'pow', 'floor', 'ceil', 'round'):
             return 'float'
-        if name in ('strlen', 'strcmp', 'rand', 'time', 'abs', 'input'):
+        if name in ('strlen', 'strcmp', 'rand', 'time', 'abs', 'input',
+                    'idiv', 'atoi'):
             return 'int'
         if name in ('strcpy', 'int_to_str', 'itoa', 'float_to_str', 'ftoa',
-                    'bool_to_str', 'substr', 'upper', 'lower'):
+                    'bool_to_str', 'substr', 'upper', 'lower',
+                    'trim', 'ltrim', 'rtrim'):
             return 'string'
         return None
 
