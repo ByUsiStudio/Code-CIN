@@ -48,11 +48,15 @@ def test_go_cli_examples(name):
 
 @needs_cli
 def test_go_cli_matches_python_compiler():
-    """Go 编译 + Go VM 与 Python 编译 + Go VM 输出逐字节一致 (编译器等价)。"""
+    """Go 编译 + Go VM 与 Python 编译 + Go VM 输出逐字节一致 (编译器等价)。
+
+    注: basic.cin 使用 srand(time()), 输出依赖时钟, 由 test_go_cli_basic_demo
+    以标记位方式校验, 不纳入逐字节比较。
+    """
     sys.path.insert(0, os.path.join(ROOT, 'script'))
     import diff_go_python as d  # noqa: E402
 
-    names = ['basic.cin'] + [os.path.join('examples', f) for f in (
+    names = [os.path.join('examples', f) for f in (
         'control_flow.cin', 'literals_types.cin', 'modules_demo.cin',
         'bitwise_builtins.cin', 'system_interaction.cin', 'stdlib_demo.cin')]
     for name in names:

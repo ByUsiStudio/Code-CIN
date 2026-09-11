@@ -9,8 +9,11 @@ function main() -> int {
     println("home: " + home_dir())
     println("cwd: " + cwd())
 
-    // 文件读写 (相对当前工作目录)
-    string f = "system_demo.txt"
+    // 文件读写 (写入系统临时目录, 避免污染工作目录)
+    string base = getenv("TEMP")
+    if (strlen(base) == 0) { base = getenv("TMPDIR") }
+    if (strlen(base) == 0) { base = "." }
+    string f = base + "/codecin_system_demo.txt"
     file_write(f, "alpha")
     file_append(f, "-beta")
     println("size: " + int_to_str(file_size(f)))
