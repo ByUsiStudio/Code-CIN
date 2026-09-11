@@ -1,4 +1,4 @@
-# Code CIN - 通用CPU模拟器
+# Code CIN - 高级语言与运行时
 
 ---
 
@@ -10,9 +10,11 @@
 
 ## 项目简介
 
-Code CIN是一个功能完整的CPU模拟器，提供从高级语言到机器码的完整工具链。支持CIN高级语言、PL汇编和ASM汇编，包含ARM64和RISC-V指令集扩展，具备JIT编译、Go原生加速库、缓存系统、性能分析和调试功能。
+Code CIN 是一门简洁的类 C 高级语言及其跨平台运行时（VM）。它从 CIN 源码出发，编译为 UCPU 字节码后由 **Go 原生 VM**（默认）/ JIT / Python 解释器三路径执行，行为一致。除完整语言工具链外，还内置 **2D 绘图画布（导出 PNG）** 与 **联网音频播放** 等宿主能力。
 
-模块化包结构（`codecin/`），全线日志与错误输出基于 **rich**（彩色表格、面板、traceback），`--debug` 模式提供逐指令/寄存器/内存/栈/缓存的超详细追踪。
+正在从 Python 优先**逐步切换为 Go 优先**：Go 原生库已接管字节码 VM、CROM 与 CIN 编译器（`codecin/native/compiler`），并提供独立的 Go CLI（`codecin`）；Python 保留为 CLI 壳与回退路径。支持 CIN/PL/ASM 三语言、ARM64 与 RISC-V 指令集扩展、JIT 编译、缓存系统、性能分析与调试。
+
+模块化包结构（`codecin/`，Go 侧 `codecin/native/`），全线日志与错误输出基于 **rich**（彩色表格、面板、traceback），`--debug` 模式提供逐指令/寄存器/内存/栈/缓存的超详细追踪。
 
 ## 文档
 
@@ -368,28 +370,35 @@ flowchart TD
 
 ### 快速开始
 
-1. 克隆项目并安装依赖:
+**方式一：一键安装（推荐）**
+
+```bash
+# Linux / macOS / Termux
+bash install.sh
+# Windows (PowerShell)
+powershell -ExecutionPolicy Bypass -File install.ps1
+# Termux 专用（克隆 + 装依赖 + 编译 + 启动器）
+bash script/install_termux.sh
+```
+
+一键脚本会自动：检测/安装 Go → 编译 Go 原生库与 `codecin` CLI → 安装 Python 依赖 → 生成 `codecin` 启动器。
+
+**方式二：手动**
+
+1. 克隆项目:
    ```
    git clone https://github.com/ByUsiStudio/codecin.git
    cd codecin
-   pip install -r requirements.txt        # 运行时依赖 (rich)
-   pip install -r requirements-dev.txt    # (可选) 开发: pytest + ruff
    ```
 
-2. (可选) 编译 Go 原生加速库, 见 [开发者编译文档](docs/BUILDING.md#4-构建-go-原生加速库):
+2. 运行（Go CLI 或 Python 入口）:
    ```
-   cd codecin/native
-   .\build.ps1        # Windows
-   sh build.sh        # Linux / Termux / macOS
-   ```
-
-3. 运行程序:
-   ```
-   python cpu.py basic.cin
+   go run ./codecin/native/cmd/codecin basic.cin   # Go 独立 CLI
+   python cpu.py basic.cin                          # Python 入口 (自动用 Go 原生库)
    python cpu.py --help
    ```
 
-> 未编译原生库也可运行, 自动回退纯 Python 解释执行。
+> 未编译原生库时, Python 入口自动回退纯 Python 解释执行; GUI/联网音频需 Go 原生库 (默认启用)。
 
 ### 开发与测试
 

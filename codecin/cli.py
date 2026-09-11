@@ -29,7 +29,7 @@ def build_parser() -> argparse.ArgumentParser:
     """参数表单一来源 (与 Config 字段一一对应)。"""
     p = argparse.ArgumentParser(
         prog='cpu.py',
-        description='Code CIN - 通用CPU模拟器 (CIN/PL/ASM 工具链 + 多执行路径)',
+        description='Code CIN - 高级语言与运行时 (CIN/PL/ASM 工具链 + 多执行路径)',
         add_help=False,          # 帮助由 main 以彩色形式打印 (见 --help)
     )
     p.add_argument('program', nargs='?', default=None,

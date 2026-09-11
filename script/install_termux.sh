@@ -32,7 +32,7 @@ echo -e "  工作目录: ${BLUE}$(pwd)${NC}"
 echo -e "  系统    : ${CYAN}$(uname -s) $(uname -r) $(uname -m)${NC}"
 line
 
-total_steps=8
+total_steps=9
 current_step=0
 
 step_func() {
@@ -139,6 +139,19 @@ if [ $? -ne 0 ]; then
 fi
 finish_step "同步 Python 依赖"
 
+step_func "编译 Go 原生库与 codecin CLI"
+cd codecin/native
+export CGO_ENABLED=1 GOCACHE="$PWD/../../.gocache" GOTMPDIR="$PWD/../../.gotmp"
+mkdir -p "$GOCACHE" "$GOTMPDIR"
+go build -buildmode=c-shared -o ../libcodecin_native.so .
+go build -o ../codecin ./cmd/codecin
+cd ../..
+rm -f codecin/codecin_native.h codecin/libcodecin_native.h 2>/dev/null || true
+success "Go 原生库与 CLI 编译完成"
+thin_line
+true
+finish_step "编译 Go 原生库与 CLI"
+
 step_func "生成启动脚本 (codecin-cli)"
 cat > codecin-cli << 'EOF'
 #!/bin/bash
@@ -156,7 +169,11 @@ for arg in "$@"; do
         args+=("$original_pwd/$arg")
     fi
 done
-uv run python cpu.py "${args[@]}"
+if [ -x codecin/codecin ]; then
+    exec codecin/codecin "${args[@]}"
+else
+    exec uv run python cpu.py "${args[@]}"
+fi
 EOF
 chmod +x codecin-cli
 success "启动脚本已创建: $(pwd)/codecin-cli"
@@ -165,12 +182,12 @@ true
 finish_step "生成启动脚本"
 
 step_func "配置环境变量"
-Code CIN_INSTALL="$HOME/../usr/etc/profile.d/codecin_init.sh"
-mkdir -p "$(dirname "$Code CIN_INSTALL")"
+CODECIN_INSTALL="$HOME/../usr/etc/profile.d/codecin_init.sh"
+mkdir -p "$(dirname "$CODECIN_INSTALL")"
 PROJECT_ROOT="$(pwd)"
-echo "export PATH=\"\$PATH:$PROJECT_ROOT\"" > "$Code CIN_INSTALL"
-chmod +x "$Code CIN_INSTALL"
-success "环境变量已添加到 $Code CIN_INSTALL"
+echo "export PATH=\"\$PATH:$PROJECT_ROOT\"" > "$CODECIN_INSTALL"
+chmod +x "$CODECIN_INSTALL"
+success "环境变量已添加到 $CODECIN_INSTALL"
 thin_line
 true
 finish_step "配置环境变量"
@@ -184,6 +201,6 @@ echo -e "${DIM}总耗时: ${total_duration}秒${NC}"
 echo -e "${DIM}完成时间: $(date '+%Y-%m-%d %H:%M:%S')${NC}"
 line
 echo -e "${YELLOW}提示: 请运行以下命令使环境变量生效:${NC}"
-echo -e "  ${BOLD}source $Code CIN_INSTALL${NC}"
+echo -e "  ${BOLD}source $CODECIN_INSTALL${NC}"
 echo -e "或重新打开终端。"
 echo -e "之后您可以直接在任意位置执行 ${GREEN}codecin-cli${NC} 命令。"
