@@ -2079,6 +2079,47 @@ class CodeGen:
             self.emit('MOV', self.reg(0), self.reg(5))
         return tt
 
+    def _gen_minmax(self, name: str, args) -> Any:
+        """min/max(a, b): int/float 数值最值 (bool 视作 int)。"""
+        at = self._expr_type(args[0])
+        bt = self._expr_type(args[1])
+        if at == 'string' or bt == 'string':
+            raise CompilerError(f"{name} does not accept string operands")
+        tt = 'float' if (at == 'float' or bt == 'float') else 'int'
+
+        self.gen_value(args[0])
+        if tt == 'float' and at in ('int', 'bool'):
+            self.emit('SYS', self.imm(Syscall.ITOF))
+        self.emit('PUSH', self.reg(0))                 # [SP] = a
+        self.gen_value(args[1])
+        if tt == 'float' and bt in ('int', 'bool'):
+            self.emit('SYS', self.imm(Syscall.ITOF))
+        self.emit('MOV', self.reg(1), self.reg(0))     # x1 = b
+        self.emit('POP', self.reg(0))                  # x0 = a
+
+        # min: a<=b 取 a; max: a>=b 取 a
+        cond = 'LE' if name == 'min' else 'GE'
+        if tt == 'float':
+            self.emit('MOV', self.reg(2), self.reg(0))  # 备份 a
+            self.emit('MOV', self.reg(3), self.reg(1))  # 备份 b
+            self.emit('SYS', self.imm(Syscall.FCMP))    # x0 = cmp(a,b) ∈ {-1,0,1}
+            self.emit('CMP', self.reg(0), self.imm(0))
+            l_keep = self.new_label('mmkeep')
+            l_done = self.new_label('mmdone')
+            self.emit('B', self.lab(l_keep), ('cond', cond))
+            self.emit('MOV', self.reg(0), self.reg(3))  # result = b
+            self.emit('JMP', self.lab(l_done))
+            self.label(l_keep)
+            self.emit('MOV', self.reg(0), self.reg(2))  # result = a
+            self.label(l_done)
+        else:
+            self.emit('CMP', self.reg(0), self.reg(1))
+            l_keep = self.new_label('mmkeep')
+            self.emit('B', self.lab(l_keep), ('cond', cond))
+            self.emit('MOV', self.reg(0), self.reg(1))  # result = b
+            self.label(l_keep)
+        return tt
+
     def _gen_ternary(self, cond, a, b) -> Any:
         lt = self._expr_type(a)
         rt = self._expr_type(b)
@@ -2160,6 +2201,32 @@ class CodeGen:
                 self.emit('SYS', self.imm(Syscall.ITOF))
             self.emit('SYS', self.imm(math_unary[name]))
             return 'float'
+
+        round_unary = {'floor': Syscall.FLOOR, 'ceil': Syscall.CEIL,
+                       'round': Syscall.ROUND}
+        if name in round_unary:
+            at = self.gen_value(args[0])
+            if at in ('int', 'bool'):
+                self.emit('SYS', self.imm(Syscall.ITOF))
+            self.emit('SYS', self.imm(round_unary[name]))
+            return 'float'
+
+        if name in ('min', 'max'):
+            return self._gen_minmax(name, args)
+
+        if name == 'idiv':
+            at = self._expr_type(args[0])
+            bt = self._expr_type(args[1])
+            if at in ('float', 'string') or bt in ('float', 'string'):
+                raise CompilerError("idiv requires integer operands")
+            self.gen_value(args[0])
+            self.emit('PUSH', self.reg(0))
+            self.gen_value(args[1])
+            self.emit('MOV', self.reg(1), self.reg(0))
+            self.emit('POP', self.reg(0))
+            self.emit('DIV', self.reg(0), self.reg(1))
+            return 'int'
+
         if name == 'pow':
             self._arg_float(args[0])
             self.emit('PUSH', self.reg(0))
@@ -2237,6 +2304,16 @@ class CodeGen:
             self.emit('SYS', self.imm(Syscall.TOUPPER if name == 'upper'
                                        else Syscall.TOLOWER))
             return 'string'
+        if name in ('trim', 'ltrim', 'rtrim'):
+            self._gen_string_value(args[0])
+            sys_id = {'trim': Syscall.TRIM, 'ltrim': Syscall.LTRIM,
+                      'rtrim': Syscall.RTRIM}[name]
+            self.emit('SYS', self.imm(sys_id))
+            return 'string'
+        if name == 'atoi':
+            self.gen_value(args[0])
+            self.emit('SYS', self.imm(Syscall.ATOI))
+            return 'int'
         if name == 'time':
             self.emit('SYS', self.imm(Syscall.TIME))
             return 'int'

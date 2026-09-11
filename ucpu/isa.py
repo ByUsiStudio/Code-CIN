@@ -153,6 +153,13 @@ class Syscall(IntEnum):
     INDEXOF = 29    # indexof(x0=hay, x1=needle) -> 首位置或 -1
     TOUPPER = 30    # upper(x0=s) -> 新堆字符串 (ASCII 大写)
     TOLOWER = 31    # lower(x0=s) -> 新堆字符串 (ASCII 小写)
+    FLOOR = 32      # float floor(x0 bits) -> float bits (向 -inf 取整)
+    CEIL = 33       # float ceil(x0 bits) -> float bits (向 +inf 取整)
+    ROUND = 34      # float round(x0 bits) -> float bits (floor(x+0.5), 半值向 +inf)
+    ATOI = 35       # int atoi(x0=string ptr) -> 十进制整数 (失败为 0)
+    TRIM = 36       # string trim(x0=s) -> 去首尾空白的新堆字符串
+    LTRIM = 37      # string ltrim(x0=s) -> 去前导空白的新堆字符串
+    RTRIM = 38      # string rtrim(x0=s) -> 去尾部空白的新堆字符串
 
 
 class Cond:

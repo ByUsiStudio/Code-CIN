@@ -1300,6 +1300,28 @@ class CPU:
             data = self.memory.read_string(x0)
             self._set_reg(0, self._heap_dup_string(
                 data.lower().encode('utf-8') + b'\x00'))
+        elif call_id == Syscall.FLOOR:
+            self._set_reg(0, _f_to_bits(math.floor(_bits_to_f(x0))))
+        elif call_id == Syscall.CEIL:
+            self._set_reg(0, _f_to_bits(math.ceil(_bits_to_f(x0))))
+        elif call_id == Syscall.ROUND:
+            # 与 lib/math.cin f_round 一致: floor(x + 0.5) (半值向 +inf)
+            self._set_reg(0, _f_to_bits(math.floor(_bits_to_f(x0) + 0.5)))
+        elif call_id == Syscall.ATOI:
+            s = self.memory.read_string(x0).strip()
+            try:
+                self._set_reg(0, int(s) & MASK64)
+            except ValueError:
+                self._set_reg(0, 0)
+        elif call_id == Syscall.TRIM:
+            self._set_reg(0, self._heap_dup_string(
+                self.memory.read_string(x0).strip().encode('utf-8') + b'\x00'))
+        elif call_id == Syscall.LTRIM:
+            self._set_reg(0, self._heap_dup_string(
+                self.memory.read_string(x0).lstrip().encode('utf-8') + b'\x00'))
+        elif call_id == Syscall.RTRIM:
+            self._set_reg(0, self._heap_dup_string(
+                self.memory.read_string(x0).rstrip().encode('utf-8') + b'\x00'))
         else:
             raise ExecutionError(f"Unknown SYS call id: {call_id}")
         return True
