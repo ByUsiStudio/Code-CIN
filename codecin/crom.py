@@ -20,6 +20,8 @@ CROM_HEADER_SIZE = 16
 # flags bit0: zlib 压缩; bit1: 尾部携带 MMU 页表元数据 (此时校验和覆盖 payload+尾部)
 CROM_FLAG_COMPRESS = 0x01
 CROM_FLAG_MMU = 0x02
+# 解压/载荷允许超出头部 mem_size 的最大余量 (MMU 页表尾部元数据用)
+CROM_MAX_TRAILER = 4 << 20
 
 
 def _mmu_trailer(mmu) -> bytes:
@@ -105,8 +107,14 @@ def load_crom(memory: 'FastMemory', path: str,
         raise CPUSimulatorError(f".crom file too short: {len(data)} bytes")
 
     if data[:4] != Constants.CROM_MAGIC:
-        # 旧版裸格式: 前 4 字节为 mem_size
+        # 旧版裸格式: 前 4 字节为 mem_size。
+        # 要求声明长度与文件实际内容一致, 否则任意文件 (例如 "NOTACROMFILE")
+        # 都会被静默当成内存镜像载入。
         mem_size = struct.unpack('<I', data[:4])[0]
+        if mem_size > len(data) - 4:
+            raise CPUSimulatorError(
+                f"Not a .crom file: 声明的 mem_size={mem_size} "
+                f"超过文件实际内容 ({len(data) - 4} bytes)")
         memory.load_bytes(0, data[4:4 + mem_size])
         if logger:
             logger.info(f"Loaded legacy .crom: {min(mem_size, len(data) - 4)} bytes")
@@ -129,12 +137,26 @@ def load_crom(memory: 'FastMemory', path: str,
         raise CPUSimulatorError(".crom checksum mismatch (file corrupted?)")
 
     if compressed:
+        # 解压上限 = 头部 mem_size + MMU trailer 余量: 防止 zip bomb
+        # (旧实现 zlib.decompress 无上限, 65KB 文件可解出数百 MB)。
+        limit = mem_size + CROM_MAX_TRAILER
         try:
-            raw = zlib.decompress(body)
+            d = zlib.decompressobj()
+            raw = d.decompress(body, limit)
+            if d.unconsumed_tail:
+                raise CPUSimulatorError(
+                    f".crom 解压超过头部声明的大小 ({limit} bytes): 疑似损坏或恶意文件")
+            raw += d.flush()
         except zlib.error as e:
             raise CPUSimulatorError(f"Failed to decompress .crom: {e}")
+        if len(raw) > limit:
+            raise CPUSimulatorError(
+                f".crom 解压超过头部声明的大小 ({limit} bytes)")
     else:
         raw = body
+        if len(raw) > mem_size + CROM_MAX_TRAILER:
+            raise CPUSimulatorError(
+                f".crom 载荷超过头部声明的大小 ({mem_size} bytes)")
 
     memory.load_bytes(0, raw[:min(mem_size, len(raw))])
     if has_mmu and enable_mmu:
