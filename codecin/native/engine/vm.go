@@ -186,6 +186,13 @@ func Run(bc []byte, mem []byte, entry, sp, heapBase int64, inData []byte,
 	}
 
 	finish := func(status int, errMsg string) *Result {
+		// 输出超限一并报错: 不能把"被截断的输出"当成正常结果
+		if vm.outOver && status != StatusError {
+			status = StatusError
+			if errMsg == "" {
+				errMsg = "output limit exceeded (16 MiB)"
+			}
+		}
 		return &Result{
 			Status:  status,
 			Pc:      vm.pc,
@@ -200,7 +207,10 @@ func Run(bc []byte, mem []byte, entry, sp, heapBase int64, inData []byte,
 
 	for {
 		if maxSteps > 0 && int64(vm.steps) >= maxSteps {
-			return finish(StatusDone, "")
+			// 步数用尽不等于正常停机: 旧实现返回 StatusDone, 与 HALT 无法区分,
+			// 于是被截断的程序在 Python 侧被当成 halted=true 正常结束。
+			return finish(StatusError,
+				fmt.Sprintf("instruction limit reached (%d steps)", maxSteps))
 		}
 		if vm.pc < 0 || vm.pc >= len(vm.prog) {
 			return finish(StatusDone, "")

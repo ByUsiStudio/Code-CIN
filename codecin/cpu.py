@@ -1472,6 +1472,7 @@ class CPU:
             self.logger.info("User interrupt")
             self.console.print(f"\n{Colors.colorize('User interrupt', Colors.YELLOW)}")
         except Exception as e:
+            self.execution_failed = True
             if self.config.debug_mode:
                 # 超详细: rich 彩色完整堆栈
                 self.logger.exception(f"Execution error: {e}")
@@ -1524,9 +1525,12 @@ class CPU:
                 break
 
             if self.stats.instruction_count >= self.config.max_instructions:
-                self.logger.warning(f"Max instruction limit reached: "
-                                    f"{self.config.max_instructions}")
-                break
+                # 与 Go 原生 VM 保持一致的语义: 步数用尽不是"正常结束",
+                # 而是失败 (旧行为只是 warning + break, 会让被截断的程序
+                # 以退出码 0 报告成功)。
+                raise ExecutionError(
+                    f"instruction limit reached "
+                    f"({self.config.max_instructions} steps)")
 
             # 建议 5: 'continue' 后豁免一次当前 PC 的断点命中,
             # 确保至少执行一条指令 (与 GDB 语义一致, 避免死循环重入)
