@@ -15,11 +15,12 @@
 
 #### Go 原生工具链
 - **Go 版 CIN 编译器** (`codecin/native/compiler/`)：完整的词法分析、类型系统、语法分析器与代码生成，
-  与 Python 编译器产物逐字节等价，由 `script/diff_go_python.py` 差分校验。
+  与 Python 编译器在 `examples/*.cin` 上输出等价，由 `script/diff_go_python.py` 差分校验
+  （比较程序 stdout；两侧编译产物的字节级比对尚未覆盖）。
 - **独立 Go CLI** (`codecin` 命令)：全 Go 链路执行，无需 Python 依赖。
 - **字节码中间表示 IR** (`codecin/native/ir/`)：Go 侧 CIN 编译的中间表示定义。
 - **一键安装脚本**：`install.sh`（Linux/macOS/Termux）、`install.ps1`（Windows PowerShell）、
-  `script/install_termux.sh`（Termux 克隆 + 依赖 + 编译 + 启动器）。
+  `script/install_termux.sh`（Termux 克隆 + 依赖 + 编译原生库 + 启动器；Termux 上暂不编译 Go CLI）。
 
 #### CIN 高级语言
 - **位运算与复合赋值**：`& | ^ ~ << >>` 及 `&= |= ^= <<= >>=`；`idiv()` 整数除法；`s[i]` 字符串单字节读取。
