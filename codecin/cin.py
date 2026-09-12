@@ -256,15 +256,26 @@ def tokenize(source: str,
                                           source[dstart:i]):
                     raise CompilerError(f"Malformed numeric literal at "
                                         f"{at_loc(line)}")
-                # 后缀 (u/U/l/L, f/F): 64 位槽模型忽略宽度差异
+                dend = i
+                # 后缀 (u/U/l/L, f/F): 64 位槽模型忽略宽度差异。
+                # 注意: 数值文本必须在吃后缀"之前"截取, 否则 0xFFu 会整段
+                # 交给 int() 而抛裸 ValueError。
                 while i < n and source[i] in 'uUlL':
                     i += 1
                 if i < n and source[i] in 'fF':
                     is_float = True
                     i += 1
-                text = source[start:i]
+                text = source[start:dend]
                 norm = '0' + text[1].lower() + text[2:]
-                value = int(norm.replace('_', ''), 0)
+                try:
+                    value = int(norm.replace('_', ''), 0)
+                except ValueError:
+                    raise CompilerError(f"Malformed numeric literal at "
+                                        f"{at_loc(line)}") from None
+                if value > 0xFFFFFFFFFFFFFFFF:
+                    raise CompilerError(
+                        f"Numeric literal out of 64-bit range at "
+                        f"{at_loc(line)}")
             else:
                 while i < n and (source[i].isdigit() or source[i] == '.'
                                  or source[i] == '_'):
@@ -278,13 +289,23 @@ def tokenize(source: str,
                         i += 1
                     while i < n and (source[i].isdigit() or source[i] == '_'):
                         i += 1
+                dend = i
+                # 同上: 先截取数值文本, 再吃后缀
                 while i < n and source[i] in 'uUlL':
                     i += 1
                 if i < n and source[i] in 'fF':
                     is_float = True
                     i += 1
-                text = source[start:i].replace('_', '')
-                value = float(text) if is_float else int(text)
+                text = source[start:dend].replace('_', '')
+                try:
+                    value = float(text) if is_float else int(text)
+                except ValueError:
+                    raise CompilerError(f"Malformed numeric literal at "
+                                        f"{at_loc(line)}") from None
+                if not is_float and value > 0x7FFFFFFFFFFFFFFF:
+                    raise CompilerError(
+                        f"Numeric literal out of 64-bit range at "
+                        f"{at_loc(line)}")
             tokens.append(Token('FLOAT', float(value), line) if is_float
                           else Token('NUMBER', int(value), line))
         elif c.isalpha() or c == '_':
@@ -418,7 +439,9 @@ def _collect_module_lines(path: str, loaded: set, active: set,
     if real in loaded:
         return
     active.add(real)
-    with open(real, 'r', encoding='utf-8') as f:
+    with open(real, 'r', encoding='utf-8-sig') as f:
+        # utf-8-sig: 容忍 Windows 编辑器写出的 BOM, 否则首行 `import ...`
+        # 匹配不上 _IMPORT_RE, 会报一个与真实原因无关的解析错误
         lines = f.read().split('\n')
     for line in lines:
         m = _IMPORT_RE.match(line)

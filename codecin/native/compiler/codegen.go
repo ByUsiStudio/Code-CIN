@@ -1886,7 +1886,10 @@ func loadProgramSource(path, libDir string) (string, error) {
 		if err != nil {
 			return err
 		}
-		for _, line := range strings.Split(strings.ReplaceAll(string(data), "\r\n", "\n"), "\n") {
+		// 去掉 BOM: Windows 编辑器写出的 .cin 带 EF BB BF 时, 首行 `import ...`
+		// 匹配不上 importRe, 会报与真实原因无关的解析错误。
+		text := strings.TrimPrefix(strings.ReplaceAll(string(data), "\r\n", "\n"), "\ufeff")
+		for _, line := range strings.Split(text, "\n") {
 			m := importRe.FindStringSubmatch(line)
 			if m != nil {
 				target := m[1]

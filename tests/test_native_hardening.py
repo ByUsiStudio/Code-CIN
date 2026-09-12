@@ -85,9 +85,9 @@ def test_truncated_operand_rejected():
 
 @needs_native
 def test_crom_zip_bomb_rejected():
-    """头部声明 1KB, 实际解出 1MB: 必须拒绝 (旧实现无上限地解压)。"""
+    """头部声明 1KB, 实际解出 8MB (超过 mem_size + 4MB 余量): 必须拒绝。"""
     eng = native.get_engine()
-    raw = b'\x00' * (1 << 20)
+    raw = b'\x00' * (8 << 20)
     payload = zlib.compress(raw)
     header = b'CROM' + bytes([3]) + struct.pack('<I', 1024) + \
         bytes([0x01]) + struct.pack('<I', zlib.crc32(payload)) + b'\x00\x00'
@@ -149,7 +149,7 @@ def test_python_crom_zip_bomb_rejected(workdir):
     from codecin.errors import CPUSimulatorError
     from codecin.memory import FastMemory
 
-    raw = b'\x00' * (1 << 20)
+    raw = b'\x00' * (8 << 20)
     payload = zlib.compress(raw)
     header = b'CROM' + bytes([3]) + struct.pack('<I', 1024) + \
         bytes([0x01]) + struct.pack('<I', zlib.crc32(payload)) + b'\x00\x00'

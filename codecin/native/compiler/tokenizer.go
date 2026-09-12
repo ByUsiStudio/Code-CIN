@@ -174,6 +174,7 @@ func tokenize(source, filename string) ([]Token, error) {
 						i++
 					}
 				}
+				digits := source[start:i]
 				for i < n && strings.IndexByte("uUlL", source[i]) >= 0 {
 					i++
 				}
@@ -181,7 +182,7 @@ func tokenize(source, filename string) ([]Token, error) {
 					isFloat = true
 					i++
 				}
-				text := strings.ReplaceAll(source[start:i], "_", "")
+				text := strings.ReplaceAll(digits, "_", "")
 				if isFloat {
 					f, err := strconv.ParseFloat(text, 64)
 					if err != nil {

@@ -13,6 +13,10 @@ import (
 
 const cromVersion = 3
 
+// cromMaxTrailer 是载荷允许超出头部 mem_size 的最大余量 (MMU 页表尾部元数据)。
+// 必须与 Python 侧 codecin/crom.py: CROM_MAX_TRAILER 保持一致。
+const cromMaxTrailer = 4 << 20
+
 // CromPack 打包内存镜像为 CROM 字节流 (compress=true 时 zlib 压缩)。
 func CromPack(data []byte, compress bool) []byte {
 	var payload []byte
@@ -62,25 +66,20 @@ func CromUnpack(data []byte) ([]byte, int, bool) {
 		if err != nil {
 			return nil, 0, false
 		}
-		// 解压上限取自文件头声明的 mem_size: 防止 zip bomb
+		// 解压上限取自文件头声明的 mem_size + MMU 尾部余量: 防止 zip bomb
 		// (旧实现 io.ReadAll 无上限, 65KB 的合法 CROM 可解出 64MB+)。
-		limited := io.LimitReader(r, int64(memSize)+1)
+		limit := int64(memSize) + cromMaxTrailer
+		limited := io.LimitReader(r, limit+1)
 		raw, err = io.ReadAll(limited)
 		_ = r.Close()
 		if err != nil {
 			return nil, 0, false
 		}
-		if uint32(len(raw)) > memSize {
-			return nil, 0, false
-		}
 	} else {
 		raw = payload
-		if uint32(len(raw)) > memSize {
-			return nil, 0, false
-		}
 	}
-	if uint32(len(raw)) != memSize {
-		// 头部声明的 mem_size 与实际载荷不符
+	// mem_size 是物理内存长度; 之后允许跟一段 MMU 页表尾部元数据
+	if uint32(len(raw)) < memSize || len(raw) > int(memSize)+cromMaxTrailer {
 		return nil, 0, false
 	}
 	return raw, int(flags), true
