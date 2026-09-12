@@ -156,6 +156,27 @@ HOST_BUILTINS = {
     'termux_sms_send': (Syscall.TERMUXSMS, 2, 'int'),
 }
 
+# 内建函数最少参数个数 (按各分支实际索引的最大下标 + 1 得出)。
+# 缺失参数旧代码会直接 IndexError 崩溃 (如 sqrt()、substr("a",1)),
+# 现在统一报 CompilerError。必须与 Go 侧 compiler.builtinMinArgs 保持一致。
+BUILTIN_MIN_ARGS = {
+    'println': 0, 'print': 0,
+    'sqrt': 1, 'sin': 1, 'cos': 1, 'tan': 1,
+    'floor': 1, 'ceil': 1, 'round': 1,
+    'min': 2, 'max': 2,
+    'idiv': 2, 'pow': 2,
+    'abs': 1, 'strlen': 1, 'strcmp': 2, 'strcpy': 1,
+    'rand': 0, 'srand': 1,
+    'int_to_str': 1, 'itoa': 1,
+    'float_to_str': 1, 'ftoa': 1,
+    'bool_to_str': 1,
+    'substr': 3, 'indexof': 2,
+    'upper': 1, 'lower': 1,
+    'trim': 1, 'ltrim': 1, 'rtrim': 1, 'atoi': 1,
+    'time': 0, 'input': 0,
+}
+BUILTIN_MIN_ARGS.update({k: v[1] for k, v in HOST_BUILTINS.items()})
+
 
 @dataclass
 class Token:
@@ -2277,6 +2298,11 @@ class CodeGen:
         self.emit('SYS', self.imm(sys_id))
 
     def _gen_call(self, name: str, args: list):
+        min_args = BUILTIN_MIN_ARGS.get(name)
+        if min_args is not None and len(args) < min_args:
+            raise CompilerError(
+                f"{name}() expects at least {min_args} argument(s), "
+                f"got {len(args)}")
         if name in ('println', 'print'):
             # 单参数 (拼接由表达式完成)
             if args:

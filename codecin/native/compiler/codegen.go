@@ -852,8 +852,8 @@ func (c *compiler) genValue(n *Node) *Type {
 		return scalarT(kBool)
 	case "bitnot":
 		t := c.genValue(n.A)
-		if t.Kind == kFloat || t.Kind == kString {
-			// 编译错误
+		if t == nil || (t.Kind != kInt && t.Kind != kBool) {
+			c.failf("Bitwise NOT '~' requires an integer operand")
 			return scalarT(kInt)
 		}
 		c.emit("MVN", c.reg(0), c.reg(0))
@@ -865,6 +865,7 @@ func (c *compiler) genValue(n *Node) *Type {
 	case "binop":
 		return c.genBinop(n.Op, n.A, n.B)
 	}
+	c.failf("Cannot generate code for expression: %s", n.Kind)
 	return nil
 }
 
@@ -927,10 +928,12 @@ func (c *compiler) decay(t *Type) *Type {
 func (c *compiler) genMember(objNode *Node, fname string, lvalue bool) *Type {
 	objT := c.genValue(objNode)
 	if !isStruct(objT) {
+		c.failf("Member access on non-struct type: %s", typeName(objT))
 		return nil
 	}
 	ftype, foff, ok := c.structField(objT, fname)
 	if !ok {
+		c.failf("Struct %s has no field %s", objT.Name, fname)
 		return nil
 	}
 	if lvalue {
@@ -957,7 +960,8 @@ func (c *compiler) genIndex(baseNode, idxNode *Node, lvalue bool) *Type {
 	baseT := c.genValue(baseNode)
 	if baseT != nil && baseT.Kind == kString {
 		if lvalue {
-			return nil // 编译错误: 字符串不可赋值
+			c.failf("Cannot assign to string index")
+			return nil
 		}
 		c.emit("MOV", c.reg(3), c.reg(0))
 		c.genValue(idxNode)
@@ -967,6 +971,7 @@ func (c *compiler) genIndex(baseNode, idxNode *Node, lvalue bool) *Type {
 		return scalarT(kInt)
 	}
 	if baseT == nil || (!isFixedArray(baseT) && !isPtrArray(baseT)) {
+		c.failf("Indexing non-array type: %s", typeName(baseT))
 		return nil
 	}
 	elemT := baseT.Elem
@@ -1178,7 +1183,8 @@ func (c *compiler) genBinop(op string, left, right *Node) *Type {
 	if floatMode {
 		sysMap := map[string]int64{"+": SysFADD, "-": SysFSUB, "*": SysFMUL, "/": SysFDIV}
 		if op == "%" {
-			return scalarT(kFloat) // 编译错误: 浮点取模
+			c.failf("Float modulo not supported")
+			return scalarT(kFloat)
 		}
 		c.emit("SYS", c.imm(sysMap[op]))
 		return scalarT(kFloat)
@@ -1200,6 +1206,7 @@ func (c *compiler) genBinop(op string, left, right *Node) *Type {
 		c.emit(m, c.reg(0), c.reg(1))
 		return scalarT(kInt)
 	}
+	c.failf("Unsupported int operator: %s", op)
 	return scalarT(kInt)
 }
 
@@ -1234,7 +1241,13 @@ func (c *compiler) genBitwise(op string, left, right *Node) *Type {
 	rt := c.exprType(right)
 	if lt != nil && (lt.Kind == kFloat || lt.Kind == kString) ||
 		rt != nil && (rt.Kind == kFloat || rt.Kind == kString) {
-		return scalarT(kInt) // 编译错误
+		bad := lt
+		if bad == nil || (bad.Kind != kFloat && bad.Kind != kString) {
+			bad = rt
+		}
+		c.failf("Bitwise operator '%s' requires integer operands (got: %s)",
+			op, typeName(bad))
+		return scalarT(kInt)
 	}
 	c.genValue(left)
 	c.emit("PUSH", c.reg(0))
@@ -1259,9 +1272,11 @@ func (c *compiler) genBitwise(op string, left, right *Node) *Type {
 func (c *compiler) genCompound(target *Node, op string, valueNode *Node) *Type {
 	tt := c.exprType(target)
 	if tt == nil || (tt.Kind != kInt && tt.Kind != kBool && tt.Kind != kFloat) {
+		c.failf("Cannot apply '%s=' to type: %s", op, typeName(tt))
 		return nil
 	}
 	if tt.Kind == kFloat && op != "+" && op != "-" && op != "*" && op != "/" {
+		c.failf("Cannot apply '%s=' to float", op)
 		return tt
 	}
 	floatMode := tt.Kind == kFloat
@@ -1489,7 +1504,38 @@ func (c *compiler) builtinRetType(name string) *Type {
 	return nil
 }
 
+// builtinMinArgs 记录各内建函数最少参数个数, 与 Python 侧
+// codecin/cin.py: BUILTIN_MIN_ARGS 必须保持一致。
+// 缺失参数旧代码会直接索引越界 panic, 现在统一走编译错误通道。
+var builtinMinArgs = func() map[string]int {
+	m := map[string]int{
+		"println": 0, "print": 0,
+		"sqrt": 1, "sin": 1, "cos": 1, "tan": 1,
+		"floor": 1, "ceil": 1, "round": 1,
+		"min": 2, "max": 2,
+		"idiv": 2, "pow": 2,
+		"abs": 1, "strlen": 1, "strcmp": 2, "strcpy": 1,
+		"rand": 0, "srand": 1,
+		"int_to_str": 1, "itoa": 1,
+		"float_to_str": 1, "ftoa": 1,
+		"bool_to_str": 1,
+		"substr": 3, "indexof": 2,
+		"upper": 1, "lower": 1,
+		"trim": 1, "ltrim": 1, "rtrim": 1, "atoi": 1,
+		"time": 0, "input": 0,
+	}
+	for name, hb := range hostBuiltins {
+		m[name] = hb.nargs
+	}
+	return m
+}()
+
 func (c *compiler) genCall(name string, args []*Node) *Type {
+	if minArgs, ok := builtinMinArgs[name]; ok && len(args) < minArgs {
+		c.failf("%s() expects at least %d argument(s), got %d",
+			name, minArgs, len(args))
+		return scalarT(kVoid)
+	}
 	if name == "println" || name == "print" {
 		if len(args) > 0 {
 			c.genPrint(args[0], name == "println")
@@ -1661,7 +1707,8 @@ func (c *compiler) genCall(name string, args []*Node) *Type {
 	// 用户函数
 	fdef := c.functions[name]
 	if fdef == nil {
-		return nil // Unknown function
+		c.failf("Unknown function: %s", name)
+		return nil
 	}
 	for k, arg := range args {
 		at := c.genValue(arg)

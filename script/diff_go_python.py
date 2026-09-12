@@ -61,8 +61,10 @@ def main(argv):
         ex_dir = os.path.join(ROOT, 'examples')
         files = [os.path.join(ex_dir, f) for f in sorted(os.listdir(ex_dir))
                  if f.endswith('.cin')]
-        # 注: basic.cin 使用 srand(time()) 播种, 输出依赖运行时钟, 不纳入逐字节比较
+        # 注: basic.cin 位于仓库根目录 (不在 examples/ 下), 且使用 srand(time())
+        #     播种, 输出依赖运行时钟, 因此不纳入逐字节比较
         #     (由 tests/test_go_compiler.py::test_go_cli_basic_demo 做标记位校验)。
+        #     本脚本比较的是程序 stdout, 不含编译产物字节级比对。
     failed = 0
     for path in files:
         py_out, py_err = run_python(path)
