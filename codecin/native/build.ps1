@@ -1,5 +1,5 @@
-﻿# Code CIN 原生库构建脚本 (Windows)
-# 依赖: Go 1.21+ 且启用 cgo (需 C 编译器, 如 MinGW-w64 / TDM-GCC 的 gcc / clang)
+# Code CIN 原生库构建脚本 (Windows)
+# 依赖: Go 1.26+ 且启用 cgo (需 C 编译器, 如 MinGW-w64 / TDM-GCC 的 gcc / clang)
 # 用法: 在本目录执行  .\build.ps1
 #     静态链接: $env:CODECIN_STATIC = '1'  (默认尝试静态, 失败自动回退动态)
 #     动态链接: $env:CODECIN_STATIC = '0'

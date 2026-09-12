@@ -104,3 +104,37 @@ def test_equ_must_be_dot_prefixed():
     # PL 关键字 'set' 是 MOV, 不能当作 .equ 误解析
     instructions, _, _ = _assemble("set x0, 5\nhalt\n")
     assert instructions[0][0] == 'MOV'
+
+
+# --- 立即数后缀与进制前缀的交互 (回归: #0x1F 曾被解析成 1) ---
+
+@pytest.mark.parametrize('literal,expected', [
+    ('#0x1F', 31),            # 尾字母 F 是十六进制数字, 不是类型后缀
+    ('#0x1FF', 511),
+    ('#0x0F', 15),
+    ('#0xABCDEF', 11259375),
+    ('#0x1F0', 496),          # 尾字符非 F, 旧实现本来就正确
+    ('#0xFF', 255),
+    ('#0xF', 15),
+    ('#0xFFu', 255),          # 真正的 u 后缀仍要剥离
+    ('#0x1FL', 31),           # L 不是十六进制数字, 可安全剥离
+    ('#0xABCDEFu', 11259375),
+    ('-0x1F', -31),
+    ('#16f', 16),             # 十进制: f 是类型后缀
+    ('#0b1111', 15),
+    ('#0o17', 15),
+    ('#0', 0),
+])
+def test_parse_immediate_radix_and_suffix(literal, expected):
+    assert Assembler.parse_immediate(literal) == expected
+
+
+def test_hex_immediate_keeps_trailing_f_in_operand():
+    """指令操作数里的 #0x1F 必须按 31 编码 (曾因剥后缀变成 1)。"""
+    src = """.text
+main:
+    mov x0, 0x1F
+    halt
+"""
+    instructions, _, _ = _assemble(src)
+    assert instructions[0] == ('MOV', [('reg', 0), ('imm', 31)])

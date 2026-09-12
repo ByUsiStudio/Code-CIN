@@ -1460,6 +1460,14 @@ class CodeGen:
                 f"Switch expression must be integer, got: {sel_t}")
         l_end = self.new_label('swend')
         self.break_labels.append(l_end)
+        # continue 必须先把选择器弹出再跳, 否则每轮迭代泄漏 8 字节栈直至撞堆。
+        # 只有在循环内 (存在外层 continue 目标) 才接管 continue, 否则保持
+        # "continue outside loop" 报错语义。
+        outer_cont = self.continue_labels[-1] if self.continue_labels else None
+        l_cont = None
+        if outer_cont is not None:
+            l_cont = self.new_label('swcont')
+            self.continue_labels.append(l_cont)
         self.gen_value(cond)
         self.emit('PUSH', self.reg(0))                 # [SP] = selector
 
@@ -1471,7 +1479,11 @@ class CodeGen:
                 default_lbl = lbl
                 labels.append((None, lbl))
                 continue
-            ctype, raw = self._const_value(const)
+            try:
+                ctype, raw = self._const_value(const)
+            except CompilerError:
+                raise CompilerError(
+                    "case value must be an integer constant") from None
             if ctype not in ('int', 'bool'):
                 raise CompilerError(
                     f"case value must be an integer constant, got: {ctype}")
@@ -1493,6 +1505,13 @@ class CodeGen:
             self.label(labels[idx][1])
             self.gen_stmts(stmts)
 
+        # 贯穿到末尾与 break 都必须走弹出选择器的路径
+        self.emit('JMP', self.lab(l_end))
+        if l_cont is not None:
+            self.label(l_cont)
+            self.emit('ADDI', self.reg(32), self.reg(32), self.imm(8))
+            self.emit('JMP', self.lab(outer_cont))
+            self.continue_labels.pop()
         self.label(l_end)
         self.break_labels.pop()
         self.emit('ADDI', self.reg(32), self.reg(32), self.imm(8))  # 丢 selector

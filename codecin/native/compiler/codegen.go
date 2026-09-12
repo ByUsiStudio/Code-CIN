@@ -73,6 +73,14 @@ func (c *compiler) emit(op string, args ...ir.Operand) {
 	c.res.Instructions = append(c.res.Instructions, ir.Instr{Op: op, Args: args})
 }
 
+// failf 记录第一条语义错误 (粘性), 由 Compile 在生成结束后统一返回。
+// 错误文案与 Python 编译器 (codecin/cin.py) 保持一致, 便于差分测试断言。
+func (c *compiler) failf(format string, args ...interface{}) {
+	if c.err == nil {
+		c.err = fmt.Errorf(format, args...)
+	}
+}
+
 func (c *compiler) label(name string) {
 	c.res.Labels[name] = len(c.res.Instructions)
 }
@@ -343,6 +351,13 @@ func (c *compiler) addrVar(name string) error {
 	return fmt.Errorf("Undefined variable: %s", name)
 }
 
+// mustAddrVar 是 addrVar 的报错版本: 未定义变量不再被静默吞掉。
+func (c *compiler) mustAddrVar(name string) {
+	if err := c.addrVar(name); err != nil {
+		c.failf("%v", err)
+	}
+}
+
 func (c *compiler) varType(name string) *Type {
 	if lv, ok := c.locals[name]; ok {
 		return lv.t
@@ -383,12 +398,13 @@ func (c *compiler) genStmt(s *Node) {
 		c.genSwitch(s.A, s.List)
 	case "break":
 		if len(c.breakLbls) == 0 {
-			// 编译期错误 (parser 未拦), 运行时忽略
+			c.failf("break outside loop")
 			return
 		}
 		c.emit("JMP", c.lab(c.breakLbls[len(c.breakLbls)-1]))
 	case "continue":
 		if len(c.continueLbls) == 0 {
+			c.failf("continue outside loop")
 			return
 		}
 		c.emit("JMP", c.lab(c.continueLbls[len(c.continueLbls)-1]))
@@ -477,45 +493,65 @@ func (c *compiler) genDowhile(body, cond *Node) {
 func (c *compiler) genSwitch(cond *Node, branches []*Node) {
 	selT := c.exprType(cond)
 	if selT == nil || (selT.Kind != kInt && selT.Kind != kBool) {
-		// 编译错误: switch 表达式必须为整数
+		c.failf("Switch expression must be integer, got: %s", typeName(selT))
 		return
 	}
 	lEnd := c.newLabel("swend")
 	c.breakLbls = append(c.breakLbls, lEnd)
-	c.genValue(cond)
-	c.emit("PUSH", c.reg(0))
-
-	var labels []struct {
-		raw int64
-		lbl string
+	// continue 必须先把选择器弹出再跳转, 否则每轮迭代泄漏 8 字节栈直至撞堆。
+	// 只有在循环内 (存在外层 continue 目标) 才接管 continue, 否则保持
+	// "continue outside loop" 报错语义。
+	outerCont := ""
+	if n := len(c.continueLbls); n > 0 {
+		outerCont = c.continueLbls[n-1]
 	}
+	lCont := ""
+	if outerCont != "" {
+		lCont = c.newLabel("swcont")
+		c.continueLbls = append(c.continueLbls, lCont)
+	}
+	c.genValue(cond)
+	c.emit("PUSH", c.reg(0)) // [SP] = selector
+
+	type caseLabel struct {
+		raw       uint64
+		isDefault bool
+		lbl       string
+	}
+	// labels 与 branches 严格一一对应: 任何分支都不会被跳过 (旧实现遇到
+	// 非常量 case 时 continue, 导致后续 case 的标签贴到别人的语句体上)。
+	labels := make([]caseLabel, 0, len(branches))
 	defaultLbl := ""
 	for _, br := range branches {
 		if br.A == nil {
 			lbl := c.newLabel("swdef")
 			defaultLbl = lbl
-			labels = append(labels, struct {
-				raw int64
-				lbl string
-			}{-1, lbl})
+			labels = append(labels, caseLabel{isDefault: true, lbl: lbl})
 			continue
 		}
 		ct, raw, err := c.constValue(br.A)
-		if err != nil || (ct.Kind != kInt && ct.Kind != kBool) {
+		if err != nil {
+			c.failf("case value must be an integer constant")
+			labels = append(labels, caseLabel{lbl: c.newLabel("swcase")})
 			continue
 		}
-		labels = append(labels, struct {
-			raw int64
-			lbl string
-		}{raw, c.newLabel("swcase")})
+		if ct.Kind != kInt && ct.Kind != kBool {
+			c.failf("case value must be an integer constant, got: %s", typeName(ct))
+			labels = append(labels, caseLabel{lbl: c.newLabel("swcase")})
+			continue
+		}
+		// 负数 case 按无符号位模式比较 (旧实现拿 -1 当 default 哨兵并跳过 raw < 0,
+		// 于是 `case -1` 永远匹配不上)。
+		labels = append(labels, caseLabel{raw: uint64(raw), lbl: c.newLabel("swcase")})
 	}
 
+	// 分派比较链
 	for _, l := range labels {
-		if l.raw < 0 {
+		if l.isDefault {
 			continue
 		}
 		c.emit("LD", c.reg(0), ir.Mem(32, 0))
-		c.emit("MOV", c.reg(1), c.imm(l.raw))
+		c.emit("MOV", c.reg(1), c.imm(int64(l.raw)))
 		c.emit("CMP", c.reg(0), c.reg(1))
 		c.emit("B", c.lab(l.lbl), ir.Cond("EQ"))
 	}
@@ -525,22 +561,23 @@ func (c *compiler) genSwitch(cond *Node, branches []*Node) {
 	}
 	c.emit("JMP", c.lab(target))
 
-	for _, br := range branches {
-		c.label(labels[len(labels)-1].lbl) // placeholder, corrected below
-		_ = br
-		break
-	}
-	// 修正: 逐分支 label (labels 与 branches 一一对应)
+	// case/default 体 (按文字顺序内联, C 贯穿语义)
 	for i, br := range branches {
-		if i < len(labels) {
-			c.label(labels[i].lbl)
-		}
+		c.label(labels[i].lbl)
 		c.genStmts(br.List)
 	}
 
+	// 贯穿到末尾与 break 都必须走弹出选择器的路径
+	c.emit("JMP", c.lab(lEnd))
+	if lCont != "" {
+		c.label(lCont)
+		c.emit("ADDI", c.reg(32), c.reg(32), c.imm(8))
+		c.emit("JMP", c.lab(outerCont))
+		c.continueLbls = c.continueLbls[:len(c.continueLbls)-1]
+	}
 	c.label(lEnd)
 	c.breakLbls = c.breakLbls[:len(c.breakLbls)-1]
-	c.emit("ADDI", c.reg(32), c.reg(32), c.imm(8))
+	c.emit("ADDI", c.reg(32), c.reg(32), c.imm(8)) // 丢 selector
 }
 
 func (c *compiler) genDecl(items []*Node) {
@@ -557,13 +594,13 @@ func (c *compiler) genDecl(items []*Node) {
 			vt := c.genValue(item.A)
 			c.convert(vt, item.Type)
 			c.emit("MOV", c.reg(2), c.reg(0))
-			_ = c.addrVar(item.Name)
+			c.mustAddrVar(item.Name)
 			c.emit("SD", c.reg(2), ir.Mem(0, 0))
 		} else if isPtrArray(item.Type) && item.Type.Elem != nil && isPtrArray(item.Type.Elem) {
 			c.emit("MOV", c.reg(0), c.imm(64*8))
 			c.emit("SYS", c.imm(SysMALLOC))
 			c.emit("MOV", c.reg(2), c.reg(0))
-			_ = c.addrVar(item.Name)
+			c.mustAddrVar(item.Name)
 			c.emit("SD", c.reg(2), ir.Mem(0, 0))
 		}
 	}
@@ -578,7 +615,7 @@ func (c *compiler) genInit1dLiteral(name string, t *Type, lit *Node) {
 		vt := c.genValue(elem)
 		c.convert(vt, elemT)
 		c.emit("MOV", c.reg(2), c.reg(0))
-		_ = c.addrVar(name)
+		c.mustAddrVar(name)
 		if i != 0 {
 			c.emit("ADDI", c.reg(0), c.reg(0), c.imm(int64(i*8)))
 		}
@@ -621,7 +658,7 @@ func (c *compiler) genInit2dLiteral(name string, t *Type, lit *Node) {
 		}
 	}
 	c.emit("MOV", c.reg(2), c.reg(4))
-	_ = c.addrVar(name)
+	c.mustAddrVar(name)
 	c.emit("SD", c.reg(2), ir.Mem(0, 0))
 }
 
@@ -640,7 +677,7 @@ func (c *compiler) genCpuStmt(op string, operands [][2]string) {
 
 	if op == "increment" || op == "decrement" {
 		varname := operands[0][1]
-		_ = c.addrVar(varname)
+		c.mustAddrVar(varname)
 		c.emit("LD", c.reg(0), ir.Mem(0, 0))
 		if op == "increment" {
 			c.emit("INC", c.reg(0))
@@ -648,7 +685,7 @@ func (c *compiler) genCpuStmt(op string, operands [][2]string) {
 			c.emit("DEC", c.reg(0))
 		}
 		c.emit("MOV", c.reg(2), c.reg(0))
-		_ = c.addrVar(varname)
+		c.mustAddrVar(varname)
 		c.emit("SD", c.reg(2), ir.Mem(0, 0))
 		return
 	}
@@ -674,7 +711,7 @@ func (c *compiler) genCpuStmt(op string, operands [][2]string) {
 			c.emit("MOV", c.reg(0), c.imm(rhsVal))
 		}
 	} else {
-		_ = c.addrVar(varname)
+		c.mustAddrVar(varname)
 		c.emit("LD", c.reg(0), ir.Mem(0, 0))
 		if rhsIsVar {
 			c.emit("MOV", c.reg(2), c.reg(0))
@@ -691,7 +728,7 @@ func (c *compiler) genCpuStmt(op string, operands [][2]string) {
 		}
 	}
 	c.emit("MOV", c.reg(2), c.reg(0))
-	_ = c.addrVar(varname)
+	c.mustAddrVar(varname)
 	c.emit("SD", c.reg(2), ir.Mem(0, 0))
 }
 
@@ -843,10 +880,10 @@ func (c *compiler) genVarValue(name string) *Type {
 		isBlock = gv.isBlock
 	}
 	if isBlock {
-		_ = c.addrVar(name)
+		c.mustAddrVar(name)
 		return t
 	}
-	_ = c.addrVar(name)
+	c.mustAddrVar(name)
 	c.emit("LD", c.reg(0), ir.Mem(0, 0))
 	return t
 }
@@ -854,7 +891,7 @@ func (c *compiler) genVarValue(name string) *Type {
 func (c *compiler) genLvalueAddr(n *Node) {
 	switch n.Kind {
 	case "var":
-		_ = c.addrVar(n.Name)
+		c.mustAddrVar(n.Name)
 	case "member":
 		c.genMember(n.A, n.Name, true)
 	case "index":
@@ -1757,6 +1794,9 @@ func Compile(source, filename string, bounds bool) (*ir.Program, error) {
 	c.emit("HALT")
 	for _, name := range funcOrder {
 		c.genFunctionBody(functions[name])
+	}
+	if c.err != nil {
+		return nil, c.err
 	}
 	return c.res, nil
 }

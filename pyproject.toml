@@ -1,6 +1,6 @@
 [project]
 name = "codecin"
-version = "5.3.0"
+version = "5.4.2"
 description = "Code CIN - 高级语言与运行时 (CIN/PL/ASM 工具链 + Go 原生 VM + ARM64/RISC-V/FP/Vector 指令集)"
 readme = "README.md"
 requires-python = ">=3.8"

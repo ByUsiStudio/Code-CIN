@@ -131,6 +131,11 @@ type compiler struct {
 	filename string
 	bounds   bool
 
+	// err 是粘性的首个编译错误 (语义错误不再被静默吞掉, 由 Compile 统一返回)。
+	// 见 docs/SUGGESTIONS.md §3.1.4: 旧实现在语义错误分支只 return/continue,
+	// 会漏发射指令并带着上一次的 x0 继续生成, 产出静默错误的字节码。
+	err error
+
 	// 函数生成上下文
 	funcDef      *FuncDef
 	locals       map[string]localVar

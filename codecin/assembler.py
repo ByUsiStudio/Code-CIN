@@ -341,22 +341,33 @@ class Assembler:
         val = val.strip().lstrip('#').replace('_', '')
         if not val:
             raise ValueError("empty immediate")
-        # 数值后缀 (u/U/l/L 及 f/F) 在 64 位槽模型下无宽度差异, 直接忽略
-        while val and val[-1] in 'uUlLfF':
-            val = val[:-1]
-        if not val:
-            raise ValueError("empty immediate")
         neg = False
         if val[0] in '+-':
             neg = val[0] == '-'
             val = val[1:]
-        if val.lower().startswith('0x'):
-            n = int(val, 16)
-        elif val.lower().startswith('0b'):
-            n = int(val[2:], 2)
-        elif val.lower().startswith('0o'):
-            n = int(val[2:], 8)
+        if not val:
+            raise ValueError("empty immediate")
+        lower = val.lower()
+        if lower.startswith('0x') or lower.startswith('0b') or lower.startswith('0o'):
+            # 进制前缀字面量: u/U/l/L 不是任何受支持进制的数字, 可安全剥离;
+            # 但 f/F 是合法的十六进制数字, 绝不能剥离
+            # (否则 #0x1F 会被截成 0x1, #0xABCDEF 会被截成 0xABCD)。
+            end = len(val)
+            while end > 0 and val[end - 1] in 'uUlL':
+                end -= 1
+            body = val[:end]
+            if lower.startswith('0x'):
+                n = int(body, 16)
+            elif lower.startswith('0b'):
+                n = int(body[2:], 2)
+            else:
+                n = int(body[2:], 8)
         else:
+            # 十进制: f/F 只能是类型后缀, 在 64 位槽模型下无宽度差异, 直接忽略
+            while val and val[-1] in 'uUlLfF':
+                val = val[:-1]
+            if not val:
+                raise ValueError("empty immediate")
             n = int(val)
         return -n if neg else n
 

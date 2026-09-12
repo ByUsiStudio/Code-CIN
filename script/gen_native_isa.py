@@ -4,10 +4,13 @@
 Python (isa.py) 与 Go (native/*.go) 的指令码/操作数类型码/SYS 功能号
 必须完全一致。本脚本把 Python 侧作为唯一权威:
 
-    python script/gen_native_isa.py          # 重写 codecin/native/isa_gen.go
+    python script/gen_native_isa.py          # 重写 codecin/native/engine/isa_gen.go
+                                             #      与 codecin/native/compiler/syscalls.go
     python script/gen_native_isa.py --check  # 校验一致 (CI 使用)
 
 生成后请运行 gofmt (开发环境), 再 go build -buildmode=c-shared 验证。
+注意: 当前生成器输出的 Go 源码未经过 gofmt, 直接运行 `gofmt -l` 会报这两个文件;
+因此 CI 暂未启用 gofmt 门禁 (见 docs/SUGGESTIONS.md §2.1)。
 """
 
 import argparse

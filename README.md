@@ -20,6 +20,7 @@ Code CIN 是一门简洁的类 C 高级语言及其跨平台运行时（VM）。
 
 | 文档 | 说明 |
 |------|------|
+| [指令集参考 (ISA)](docs/ISA.md) | 由 `codecin/isa.py` 自动生成的逐条指令表 (唯一真源) |
 | [开发者编译文档 (BUILDING)](docs/BUILDING.md) | 环境搭建、Go 原生库编译、构建产物、打包、日志系统、扩展指南 |
 | [CIN 编程指南 (CIN_GUIDE)](docs/CIN_GUIDE.md) | CIN 高级语言完整语法：类型/函数/struct/数组/字符串/内建函数 |
 | [远程调试协议 (REMOTE_DEBUG)](docs/REMOTE_DEBUG.md) | `--debug-server` 换行文本协议：命令/响应/状态机/示例会话 |
@@ -70,7 +71,7 @@ graph LR
     end
     
     subgraph 编译层
-        B[C++ 生成]
+        B[生成 UCBC 字节码]
         E[指令编码]
     end
     
@@ -139,6 +140,7 @@ flowchart TB
         RISCV[RISC-V Ext<br/>27条指令]
         FP[FP Ext<br/>10条指令]
         VEC[Vector Ext<br/>6条指令]
+        SYS[SYS 宿主调用<br/>1条指令]
     end
     
     APP --> COMP --> EXEC --> HW --> ISA
@@ -345,9 +347,8 @@ flowchart TD
     INPUT -->|.bin| BIN[二进制加载器]
     INPUT -->|.crom| CROM[CROM加载器]
     
-    CIN --> CPP[生成C++]
-    CPP --> BUILD[编译构建]
-    BUILD --> EXEC
+    CIN --> UCBC[生成 UCBC 字节码]
+    UCBC --> EXEC
     
     PL --> ASSEMBLE[指令编码]
     ASM --> ASSEMBLE
@@ -377,11 +378,12 @@ flowchart TD
 bash install.sh
 # Windows (PowerShell)
 powershell -ExecutionPolicy Bypass -File install.ps1
-# Termux 专用（克隆 + 装依赖 + 编译 + 启动器）
+# Termux 专用（克隆 + 装依赖 + 编译原生库 + 启动器, 不编译 Go CLI）
 bash script/install_termux.sh
 ```
 
-一键脚本会自动：检测/安装 Go → 编译 Go 原生库与 `codecin` CLI → 安装 Python 依赖 → 生成 `codecin` 启动器。
+`install.sh` / `install.ps1` 会自动：检测/安装 Go → 编译 Go 原生库与 `codecin` CLI → 安装 Python 依赖 → 生成 `codecin` 启动器。
+`script/install_termux.sh` 只编译 Go 原生库（Termux 上 Go CLI 暂不编译），启动器回退到 `python cpu.py`。
 
 **方式二：手动**
 
@@ -409,7 +411,8 @@ python script/gen_native_isa.py --check     # Go 原生常量与指令集同步
 ruff check codecin cpu.py script tests
 ```
 
-仓库内置 GitHub Actions CI (`.github/workflows/ci.yml`): 多 Python 版本测试、ruff、Go 原生库编译校验;
+仓库内置 GitHub Actions CI (`.github/workflows/ci.yml`): 多 Python 版本测试、ruff、Go 构建校验,
+以及一个 `integration` 作业会**真实编译 Go CLI 与原生库**后跑全量测试与差分测试 (缺少原生库即红灯)。
 完整逐条指令表由 `script/gen_isa_docs.py` 从 `codecin/isa.py` 生成至 [docs/ISA.md](docs/ISA.md)。
 
 ### 执行路径
@@ -421,8 +424,9 @@ ruff check codecin cpu.py script tests
 | JIT | `--jit` | 基本块动态编译, 与 `--debug` 互斥 |
 | 解释执行 | `--no-native` 或回退 | 支持全部 debug/step 功能 |
 
-> Go 版编译器 (`codecin/native/compiler/`) 与 Python 编译器产物逐字节等价, 由
-> `script/diff_go_python.py` 差分校验 (含 `basic.cin` 400 行综合示例)。
+> Go 版编译器 (`codecin/native/compiler/`) 与 Python 编译器在 `examples/*.cin` 上输出等价,
+> 由 `script/diff_go_python.py` 差分校验 (比较程序 stdout; `basic.cin` 使用 `srand(time())`,
+> 输出依赖时钟, 只做标记位校验, 不参与逐字节比较)。两侧编译产物的字节级比对尚未覆盖。
 
 ### 命令行选项
 
@@ -657,7 +661,7 @@ pie title 指令周期分布示例
 ```mermaid
 xychart-beta
     title "执行模式性能对比"
-    x-axis ["解释执行", "JIT编译", "原生C++"]
+    x-axis ["解释执行", "JIT编译", "Go 原生"]
     y-axis "相对性能" 0 --> 10
     bar [1, 4, 8]
     line [1, 4.2, 7.8]
@@ -835,7 +839,7 @@ graph TD
 
     Code CIN --> PY[Python 3.8+]
     Code CIN --> RICH[Rich Library]
-    Code CIN --> GO[Go 1.21+ 原生库]
+    Code CIN --> GO[Go 1.26+ 原生库]
     Code CIN --> STDLIB[Standard Library]
 
     RICH --> COLOR[彩色输出]
@@ -856,7 +860,7 @@ graph TD
 |------|------|------|
 | 语言 | Python 3.8+ | 核心实现语言 (模块化包 `codecin/`) |
 | UI/日志 | Rich | 彩色输出、表格、面板、traceback |
-| 原生加速 | Go 1.21+ (c-shared) | 原生 VM + CROM, 可选, 自动回退 |
+| 原生加速 | Go 1.26+ (c-shared) | 原生 VM + CROM, 可选, 自动回退 |
 | 压缩 | zlib | CROM压缩 |
 | 序列化 | struct | 二进制格式 |
 | FFI | ctypes | 加载 Go 共享库 |

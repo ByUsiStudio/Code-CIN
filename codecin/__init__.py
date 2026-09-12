@@ -1,4 +1,4 @@
-__version__ = "5.3.0"
+__version__ = "5.4.2"
 __author__ = "ByUsi Studio"
 
 from .isa import Opcode, Constants, Syscall

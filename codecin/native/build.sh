@@ -1,6 +1,6 @@
 #!/usr/bin/env sh
 # Code CIN 原生库构建脚本 (Linux / Termux / macOS)
-# 依赖: Go 1.21+ 且启用 cgo
+# 依赖: Go 1.26+ 且启用 cgo
 #   Linux:  安装 gcc (如 apt install gcc golang)
 #   Termux: pkg install golang (自带 cgo 工具链, 支持 -buildmode=c-shared)
 #   macOS:  安装 Xcode Command Line Tools (clang)

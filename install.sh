@@ -30,15 +30,15 @@ else
   warn "未检测到 Go, 尝试自动安装…"
   if command -v apt-get >/dev/null 2>&1; then
     info "apt-get install golang-go ..."
-    sudo apt-get update -y && sudo apt-get install -y golang-go || fail "请手动安装 Go 1.21+: https://go.dev/dl/"
+    sudo apt-get update -y && sudo apt-get install -y golang-go || fail "请手动安装 Go 1.26+: https://go.dev/dl/"
   elif command -v pacman >/dev/null 2>&1; then
-    sudo pacman -Sy --noconfirm go || fail "请手动安装 Go 1.21+: https://go.dev/dl/"
+    sudo pacman -Sy --noconfirm go || fail "请手动安装 Go 1.26+: https://go.dev/dl/"
   elif command -v brew >/dev/null 2>&1; then
-    brew install go || fail "请手动安装 Go 1.21+: https://go.dev/dl/"
+    brew install go || fail "请手动安装 Go 1.26+: https://go.dev/dl/"
   elif command -v pkg >/dev/null 2>&1; then   # Termux
-    pkg install -y golang || fail "请手动安装 Go 1.21+"
+    pkg install -y golang || fail "请手动安装 Go 1.26+"
   else
-    fail "无法自动安装 Go, 请手动安装 Go 1.21+: https://go.dev/dl/ 后重试"
+    fail "无法自动安装 Go, 请手动安装 Go 1.26+: https://go.dev/dl/ 后重试"
   fi
   command -v go >/dev/null 2>&1 || fail "Go 安装失败"
   ok "Go 安装完成"

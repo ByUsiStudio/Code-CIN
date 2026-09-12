@@ -43,7 +43,7 @@ Code CIN/
 │   ├── crom.py             # CROM v3 内存镜像 存/取 + .bin 字节码
 │   ├── native.py           # Go 原生库 ctypes 桥接 (自动回退纯 Python)
 │   ├── debugger.py         # 交互式调试器 (--step)
-│   └── errors.py           # 异常层次: CPUSimulatorError 及子类
+│   ├── errors.py           # 异常层次: CPUSimulatorError 及子类
 │   └── native/             # Go 原生库源码 (Go 优先架构)
 │       ├── go.mod          # Go 模块定义 (module codecin-native)
 │       ├── main.go         # c-shared 导出: codecin_run / codecin_crom_pack / ...
@@ -81,7 +81,7 @@ Code CIN/
 |------|------|------|------|
 | Python | 3.8+ | 是 | 解释器 / JIT / 工具链 |
 | rich | 任意近期版本 | 是* | 终端输出、日志、表格、错误面板与彩色 traceback |
-| Go | 1.21+ | 否** | 编译原生加速库 |
+| Go | 1.26+ | 否** | 编译原生加速库 |
 | C 编译器 | gcc / clang | 随 Go | Go cgo (c-shared 模式) 需要 |
 | PyInstaller | 任意 | 否 | 打包独立 exe |
 
@@ -156,7 +156,7 @@ python cpu.py --help                 # 完整帮助
 
 ### Windows (PowerShell)
 
-依赖: Go 1.21+ 与 cgo 可用的 C 编译器 (MinGW-w64 / TDM-GCC 的 `gcc`, 需在 PATH)。
+依赖: Go 1.26+ 与 cgo 可用的 C 编译器 (MinGW-w64 / TDM-GCC 的 `gcc`, 需在 PATH)。
 
 ```powershell
 cd codecin\native
@@ -421,7 +421,7 @@ python cpu.py basic.cin --compile-only && python cpu.py basic.bin  # 字节码�
 
 ```bash
 python script/gen_isa_docs.py      # 重写 docs/ISA.md
-python script/gen_native_isa.py    # 重写 codecin/native/isa_gen.go
+python script/gen_native_isa.py    # 重写 codecin/native/engine/isa_gen.go 与 compiler/syscalls.go
 python script/gen_native_isa.py --check && python script/gen_isa_docs.py --check
 go build -buildmode=c-shared ...   # 重新编译原生库 (见第 4 节)
 python -m pytest
