@@ -1,26 +1,46 @@
+# ==================== 编辑器 / 系统 ====================
 *.bak
-/*.crom
+.DS_Store
+Thumbs.db
+
+# ==================== Python ====================
 __pycache__/
-/dist/
-/build/
-/t*.cin
-/test_*.asm
-/out_*.txt
-/*.asm
-/.tmp_*.py
-.tmp*
+*.py[cod]
+*.egg-info/
+/.venv/
+/venv/
+/.pytest_cache/
+/.pytest_tmp/
+/.ruff_cache/
 /pytest-cache-*
 /pytest-tmp-*
-*cache*
-*tmp*
-# 编译产物: Go CLI 二进制 (由 install 脚本 / go build 生成)
+
+# ==================== Go 构建缓存 ====================
+/.gocache/
+/.gotmp/
+
+# ==================== 构建产物 ====================
+/dist/
+/build/
+# Go CLI 二进制 (由 install 脚本 / go build 生成)
 /codecin/codecin
 /codecin/codecin.exe
 /codecin/native/codecin
 /codecin/native/codecin.exe
-# c-shared 生成的头文件 (Python ctypes 不需要, 由构建脚本删除)
-/codecin/codecin_native.h
-/codecin/libcodecin_native.h
-/codecin/native/codecin_native.h
-/codecin/native/libcodecin_native.h
+# c-shared 原生库与生成的头文件 (由 install 脚本 / build.ps1 生成, 不入库)
+/codecin/*.dll
+/codecin/*.so
+/codecin/*.dylib
+/codecin/*.h
+/codecin/native/*.h
+/codecin/native/tmpdump/
+
+# ==================== 运行产物 / 临时文件 ====================
+/*.crom
 /*.png
+/out_*.txt
+/.tmp*
+/t*.cin
+# 汇编临时样例: 保留仓库内的 test_asm.asm (docs/BUILDING.md 的验收基准)
+/test_*.asm
+!/test_asm.asm
