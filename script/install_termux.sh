@@ -150,7 +150,7 @@ if ! go build -buildmode=c-shared -ldflags '-linkmode external -extldflags "-sta
     warning "静态链接不可用, 回退动态链接"
     go build -buildmode=c-shared -o ../libcodecin_native.so .
 fi
-go build -o ../codecin ./cmd/codecin
+# go build -o ../codecin ./cmd/codecin
 cd ../..
 rm -f codecin/codecin_native.h codecin/libcodecin_native.h 2>/dev/null || true
 success "Go 原生库与 CLI 编译完成"
