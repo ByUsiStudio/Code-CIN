@@ -15,8 +15,8 @@
 
 #### Go 原生工具链
 - **Go 版 CIN 编译器** (`codecin/native/compiler/`)：完整的词法分析、类型系统、语法分析器与代码生成，
-  与 Python 编译器在 `examples/*.cin` 上输出等价，由 `script/diff_go_python.py` 差分校验
-  （比较程序 stdout；两侧编译产物的字节级比对尚未覆盖）。
+  与 Python 编译器产物**逐字节等价**：`script/diff_go_python.py` 先比对 `--dump-bytecode` 导出的
+  UCBC 字节，再比对程序 stdout（覆盖 `examples/*.cin` 6 个示例）。
 - **独立 Go CLI** (`codecin` 命令)：全 Go 链路执行，无需 Python 依赖。
 - **字节码中间表示 IR** (`codecin/native/ir/`)：Go 侧 CIN 编译的中间表示定义。
 - **一键安装脚本**：`install.sh`（Linux/macOS/Termux）、`install.ps1`（Windows PowerShell）、

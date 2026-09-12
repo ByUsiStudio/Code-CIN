@@ -195,6 +195,16 @@ func codecin_crom_unpack(dataPtr unsafe.Pointer, dataLen C.int,
 	return cbuf
 }
 
+// buildVersion 为空时使用生成器注入的 engine.BuildVersion
+// (单一事实来源: codecin/__init__.py 的 __version__)。
+func versionString() string {
+	v := buildVersion
+	if v == "" || v == "dev" {
+		v = engine.BuildVersion
+	}
+	return "codecin-native " + v + " (Go)"
+}
+
 var (
 	versionOnce sync.Once
 	versionCStr *C.char
@@ -207,7 +217,7 @@ var (
 //export codecin_version
 func codecin_version() *C.char {
 	versionOnce.Do(func() {
-		versionCStr = C.CString("codecin-native " + buildVersion + " (Go)")
+		versionCStr = C.CString(versionString())
 	})
 	return versionCStr
 }

@@ -1,6 +1,11 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "codecin"
-version = "5.4.2"
+# 版本单一真源: codecin/__init__.py 的 __version__ (避免两处手工同步而漂移)
+dynamic = ["version"]
 description = "Code CIN - 高级语言与运行时 (CIN/PL/ASM 工具链 + Go 原生 VM + ARM64/RISC-V/FP/Vector 指令集)"
 readme = "README.md"
 requires-python = ">=3.8"
@@ -18,11 +23,24 @@ classifiers = [
     "Topic :: System :: Emulators",
 ]
 
+[project.scripts]
+# pip install 后可直接使用 Python 入口 (与 Go CLI 同名, 二者行为一致)
+codecin = "codecin.cli:main"
+
 [project.optional-dependencies]
 dev = [
     "pytest>=7",
     "ruff>=0.5",
 ]
+
+[tool.setuptools]
+packages = ["codecin"]
+
+[tool.setuptools.dynamic]
+version = { attr = "codecin.__version__" }
+
+[tool.setuptools.package-data]
+codecin = ["*.dll", "*.so", "*.dylib"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

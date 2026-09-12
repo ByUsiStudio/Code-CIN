@@ -66,3 +66,23 @@ def test_go_cli_matches_python_compiler():
         assert err is None, f'{name}: python error: {err}'
         assert rc == 0, f'{name}: go exit {rc}: {ge}'
         assert py_out == go_out, f'{name}: Go/Python compiler output differs'
+
+
+@needs_cli
+@pytest.mark.parametrize('name', [
+    'control_flow.cin', 'literals_types.cin', 'modules_demo.cin',
+    'bitwise_builtins.cin', 'system_interaction.cin', 'stdlib_demo.cin'])
+def test_go_python_bytecode_is_identical(name):
+    """编译产物级等价: UCBC 字节必须逐个相同 (比 stdout 比对强得多)。
+
+    覆盖 docs/SUGGESTIONS.md §3.4 "把差分测试升级为产物级比对"。
+    使用 Go CLI 的 --dump-bytecode 与 Python encode_program 的原始输出。
+    """
+    sys.path.insert(0, os.path.join(ROOT, 'script'))
+    import diff_go_python as d  # noqa: E402
+
+    path = os.path.join(ROOT, 'examples', name)
+    py_bc = d.run_python_bytecode(path)
+    go_bc, err = d.run_go_bytecode(path)
+    assert go_bc is not None, f'{name}: go dump failed: {err}'
+    assert py_bc == go_bc, f'{name}: {d._first_diff(py_bc, go_bc)}'

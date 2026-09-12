@@ -37,6 +37,10 @@ def build_parser() -> argparse.ArgumentParser:
                    help='程序源文件/字节码/镜像')
     p.add_argument('--help', '-h', action='store_true', dest='show_help',
                    help='显示帮助')
+    from . import __version__
+    p.add_argument('--version', '-V', action='version',
+                   version=f'Code CIN {__version__}',
+                   help='显示版本号并退出')
 
     # 执行路径
     p.add_argument('--no-native', action='store_true',

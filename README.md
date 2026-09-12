@@ -424,9 +424,10 @@ ruff check codecin cpu.py script tests
 | JIT | `--jit` | 基本块动态编译, 与 `--debug` 互斥 |
 | 解释执行 | `--no-native` 或回退 | 支持全部 debug/step 功能 |
 
-> Go 版编译器 (`codecin/native/compiler/`) 与 Python 编译器在 `examples/*.cin` 上输出等价,
-> 由 `script/diff_go_python.py` 差分校验 (比较程序 stdout; `basic.cin` 使用 `srand(time())`,
-> 输出依赖时钟, 只做标记位校验, 不参与逐字节比较)。两侧编译产物的字节级比对尚未覆盖。
+> Go 版编译器 (`codecin/native/compiler/`) 与 Python 编译器的产物**逐字节一致**:
+> `script/diff_go_python.py` 先用 Go CLI 的 `--dump-bytecode` 比编译出的 UCBC 字节,
+> 再比程序 stdout, 覆盖 `examples/*.cin` 全部 6 个示例 (5.6KB~211KB 字节码)。
+> `basic.cin` 使用 `srand(time())`, 输出依赖时钟, 只做标记位校验, 不参与该比对。
 
 ### 命令行选项
 
