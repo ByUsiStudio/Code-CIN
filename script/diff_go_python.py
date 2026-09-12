@@ -48,10 +48,42 @@ def run_go(path: str):
 
     以二进制捕获再显式 UTF-8 解码, 避免 text 模式的换行归一化 (\\r\\n → \\n)。
     """
-    r = subprocess.run([GO_CLI, path], capture_output=True, cwd=ROOT)
+    r = subprocess.run([GO_CLI, path], capture_output=True, cwd=ROOT, timeout=180)
     out = r.stdout.decode('utf-8', 'replace')
     err = r.stderr.decode('utf-8', 'replace')
     return out, r.returncode, err
+
+
+def run_python_bytecode(path: str):
+    """Python 编译器产物的 UCBC 字节 (与 Go CLI --dump-bytecode 对应)。"""
+    from codecin.native import encode_program
+    res = CINCompiler().compile(path)
+    labels = dict(res.labels)
+    labels.update(res.data_labels)
+    return encode_program(res.instructions, getattr(res, 'entry_pc', 0) or 0,
+                          labels)
+
+
+def run_go_bytecode(path: str):
+    """Go CLI --dump-bytecode 的十六进制输出 -> bytes。"""
+    if GO_CLI is None:
+        return None, 'Go CLI not built'
+    r = subprocess.run([GO_CLI, path, '--dump-bytecode'], capture_output=True,
+                       cwd=ROOT, timeout=180)
+    if r.returncode != 0:
+        return None, r.stderr.decode('utf-8', 'replace').strip()
+    try:
+        return bytes.fromhex(r.stdout.decode('ascii').strip()), None
+    except ValueError as e:
+        return None, f'bad hex dump: {e}'
+
+
+def _first_diff(a: bytes, b: bytes) -> str:
+    n = min(len(a), len(b))
+    for i in range(n):
+        if a[i] != b[i]:
+            return f'首个差异在第 {i} 字节 (0x{i:x}): py=0x{a[i]:02x} go=0x{b[i]:02x}'
+    return f'长度不同: py={len(a)} go={len(b)}'
 
 
 def main(argv):
@@ -62,9 +94,10 @@ def main(argv):
         files = [os.path.join(ex_dir, f) for f in sorted(os.listdir(ex_dir))
                  if f.endswith('.cin')]
         # 注: basic.cin 位于仓库根目录 (不在 examples/ 下), 且使用 srand(time())
-        #     播种, 输出依赖运行时钟, 因此不纳入逐字节比较
+        #     播种, 输出依赖运行时钟, 因此不纳入比较
         #     (由 tests/test_go_compiler.py::test_go_cli_basic_demo 做标记位校验)。
-        #     本脚本比较的是程序 stdout, 不含编译产物字节级比对。
+    # 产物级比对: 先比编译出的 UCBC 字节, 再比程序 stdout
+    compare_bytecode = os.environ.get('DIFF_BYTECODE', '1') != '0'
     failed = 0
     for path in files:
         py_out, py_err = run_python(path)
@@ -84,7 +117,25 @@ def main(argv):
             print(f"  go    : {go_out!r}")
             failed += 1
             continue
-        print(f"[ok]   {name}")
+        if compare_bytecode:
+            try:
+                py_bc = run_python_bytecode(path)
+            except Exception as e:  # noqa: BLE001
+                print(f"[FAIL] {name}: python bytecode dump failed: {e}")
+                failed += 1
+                continue
+            go_bc, bc_err = run_go_bytecode(path)
+            if go_bc is None:
+                print(f"[FAIL] {name}: go bytecode dump failed: {bc_err}")
+                failed += 1
+                continue
+            if py_bc != go_bc:
+                print(f"[FAIL] {name}: 编译产物字节不同 —— {_first_diff(py_bc, go_bc)}")
+                failed += 1
+                continue
+            print(f"[ok]   {name} (产物 {len(py_bc)} 字节一致)")
+        else:
+            print(f"[ok]   {name}")
     print(f"\n{len(files) - failed}/{len(files)} passed")
     return 1 if failed else 0
 

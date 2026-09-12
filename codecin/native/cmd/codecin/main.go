@@ -1,6 +1,9 @@
 // Command codecin 是 Code CIN 的独立 Go CLI: 编译并运行 .cin 程序 (全 Go 链路)。
 //
-// 用法: codecin <program.cin>
+// 用法: codecin <program.cin> [--dump-bytecode]
+//
+//	--dump-bytecode  只编译, 把 UCBC 字节码以十六进制打印到 stdout
+//	                 (供 script/diff_go_python.py 做产物级等价比对)
 package main
 
 import (
@@ -20,11 +23,21 @@ const (
 )
 
 func main() {
-	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: codecin <program.cin>")
+	dumpBytecode := false
+	path := ""
+	for _, a := range os.Args[1:] {
+		if a == "--dump-bytecode" {
+			dumpBytecode = true
+			continue
+		}
+		if path == "" {
+			path = a
+		}
+	}
+	if path == "" {
+		fmt.Fprintln(os.Stderr, "usage: codecin <program.cin> [--dump-bytecode]")
 		os.Exit(2)
 	}
-	path := os.Args[1]
 
 	if _, err := os.Stat(path); err != nil {
 		fmt.Fprintf(os.Stderr, "codecin: cannot open %s: %v\n", path, err)
@@ -38,17 +51,21 @@ func main() {
 		os.Exit(1)
 	}
 
+	bc, err := engine.EncodeProgram(*prog, 0)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "codecin: encode error: %v\n", err)
+		os.Exit(1)
+	}
+	if dumpBytecode {
+		fmt.Printf("%x\n", bc)
+		return
+	}
+
 	mem := make([]byte, memSize)
 	for _, dw := range prog.DataWrites {
 		if dw.Addr >= 0 && dw.Addr+len(dw.Data) <= len(mem) {
 			copy(mem[dw.Addr:], dw.Data)
 		}
-	}
-
-	bc, err := engine.EncodeProgram(*prog, 0)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "codecin: encode error: %v\n", err)
-		os.Exit(1)
 	}
 
 	in, _ := io.ReadAll(os.Stdin)
