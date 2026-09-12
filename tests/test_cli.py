@@ -30,9 +30,31 @@ def test_unknown_option_returns_error_code(capsys):
 
 
 def test_run_cin_no_native(capsys, workdir):
+    code = cli.main([BASIC_CIN, '--no-native', '--log-level', 'ERROR'])
+    assert code == 0
+
+
+def test_instruction_limit_is_reported_as_failure(capsys, workdir):
+    """步数用尽不再伪装成正常结束 (两条路径都必须失败)。
+
+    旧行为: 解释器只 warning + break, 原生 VM 返回 StatusDone,
+    于是被截断的程序以退出码 0 报告成功。
+    """
     code = cli.main([BASIC_CIN, '--no-native', '--max-instructions', '2000',
                      '--log-level', 'ERROR'])
-    assert code == 0
+    assert code == 1
+    out = capsys.readouterr().out
+    assert 'instruction limit' in out.lower()
+
+
+def test_instruction_limit_is_reported_as_failure_native(capsys, workdir):
+    """原生路径同样必须报失败 (需要原生库)。"""
+    from codecin import native
+    if native.get_engine() is None:
+        pytest.skip('native library not built')
+    code = cli.main([BASIC_CIN, '--max-instructions', '2000',
+                     '--log-level', 'ERROR'])
+    assert code == 1
 
 
 def test_compile_only_creates_bin(workdir):

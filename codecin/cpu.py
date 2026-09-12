@@ -124,6 +124,9 @@ class CPU:
         self._capture_output = False
         self.native_engine = None
         self.native_used = False
+        # 执行期是否发生过错误 (供 CLI 决定退出码; 旧实现任何运行时错误
+        # 都只记日志, 进程仍以 0 退出)
+        self.execution_failed = False
 
         self._sys_buffers = [bytearray(64) for _ in range(8)]
         self._sys_buf_idx = 0

@@ -226,6 +226,9 @@ def main(argv: Optional[List[str]] = None) -> int:
                                 border_style='red'))
             console.print_exception()
         return 1
+    # CPU.run 内部会捕获执行期异常并记录日志, 这里据失败标志决定退出码
+    if getattr(cpu, 'execution_failed', False):
+        return 1
     return 0
 
 
