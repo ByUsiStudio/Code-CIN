@@ -4,7 +4,6 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "codecin"
-# 版本单一真源: codecin/__init__.py 的 __version__ (避免两处手工同步而漂移)
 dynamic = ["version"]
 description = "Code CIN - 高级语言与运行时 (CIN/PL/ASM 工具链 + Go 原生 VM + ARM64/RISC-V/FP/Vector 指令集)"
 readme = "README.md"
@@ -24,7 +23,6 @@ classifiers = [
 ]
 
 [project.scripts]
-# pip install 后可直接使用 Python 入口 (与 Go CLI 同名, 二者行为一致)
 codecin = "codecin.cli:main"
 
 [project.optional-dependencies]
