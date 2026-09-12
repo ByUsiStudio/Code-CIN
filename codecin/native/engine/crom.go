@@ -62,17 +62,26 @@ func CromUnpack(data []byte) ([]byte, int, bool) {
 		if err != nil {
 			return nil, 0, false
 		}
-		raw, err = io.ReadAll(r)
+		// 解压上限取自文件头声明的 mem_size: 防止 zip bomb
+		// (旧实现 io.ReadAll 无上限, 65KB 的合法 CROM 可解出 64MB+)。
+		limited := io.LimitReader(r, int64(memSize)+1)
+		raw, err = io.ReadAll(limited)
 		_ = r.Close()
 		if err != nil {
 			return nil, 0, false
 		}
+		if uint32(len(raw)) > memSize {
+			return nil, 0, false
+		}
 	} else {
 		raw = payload
+		if uint32(len(raw)) > memSize {
+			return nil, 0, false
+		}
 	}
-	if uint32(len(raw)) < memSize {
-		// 返回完整解压数据; 调用方按 mem_size 截取
+	if uint32(len(raw)) != memSize {
+		// 头部声明的 mem_size 与实际载荷不符
+		return nil, 0, false
 	}
-	_ = memSize
 	return raw, int(flags), true
 }

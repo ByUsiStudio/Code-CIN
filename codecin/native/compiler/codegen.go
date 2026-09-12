@@ -1519,7 +1519,7 @@ var builtinMinArgs = func() map[string]int {
 		"int_to_str": 1, "itoa": 1,
 		"float_to_str": 1, "ftoa": 1,
 		"bool_to_str": 1,
-		"substr": 3, "indexof": 2,
+		"substr":      3, "indexof": 2,
 		"upper": 1, "lower": 1,
 		"trim": 1, "ltrim": 1, "rtrim": 1, "atoi": 1,
 		"time": 0, "input": 0,

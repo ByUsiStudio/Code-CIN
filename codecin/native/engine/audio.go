@@ -28,6 +28,9 @@ var (
 	audioStarted time.Time
 )
 
+// MaxResourceBytes 是 FetchResource 的下载/读取上限 (音频等宿主资源)。
+const MaxResourceBytes = 64 << 20 // 64 MiB
+
 // FetchResource 下载 URL 或读取本地文件, 返回原始字节。
 func FetchResource(loc string) ([]byte, error) {
 	if strings.HasPrefix(loc, "http://") || strings.HasPrefix(loc, "https://") {
@@ -40,7 +43,23 @@ func FetchResource(loc string) ([]byte, error) {
 		if resp.StatusCode != http.StatusOK {
 			return nil, fmt.Errorf("http status %d", resp.StatusCode)
 		}
-		return io.ReadAll(resp.Body)
+		// 有上限读取: Content-Length 与实际读取量双重限制,
+		// 防止恶意/异常 URL 用无限流把宿主 OOM。
+		if resp.ContentLength > MaxResourceBytes {
+			return nil, fmt.Errorf("resource too large: %d bytes", resp.ContentLength)
+		}
+		data, err := io.ReadAll(io.LimitReader(resp.Body, MaxResourceBytes+1))
+		if err != nil {
+			return nil, err
+		}
+		if len(data) > MaxResourceBytes {
+			return nil, fmt.Errorf("resource too large: >%d bytes", MaxResourceBytes)
+		}
+		return data, nil
+	}
+	fi, err := os.Stat(loc)
+	if err == nil && fi.Size() > MaxResourceBytes {
+		return nil, fmt.Errorf("resource too large: %d bytes", fi.Size())
 	}
 	return os.ReadFile(loc)
 }

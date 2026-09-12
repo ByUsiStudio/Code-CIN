@@ -56,11 +56,44 @@ type vmState struct {
 	steps    uint64
 	flags    struct{ N, Z, C, V bool }
 	out      strings.Builder
+	outOver  bool // 输出超过 maxOutputBytes (截断并置错误)
 	sysIdx   int
 	rng      *rand.Rand
 	inData   []byte
 	inPos    int
 	emptyStr uint64 // 预留空串地址 (宿主调用返回失败时的安全空串)
+}
+
+// maxOutputBytes 限制单次运行的输出总量: 程序用无限打印不能把宿主 OOM。
+const maxOutputBytes = 16 << 20 // 16 MiB
+
+// outWrite 追加输出; 超过上限则截断并标记 outOver。
+func (vm *vmState) outWrite(s string) {
+	if vm.outOver {
+		return
+	}
+	remaining := maxOutputBytes - vm.out.Len()
+	if remaining <= 0 {
+		vm.outOver = true
+		return
+	}
+	if len(s) > remaining {
+		s = s[:remaining]
+		vm.outOver = true
+	}
+	vm.out.WriteString(s)
+}
+
+// outByte 追加单字节输出 (同上限)。
+func (vm *vmState) outByte(b byte) {
+	if vm.outOver {
+		return
+	}
+	if vm.out.Len() >= maxOutputBytes {
+		vm.outOver = true
+		return
+	}
+	vm.out.WriteByte(b)
 }
 
 // Result 是 Run 的执行结果。
@@ -79,17 +112,40 @@ func decodeBytecode(bc []byte) ([]instruction, int, bool) {
 	if len(bc) < 13 || string(bc[:4]) != "UCBC" {
 		return nil, 0, false
 	}
+	if bc[4] != bcVersion {
+		// 版本字节此前从不校验: 未知格式会被按当前布局强行解释
+		return nil, 0, false
+	}
 	entry := binary.LittleEndian.Uint32(bc[5:9])
 	count := binary.LittleEndian.Uint32(bc[9:13])
+	// count 来自不可信输入: 先按"每条指令至少 2 字节头部"夹取。
+	// 旧实现直接把它当 make 容量 (count=0xFFFFFFFF → 137GB 预分配),
+	// 一个 13 字节的文件就能让宿主 OOM。
+	if maxCount := uint32((len(bc) - 13) / 2); count > maxCount {
+		return nil, 0, false
+	}
 	pos := 13
 	prog := make([]instruction, 0, count)
 	for i := uint32(0); i < count; i++ {
 		if pos+2 > len(bc) {
 			return nil, 0, false
 		}
-		ins := instruction{opcode: bc[pos]}
+		opcode := bc[pos]
 		argc := int(bc[pos+1])
 		pos += 2
+		if int(opcode) >= len(argCounts) {
+			return nil, 0, false
+		}
+		// 参数个数必须与操作码匹配: 否则 execute 中的 args[i] 会越界 panic。
+		// -1 表示变长 (B / JALR / SYS), 只设一个合理上限。
+		if want := int(argCounts[opcode]); want >= 0 {
+			if argc != want {
+				return nil, 0, false
+			}
+		} else if argc > 6 {
+			return nil, 0, false
+		}
+		ins := instruction{opcode: opcode}
 		for j := 0; j < argc; j++ {
 			if pos+17 > len(bc) {
 				return nil, 0, false
@@ -706,7 +762,7 @@ func sdiv(a, b uint64) uint64 {
 
 func (vm *vmState) doOut(op operand) string {
 	if op.kind == kindStr {
-		vm.out.WriteString(vm.readCString(uint64(op.value)))
+		vm.outWrite(vm.readCString(uint64(op.value)))
 		return ""
 	}
 	v, ok := vm.val(op)
@@ -714,13 +770,13 @@ func (vm *vmState) doOut(op operand) string {
 		return "bad OUT operand"
 	}
 	if op.kind == kindFloat || op.kind == kindVec || op.kind == kindVecLane {
-		vm.out.WriteString(formatFloat(bitsToF(v)))
+		vm.outWrite(formatFloat(bitsToF(v)))
 		return ""
 	}
 	if v == 10 {
-		vm.out.WriteByte('\n')
+		vm.outByte('\n')
 	} else {
-		vm.out.WriteString(strconv.FormatUint(v, 10))
+		vm.outWrite(strconv.FormatUint(v, 10))
 	}
 	return ""
 }
@@ -852,7 +908,7 @@ func (vm *vmState) doSyscall(id uint64) string {
 		}
 		vm.setReg(0, ptr)
 	case sysPRINTFLO:
-		vm.out.WriteString(formatFloat(bitsToF(x0)))
+		vm.outWrite(formatFloat(bitsToF(x0)))
 	case sysITOA:
 		addr := vm.sysBuffer()
 		s := strconv.FormatInt(toSigned(x0), 10)
@@ -868,7 +924,7 @@ func (vm *vmState) doSyscall(id uint64) string {
 		}
 		vm.setReg(0, addr)
 	case sysPRINTSTR:
-		vm.out.WriteString(vm.readCString(x0))
+		vm.outWrite(vm.readCString(x0))
 	case sysSTRCONCAT:
 		sa := vm.readCString(x0)
 		sb := vm.readCString(x1)
