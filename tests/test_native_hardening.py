@@ -135,13 +135,15 @@ def test_step_limit_is_an_error_not_silent_success():
 
 # ---------------- Python 侧 (zlib 回退路径) 的同类加固 ----------------
 
-def _write(tmp_path, blob):
-    p = tmp_path / 'x.crom'
-    p.write_bytes(blob)
-    return str(p)
+def _write(workdir, blob):
+    import os
+    p = os.path.join(workdir, 'x.crom')
+    with open(p, 'wb') as f:
+        f.write(blob)
+    return p
 
 
-def test_python_crom_zip_bomb_rejected(tmp_path):
+def test_python_crom_zip_bomb_rejected(workdir):
     """Python 回退路径同样必须限制解压大小 (旧实现 zlib.decompress 无上限)。"""
     from codecin.crom import load_crom
     from codecin.errors import CPUSimulatorError
@@ -151,17 +153,17 @@ def test_python_crom_zip_bomb_rejected(tmp_path):
     payload = zlib.compress(raw)
     header = b'CROM' + bytes([3]) + struct.pack('<I', 1024) + \
         bytes([0x01]) + struct.pack('<I', zlib.crc32(payload)) + b'\x00\x00'
-    path = _write(tmp_path, header + payload)
+    path = _write(workdir, header + payload)
     with pytest.raises(CPUSimulatorError):
         load_crom(FastMemory(4096), path)
 
 
-def test_python_crom_garbage_rejected(tmp_path):
+def test_python_crom_garbage_rejected(workdir):
     """非 CROM 文件不再被静默当作旧版内存镜像载入。"""
     from codecin.crom import load_crom
     from codecin.errors import CPUSimulatorError
     from codecin.memory import FastMemory
 
-    path = _write(tmp_path, b'NOTACROMFILE' + b'\x00' * 64)
+    path = _write(workdir, b'NOTACROMFILE' + b'\x00' * 64)
     with pytest.raises(CPUSimulatorError):
         load_crom(FastMemory(4096), path)
