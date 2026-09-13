@@ -1468,6 +1468,8 @@ class CPU:
                 # 原生执行完成
                 if not native_outcome:
                     self.logger.info("HALT (native)")
+            elif self._can_use_fast_path():
+                self._run_fast()
             else:
                 self._run_interpreted()
         except KeyboardInterrupt:
@@ -1519,6 +1521,43 @@ class CPU:
             self.stats.stop()
             self.cache.flush()
             self.logger.info("Remote debug session ended")
+
+    def _can_use_fast_path(self) -> bool:
+        """无调试/断点/单步/JIT/追踪/节流时, 可走紧凑解释循环。"""
+        return (not self.config.debug_mode
+                and not self.config.step_mode
+                and not self.config.interactive_mode
+                and not self.breakpoints
+                and self.debug_server is None
+                and self.jit is None
+                and not self._trace
+                and self.config.execution_interval <= 0)
+
+    def _run_fast(self) -> None:
+        """紧凑解释循环 (快路径)。
+
+        与 _run_interpreted 的语义差异仅在"没有"哪些检查: 断点命中、远程
+        调试轮询、单步会话、JIT 尝试、逐指令追踪与执行节流。这些在快路径的
+        启用条件里都已确认不生效, 因此逐指令语义 (pc 先自增、统计记账、HALT
+        返回 False) 完全一致。
+        """
+        instructions = self.instructions
+        execute = self.execute
+        logger = self.logger
+        limit = self.config.max_instructions
+        n = len(instructions)
+        while True:
+            pc = self.pc
+            if pc < 0 or pc >= n:
+                logger.info("Program ended normally")
+                return
+            if self.stats.instruction_count >= limit:
+                raise ExecutionError(
+                    f"instruction limit reached ({limit} steps)")
+            opcode, args = instructions[pc]
+            if not execute(opcode, args):
+                logger.info("HALT instruction executed")
+                return
 
     def _run_interpreted(self) -> None:
         while self.running:
