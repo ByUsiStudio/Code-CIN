@@ -108,6 +108,18 @@ def build_parser() -> argparse.ArgumentParser:
                         'break/regs/mem/history)')
     p.add_argument('--disasm', action='store_true',
                    help='反汇编 .bin 字节码为文本清单后退出')
+
+    # AOT: 编译成独立静态可执行文件
+    p.add_argument('--build-exe', nargs='?', const='', default=None,
+                   metavar='OUT',
+                   help='编译成独立静态可执行文件 (不依赖 Python/动态库) 后退出; '
+                        '省略路径时输出到 <程序名>[.exe]')
+    p.add_argument('--build-target', default=None, metavar='OS/ARCH',
+                   help='AOT 交叉编译目标 (默认当前平台): '
+                        'windows/amd64, linux/amd64, linux/arm64, '
+                        'darwin/amd64, darwin/arm64')
+    p.add_argument('--build-keep-temp', action='store_true',
+                   help='AOT 构建时保留临时目录 (排查 go build 失败)')
     return p
 
 
@@ -149,6 +161,33 @@ def _apply_namespace(config: Config, ns: argparse.Namespace) -> None:
         config.execution_interval = ns.execution_interval
     if ns.optimize is not None:
         config.optimize = ns.optimize
+
+
+def _run_aot_build(ns: argparse.Namespace, console, program_file: str) -> int:
+    """AOT: 把 CIN 程序编译成独立静态可执行文件 (--build-exe)。"""
+    from . import aot
+    from .errors import CPUSimulatorError
+
+    target = ns.build_target or aot.host_target()
+    try:
+        goos, _goarch = aot.parse_target(target)
+    except aot.AotError as e:
+        console.print(Panel(str(e), title='Build Error', border_style='red'))
+        return 1
+
+    out = ns.build_exe or (os.path.splitext(program_file)[0]
+                           + aot.exe_suffix(goos))
+    console.print(Colors.colorize(
+        f"AOT build: {program_file} -> {out} (静态链接, 目标 {target})",
+        Colors.CYAN))
+    try:
+        built = aot.build_program(program_file, out=out, target=target,
+                                  keep_temp=ns.build_keep_temp)
+    except (aot.AotError, CPUSimulatorError) as e:
+        console.print(Panel(str(e), title='Build Error', border_style='red'))
+        return 1
+    console.print(Colors.colorize(f"AOT build 完成: {built}", Colors.GREEN))
+    return 0
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -194,6 +233,9 @@ def main(argv: Optional[List[str]] = None) -> int:
             return 1
         sys.stdout.write("\n".join(lines))
         return 0
+
+    if ns.build_exe is not None:
+        return _run_aot_build(ns, console, program_file)
 
     try:
         from .cpu import CPU
