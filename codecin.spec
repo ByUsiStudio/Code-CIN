@@ -1,9 +1,18 @@
 # -*- mode: python ; coding: utf-8 -*-
+
+import os
+
+_native_dll = 'codecin/codecin_native.dll'
+
 a = Analysis(
     ['cpu.py'],
     pathex=[],
-    binaries=[('codecin/codecin_native.dll', '.')],
-    datas=[],
+    # 原生库缺失时不阻断打包 (产物退化为纯 Python 执行)
+    binaries=[(_native_dll, '.')] if os.path.exists(_native_dll) else [],
+    datas=[
+        ('lib', 'lib'),                 # 标准库 (import "lib/xxx.cin" 依赖)
+        ('misc/vim', 'misc/vim'),       # 编辑器语法文件
+    ],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},

@@ -1,0 +1,152 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: '要发布的 tag (例如 v5.4.2)'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  version-check:
+    name: 校验 tag 与 codecin.__version__
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: tag 必须等于包版本
+        run: |
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          VER="$(sed -n 's/^__version__ = "\(.*\)"/\1/p' codecin/__init__.py | head -1)"
+          echo "tag=$TAG version=$VER"
+          if [ -z "$VER" ]; then
+            echo "::error::无法从 codecin/__init__.py 读取 __version__" >&2
+            exit 1
+          fi
+          if [ "v$VER" != "$TAG" ]; then
+            echo "::error::tag ($TAG) 与 codecin.__version__ (v$VER) 不一致; 请先同步版本再打 tag" >&2
+            exit 1
+          fi
+
+  cli:
+    name: Go CLI (${{ matrix.target }})
+    needs: version-check
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [linux/amd64, linux/arm64, darwin/amd64, darwin/arm64, windows/amd64]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: codecin/native/go.mod
+          cache: true
+      - name: Build
+        working-directory: codecin/native
+        run: |
+          set -e
+          GOOS="${TARGET%/*}"
+          GOARCH="${TARGET#*/}"
+          EXT=""
+          [ "$GOOS" = "windows" ] && EXT=".exe"
+          GOOS="$GOOS" GOARCH="$GOARCH" CGO_ENABLED=0 go build -trimpath \
+            -o "../codecin-${GOOS}-${GOARCH}${EXT}" ./cmd/codecin
+        env:
+          TARGET: ${{ matrix.target }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cli-${{ replace(matrix.target, '/', '-') }}
+          path: codecin/codecin-*
+          if-no-files-found: error
+
+  native:
+    name: 原生库 (${{ matrix.os }})
+    needs: version-check
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: codecin/native/go.mod
+          cache: true
+      - name: Build c-shared (Linux)
+        if: runner.os == 'Linux'
+        working-directory: codecin/native
+        run: go build -buildmode=c-shared -o ../libcodecin_native.so .
+      - name: Build c-shared (macOS)
+        if: runner.os == 'macOS'
+        working-directory: codecin/native
+        run: go build -buildmode=c-shared -o ../libcodecin_native.dylib .
+      - name: Build c-shared (Windows)
+        if: runner.os == 'Windows'
+        working-directory: codecin/native
+        shell: pwsh
+        run: go build -buildmode=c-shared -o ../codecin_native.dll .
+      - name: 清理 c-shared 头文件
+        shell: bash
+        run: rm -f codecin/*.h
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native-${{ matrix.os }}
+          path: |
+            codecin/*.so
+            codecin/*.dylib
+            codecin/*.dll
+          if-no-files-found: error
+
+  python-dist:
+    name: sdist / wheel
+    needs: version-check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: python -m pip install --upgrade build twine
+      - run: python -m build
+      - run: python -m twine check dist/*
+      - name: wheel 可安装可导入 (版本来自 codecin.__version__)
+        run: |
+          python -m pip install --force-reinstall dist/*.whl
+          python -c "import codecin; print('installed', codecin.__version__)"
+          codecin --version
+      - uses: actions/upload-artifact@v4
+        with:
+          name: python-dist
+          path: dist/*
+
+  release:
+    name: 发布 Release
+    needs: [cli, native, python-dist]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: 汇总资产
+        run: |
+          mkdir -p release-assets
+          find artifacts -type f \( -name 'codecin-*' -o -name '*.so' -o -name '*.dylib' \
+            -o -name '*.dll' -o -name '*.whl' -o -name '*.tar.gz' \) \
+            -exec cp {} release-assets/ \;
+          ls -l release-assets
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          files: release-assets/*
+          generate_release_notes: true
+          fail_on_unmatched_files: false

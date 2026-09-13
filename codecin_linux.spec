@@ -1,9 +1,19 @@
 # -*- mode: python ; coding: utf-8 -*-
+
+import os
+import sys
+
+_native = ('codecin/libcodecin_native.dylib' if sys.platform == 'darwin'
+           else 'codecin/libcodecin_native.so')
+
 a = Analysis(
     ['cpu.py'],
     pathex=[],
-    binaries=[],
-    datas=[],
+    binaries=[(_native, '.')] if os.path.exists(_native) else [],
+    datas=[
+        ('lib', 'lib'),
+        ('misc/vim', 'misc/vim'),
+    ],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},
