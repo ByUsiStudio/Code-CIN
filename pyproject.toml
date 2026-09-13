@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -31,19 +31,18 @@ dev = [
     "ruff>=0.5",
 ]
 
-[tool.setuptools]
-packages = ["codecin"]
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["codecin*"]
+exclude = ["tests*", "docs*"]
+namespaces = true
 
 [tool.setuptools.dynamic]
 version = { attr = "codecin.__version__" }
 
-[tool.setuptools.packages.find]
-include = ["codecin*"]
-namespaces = true
-
-
 [tool.setuptools.package-data]
-codecin = ["*.dll", "*.so", "*.dylib"]
+"codecin"        = ["*.dll", "*.so", "*.dylib", "py.typed"]
+"codecin.native" = ["**/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
