@@ -1,0 +1,112 @@
+// Code CIN 官方标准库: 队列与栈 (queue)
+// 用法: import "lib/queue.cin"
+//
+// 定长环形队列 (FIFO) 与定长栈 (LIFO), 使用库内全局状态,
+// 因此同一程序内只保留一份实例; 需要多实例时请用 struct 自行封装。
+// 容量上限 QUEUE_CAP / STACK_CAP = 64。
+
+int queue_ring[64]
+int queue_head = 0
+int queue_tail = 0
+int queue_len = 0
+
+int stack_data[64]
+int stack_len = 0
+
+// ---------------- 环形队列 ----------------
+
+function queue_capacity() -> int {
+    return 64
+}
+
+function queue_clear() -> void {
+    queue_head = 0
+    queue_tail = 0
+    queue_len = 0
+}
+
+function queue_size() -> int {
+    return queue_len
+}
+
+function queue_is_empty() -> int {
+    if (queue_len == 0) { return 1 }
+    return 0
+}
+
+function queue_is_full() -> int {
+    if (queue_len == 64) { return 1 }
+    return 0
+}
+
+// 入队; 满时返回 0, 成功返回 1
+function queue_push(int v) -> int {
+    if (queue_len == 64) { return 0 }
+    queue_ring[queue_tail] = v
+    queue_tail = (queue_tail + 1) % 64
+    queue_len = queue_len + 1
+    return 1
+}
+
+// 出队; 空时返回 0
+function queue_pop() -> int {
+    if (queue_len == 0) { return 0 }
+    int v = queue_ring[queue_head]
+    queue_head = (queue_head + 1) % 64
+    queue_len = queue_len - 1
+    return v
+}
+
+// 查看队首 (不出队)
+function queue_front() -> int {
+    if (queue_len == 0) { return 0 }
+    return queue_ring[queue_head]
+}
+
+// 查看队尾
+function queue_back() -> int {
+    if (queue_len == 0) { return 0 }
+    int idx = queue_tail - 1
+    if (idx < 0) { idx = 63 }
+    return queue_ring[idx]
+}
+
+// ---------------- 栈 ----------------
+
+function stack_capacity() -> int {
+    return 64
+}
+
+function stack_clear() -> void {
+    stack_len = 0
+}
+
+function stack_size() -> int {
+    return stack_len
+}
+
+function stack_is_empty() -> int {
+    if (stack_len == 0) { return 1 }
+    return 0
+}
+
+// 入栈; 满时返回 0, 成功返回 1
+function stack_push(int v) -> int {
+    if (stack_len == 64) { return 0 }
+    stack_data[stack_len] = v
+    stack_len = stack_len + 1
+    return 1
+}
+
+// 出栈; 空时返回 0
+function stack_pop() -> int {
+    if (stack_len == 0) { return 0 }
+    stack_len = stack_len - 1
+    return stack_data[stack_len]
+}
+
+// 查看栈顶 (不出栈)
+function stack_peek() -> int {
+    if (stack_len == 0) { return 0 }
+    return stack_data[stack_len - 1]
+}

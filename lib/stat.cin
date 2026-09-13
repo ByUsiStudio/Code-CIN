@@ -1,0 +1,138 @@
+// Code CIN 官方标准库: 顺序统计 (stat)
+// 用法: import "lib/stat.cin"
+//
+// 与 lib/vec.cin (浮点统计) 互补: 本库面向 int 数组的**顺序统计量**
+// (中位数/众数/百分位/直方图) 与免排序的聚合量。
+// 需要升序输入的接口以 _sorted 结尾。
+
+// 求和
+function stat_sum(int[] a, int n) -> int {
+    int s = 0
+    for (int i = 0; i < n; i = i + 1) {
+        s = s + a[i]
+    }
+    return s
+}
+
+// 最小值 (n <= 0 返回 0)
+function stat_min(int[] a, int n) -> int {
+    if (n <= 0) { return 0 }
+    int m = a[0]
+    for (int i = 1; i < n; i = i + 1) {
+        if (a[i] < m) { m = a[i] }
+    }
+    return m
+}
+
+// 最大值 (n <= 0 返回 0)
+function stat_max(int[] a, int n) -> int {
+    if (n <= 0) { return 0 }
+    int m = a[0]
+    for (int i = 1; i < n; i = i + 1) {
+        if (a[i] > m) { m = a[i] }
+    }
+    return m
+}
+
+// 极差 (max - min)
+function stat_range(int[] a, int n) -> int {
+    if (n <= 0) { return 0 }
+    return stat_max(a, n) - stat_min(a, n)
+}
+
+// 整数均值 (向零截断)
+function stat_mean(int[] a, int n) -> int {
+    if (n <= 0) { return 0 }
+    return idiv(stat_sum(a, n), n)
+}
+
+// 计数等于 v 的元素个数
+function stat_count(int[] a, int n, int v) -> int {
+    int c = 0
+    for (int i = 0; i < n; i = i + 1) {
+        if (a[i] == v) { c = c + 1 }
+    }
+    return c
+}
+
+// 中位数 (要求 a 已升序); 偶数个取中间两个的截断平均
+function stat_median_sorted(int[] a, int n) -> int {
+    if (n <= 0) { return 0 }
+    if (n % 2 == 1) { return a[idiv(n, 2)] }
+    return idiv(a[idiv(n, 2) - 1] + a[idiv(n, 2)], 2)
+}
+
+// 众数 (出现次数最多; 并列时取较小值); O(n^2), 无需排序
+function stat_mode(int[] a, int n) -> int {
+    if (n <= 0) { return 0 }
+    int best = a[0]
+    int best_cnt = 0
+    for (int i = 0; i < n; i = i + 1) {
+        int c = stat_count(a, n, a[i])
+        if (c > best_cnt) {
+            best_cnt = c
+            best = a[i]
+        } else {
+            if (c == best_cnt && a[i] < best) { best = a[i] }
+        }
+    }
+    return best
+}
+
+// 最近秩百分位 (要求 a 已升序, p 属于 0..100)
+function stat_percentile_sorted(int[] a, int n, int p) -> int {
+    if (n <= 0) { return 0 }
+    if (p <= 0) { return a[0] }
+    if (p >= 100) { return a[n - 1] }
+    int rank = idiv(n * p + 99, 100)      // ceil(n*p/100), 至少为 1
+    int idx = rank - 1
+    if (idx < 0) { idx = 0 }
+    if (idx > n - 1) { idx = n - 1 }
+    return a[idx]
+}
+
+// 下四分位 / 上四分位 (要求已升序)
+function stat_q1_sorted(int[] a, int n) -> int {
+    return stat_percentile_sorted(a, n, 25)
+}
+
+function stat_q3_sorted(int[] a, int n) -> int {
+    return stat_percentile_sorted(a, n, 75)
+}
+
+// 直方图: 把落在 [0, bins-1] 的值计入 hist, 越界值忽略
+function stat_histogram(int[] a, int n, int[] hist, int bins) -> void {
+    for (int i = 0; i < bins; i = i + 1) {
+        hist[i] = 0
+    }
+    for (int i = 0; i < n; i = i + 1) {
+        int v = a[i]
+        if (v >= 0 && v < bins) { hist[v] = hist[v] + 1 }
+    }
+}
+
+// 方差 ×1000 (整数化, 便于比较/断言)
+// var = (n*sum(x^2) - sum(x)^2) / n^2
+function stat_variance_x1000(int[] a, int n) -> int {
+    if (n <= 0) { return 0 }
+    int s = 0
+    int sq = 0
+    for (int i = 0; i < n; i = i + 1) {
+        s = s + a[i]
+        sq = sq + a[i] * a[i]
+    }
+    return idiv((n * sq - s * s) * 1000, n * n)
+}
+
+// 标准差 ×100 (整数化)
+function stat_stdev_x100(int[] a, int n) -> int {
+    return stat_variance_x1000(a, n) / 10
+}
+
+// 升序判定
+function stat_is_sorted(int[] a, int n) -> int {
+    for (int i = 1; i < n; i = i + 1) {
+        if (a[i - 1] > a[i]) { return 0 }
+    }
+    return 1
+}

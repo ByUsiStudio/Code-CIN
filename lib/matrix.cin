@@ -1,0 +1,155 @@
+// Code CIN 官方标准库: 方阵运算 (matrix)
+// 用法: import "lib/matrix.cin"
+//
+// 矩阵以**一维数组**行主序存放 (m[i*n + j] 表示第 i 行第 j 列),
+// 因此可直接用 CIN 的 int[] 与固定数组, 无需动态内存。
+// 所有 "_to" 形式把结果写入调用方提供的输出数组。
+
+// 置零 / 单位阵
+function mat_zero(int[] m, int n) -> void {
+    for (int i = 0; i < n * n; i = i + 1) {
+        m[i] = 0
+    }
+}
+
+function mat_identity(int[] m, int n) -> void {
+    for (int i = 0; i < n; i = i + 1) {
+        for (int j = 0; j < n; j = j + 1) {
+            if (i == j) {
+                m[i * n + j] = 1
+            } else {
+                m[i * n + j] = 0
+            }
+        }
+    }
+}
+
+// 逐元素取值
+function mat_get(int[] m, int n, int i, int j) -> int {
+    if (i < 0 || j < 0 || i >= n || j >= n) { return 0 }
+    return m[i * n + j]
+}
+
+function mat_set(int[] m, int n, int i, int j, int v) -> void {
+    if (i < 0 || j < 0 || i >= n || j >= n) { return }
+    m[i * n + j] = v
+}
+
+// out = a + b
+function mat_add(int[] a, int[] b, int[] out, int n) -> void {
+    for (int i = 0; i < n * n; i = i + 1) {
+        out[i] = a[i] + b[i]
+    }
+}
+
+// out = a - b
+function mat_sub(int[] a, int[] b, int[] out, int n) -> void {
+    for (int i = 0; i < n * n; i = i + 1) {
+        out[i] = a[i] - b[i]
+    }
+}
+
+// out = a * k
+function mat_scale(int[] a, int k, int[] out, int n) -> void {
+    for (int i = 0; i < n * n; i = i + 1) {
+        out[i] = a[i] * k
+    }
+}
+
+// out = a × b (经典三重循环; out 不得与 a/b 为同一数组)
+function mat_mul(int[] a, int[] b, int[] out, int n) -> void {
+    for (int i = 0; i < n; i = i + 1) {
+        for (int j = 0; j < n; j = j + 1) {
+            int s = 0
+            for (int k = 0; k < n; k = k + 1) {
+                s = s + a[i * n + k] * b[k * n + j]
+            }
+            out[i * n + j] = s
+        }
+    }
+}
+
+// out = a^T
+function mat_transpose(int[] a, int[] out, int n) -> void {
+    for (int i = 0; i < n; i = i + 1) {
+        for (int j = 0; j < n; j = j + 1) {
+            out[j * n + i] = a[i * n + j]
+        }
+    }
+}
+
+// 迹 (对角线之和)
+function mat_trace(int[] a, int n) -> int {
+    int s = 0
+    for (int i = 0; i < n; i = i + 1) {
+        s = s + a[i * n + i]
+    }
+    return s
+}
+
+// 所有元素之和
+function mat_sum(int[] a, int n) -> int {
+    int s = 0
+    for (int i = 0; i < n * n; i = i + 1) {
+        s = s + a[i]
+    }
+    return s
+}
+
+// 是否相等
+function mat_equals(int[] a, int[] b, int n) -> int {
+    for (int i = 0; i < n * n; i = i + 1) {
+        if (a[i] != b[i]) { return 0 }
+    }
+    return 1
+}
+
+// 是否为对称矩阵
+function mat_is_symmetric(int[] a, int n) -> int {
+    for (int i = 0; i < n; i = i + 1) {
+        for (int j = i + 1; j < n; j = j + 1) {
+            if (a[i * n + j] != a[j * n + i]) { return 0 }
+        }
+    }
+    return 1
+}
+
+// 行列式 (拉普拉斯展开, 递归; 适合 n <= 6 的小矩阵)
+function mat_det(int[] a, int n) -> int {
+    if (n <= 0) { return 0 }
+    if (n == 1) { return a[0] }
+    if (n == 2) { return a[0] * a[3] - a[1] * a[2] }
+    int minor[36]                      // (n-1)^2 <= 25 (n <= 6)
+    int det = 0
+    int sign = 1
+    for (int j = 0; j < n; j = j + 1) {
+        int k = 0
+        for (int r = 1; r < n; r = r + 1) {
+            for (int c = 0; c < n; c = c + 1) {
+                if (c == j) { continue }
+                minor[k] = a[r * n + c]
+                k = k + 1
+            }
+        }
+        int sub = mat_det(minor, n - 1)
+        if (sign == 1) {
+            det = det + a[j] * sub
+        } else {
+            det = det - a[j] * sub
+        }
+        sign = 0 - sign
+    }
+    return det
+}
+
+// 打印 (调试用, 每行一个方括号)
+function mat_print(int[] a, int n) -> void {
+    for (int i = 0; i < n; i = i + 1) {
+        string line = "["
+        for (int j = 0; j < n; j = j + 1) {
+            line = line + int_to_str(a[i * n + j])
+            if (j < n - 1) { line = line + " " }
+        }
+        println(line + "]")
+    }
+}

@@ -1,0 +1,67 @@
+// Code CIN 官方标准库: 哈希 (hash)
+// 用法: import "lib/hash.cin"
+//
+// 全部为 64 位整数运算 (自然溢出即取模 2^64), 与 lib/rand.cin 的
+// 随机数配合可做简易哈希表 / 布隆过滤器的散列函数。
+
+// djb2: h = h*33 + c
+function hash_djb2(string s) -> int {
+    int h = 5381
+    int n = strlen(s)
+    for (int i = 0; i < n; i = i + 1) {
+        h = h * 33 + s[i]
+        h = h & 0xFFFFFFFFFFFFFFFF
+    }
+    return h
+}
+
+// FNV-1a (64 位)
+function hash_fnv1a(string s) -> int {
+    int h = 0xCBF29CE484222325
+    int n = strlen(s)
+    for (int i = 0; i < n; i = i + 1) {
+        h = h ^ s[i]
+        h = h * 0x100000001B3
+        h = h & 0xFFFFFFFFFFFFFFFF
+    }
+    return h
+}
+
+// sdbm: h = c + (h<<6) + (h<<16) - h
+function hash_sdbm(string s) -> int {
+    int h = 0
+    int n = strlen(s)
+    for (int i = 0; i < n; i = i + 1) {
+        h = s[i] + (h << 6) + (h << 16) - h
+        h = h & 0xFFFFFFFFFFFFFFFF
+    }
+    return h
+}
+
+// 整数位混合 (splitmix64 风格), 用于打散规律性输入
+function hash_int(int x) -> int {
+    int z = x & 0xFFFFFFFFFFFFFFFF
+    z = (z ^ (z >> 30)) * 0xBF58476D1CE4E5B9
+    z = z & 0xFFFFFFFFFFFFFFFF
+    z = (z ^ (z >> 27)) * 0x94D049BB133111EB
+    z = z & 0xFFFFFFFFFFFFFFFF
+    return z ^ (z >> 31)
+}
+
+// 组合两个哈希值
+function hash_combine(int h1, int h2) -> int {
+    return hash_int(h1) ^ (h2 + 0x9E3779B97F4A7C15 + (h1 << 6) + (h1 >> 2))
+}
+
+// 映射到桶下标 [0, buckets)
+function hash_bucket(int h, int buckets) -> int {
+    if (buckets <= 0) { return 0 }
+    int m = h % buckets
+    if (m < 0) { m = m + buckets }
+    return m
+}
+
+// 字符串 -> 桶下标 (FNV-1a)
+function hash_string_bucket(string s, int buckets) -> int {
+    return hash_bucket(hash_fnv1a(s), buckets)
+}

@@ -1,0 +1,148 @@
+// Code CIN 官方标准库: 字符/字符串校验 (validate)
+// 用法: import "lib/validate.cin"
+//
+// 与 lib/str.cin 互补: str.cin 做变换 (大小写/裁剪/包含),
+// 本库做**判定与安全解析** (字符类别、整数字符串、标识符、限幅)。
+
+// 字符类别 (参数为字符的字节值, 如 'a' 或 s[i])
+function val_is_digit(int c) -> int {
+    if (c >= '0' && c <= '9') { return 1 }
+    return 0
+}
+
+function val_is_upper(int c) -> int {
+    if (c >= 'A' && c <= 'Z') { return 1 }
+    return 0
+}
+
+function val_is_lower(int c) -> int {
+    if (c >= 'a' && c <= 'z') { return 1 }
+    return 0
+}
+
+function val_is_alpha(int c) -> int {
+    if (val_is_upper(c) == 1 || val_is_lower(c) == 1) { return 1 }
+    return 0
+}
+
+function val_is_alnum(int c) -> int {
+    if (val_is_alpha(c) == 1 || val_is_digit(c) == 1) { return 1 }
+    return 0
+}
+
+function val_is_hex(int c) -> int {
+    if (val_is_digit(c) == 1) { return 1 }
+    if (c >= 'a' && c <= 'f') { return 1 }
+    if (c >= 'A' && c <= 'F') { return 1 }
+    return 0
+}
+
+function val_is_space(int c) -> int {
+    if (c == ' ' || c == '\t' || c == '\n' || c == '\r') { return 1 }
+    return 0
+}
+
+// 整数字符串: 可选 +/-, 至少一位数字, 其余全是数字
+function val_is_int(string s) -> int {
+    int n = strlen(s)
+    if (n == 0) { return 0 }
+    int i = 0
+    if (s[0] == '+' || s[0] == '-') {
+        if (n == 1) { return 0 }
+        i = 1
+    }
+    while (i < n) {
+        if (val_is_digit(s[i]) == 0) { return 0 }
+        i = i + 1
+    }
+    return 1
+}
+
+// 浮点字符串: 数字 + 至多一个小数点 (不校验指数形式)
+function val_is_float(string s) -> int {
+    int n = strlen(s)
+    if (n == 0) { return 0 }
+    int i = 0
+    int dots = 0
+    int digits = 0
+    if (s[0] == '+' || s[0] == '-') {
+        if (n == 1) { return 0 }
+        i = 1
+    }
+    while (i < n) {
+        int c = s[i]
+        if (c == '.') {
+            dots = dots + 1
+            if (dots > 1) { return 0 }
+        } else {
+            if (val_is_digit(c) == 0) { return 0 }
+            digits = digits + 1
+        }
+        i = i + 1
+    }
+    if (digits == 0) { return 0 }
+    return 1
+}
+
+// 标识符: [A-Za-z_][A-Za-z0-9_]*
+function val_is_ident(string s) -> int {
+    int n = strlen(s)
+    if (n == 0) { return 0 }
+    int c0 = s[0]
+    if (val_is_alpha(c0) == 0 && c0 != '_') { return 0 }
+    for (int i = 1; i < n; i = i + 1) {
+        int c = s[i]
+        if (val_is_alnum(c) == 0 && c != '_') { return 0 }
+    }
+    return 1
+}
+
+// 出现次数
+function val_count_char(string s, int c) -> int {
+    int n = strlen(s)
+    int k = 0
+    for (int i = 0; i < n; i = i + 1) {
+        if (s[i] == c) { k = k + 1 }
+    }
+    return k
+}
+
+// 去掉首尾空白后是否为空
+function val_is_blank(string s) -> int {
+    int n = strlen(s)
+    for (int i = 0; i < n; i = i + 1) {
+        if (val_is_space(s[i]) == 0) { return 0 }
+    }
+    return 1
+}
+
+// 限幅到 [lo, hi]
+function val_clamp_int(int v, int lo, int hi) -> int {
+    if (lo > hi) { return v }
+    if (v < lo) { return lo }
+    if (v > hi) { return hi }
+    return v
+}
+
+// 安全解析: 非法时返回 fallback
+function val_parse_int(string s, int fallback) -> int {
+    if (val_is_int(s) == 0) { return fallback }
+    return atoi(s)
+}
+
+// 是否为 3/6 位十六进制颜色 (#RRGGBB 或 RRGGBB)
+function val_is_hex_color(string s) -> int {
+    int n = strlen(s)
+    int start = 0
+    if (n > 0 && s[0] == '#') {
+        start = 1
+        n = n - 1
+    }
+    if (n != 3 && n != 6) { return 0 }
+    int i = start
+    while (i < strlen(s)) {
+        if (val_is_hex(s[i]) == 0) { return 0 }
+        i = i + 1
+    }
+    return 1
+}
