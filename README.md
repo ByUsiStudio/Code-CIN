@@ -453,8 +453,9 @@ codecin build program.cin --target windows/amd64 -o app.exe
 | `darwin/amd64` `darwin/arm64` | Mach-O, 静态 |
 
 常见选项: `--build-target OS/ARCH`、`--build-keep-temp` (保留 `go build` 临时目录排错)。
-产物把 `main` 的返回值作为退出码语义之外的运行状态: 正常结束退出 0, 运行期错误打印
-stderr 并以 1 退出。详见 [开发者编译文档 · AOT](docs/BUILDING.md#aot-编译独立可执行文件)。
+`import "lib/*.cin"` 在**编译期**展开, 因此产物自带用到的标准库, 运行时不需要 `lib/` 目录。
+正常结束退出码 0, 运行期错误打印 stderr 并以 1 退出。
+详见 [开发者编译文档 · AOT](docs/BUILDING.md#aot-编译独立可执行文件)。
 
 ### 命令行选项
 
