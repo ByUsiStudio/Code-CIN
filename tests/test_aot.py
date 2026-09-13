@@ -11,7 +11,6 @@ import os
 import shutil
 import struct
 import subprocess
-import sys
 
 import pytest
 
@@ -23,6 +22,12 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 #: 构建需要 Go 工具链
 needs_go = pytest.mark.skipif(shutil.which('go') is None,
                               reason='未安装 Go 工具链')
+
+#: 交叉编译用例各需要为目标平台重编一遍 Go 标准库 (首次 1~2 分钟),
+#: 因此默认只跑本机构建; CI 的 integration 作业设置 CODECIN_AOT_TESTS=1 全跑。
+needs_aot_all = pytest.mark.skipif(
+    os.environ.get('CODECIN_AOT_TESTS') != '1',
+    reason='交叉编译用例较慢; 设置 CODECIN_AOT_TESTS=1 启用')
 
 PROGRAM = '''
 function main() -> int {
@@ -112,12 +117,22 @@ def test_build_host_executable(workdir):
     assert r.returncode == 0, r.stderr
     assert 'sum=55' in r.stdout
 
-    # 对照: Python 编译 + 原生 VM 的输出
-    sys.path.insert(0, os.path.join(ROOT, 'script'))
-    import diff_go_python as d  # noqa: E402
-    py_out, err = d.run_python(src)
-    assert err is None
-    assert py_out.strip() == r.stdout.strip()
+    # 对照组: Go CLI 直接运行同一程序 (编译+执行链路必须一致)
+    go_cli = _go_cli()
+    if go_cli:
+        ref = subprocess.run([go_cli, src], capture_output=True, text=True,
+                             encoding='utf-8', errors='replace', timeout=180)
+        assert ref.returncode == 0, ref.stderr
+        assert ref.stdout.strip() == r.stdout.strip()
+
+
+def _go_cli():
+    for rel in ('codecin/native/codecin.exe', 'codecin/native/codecin',
+                'codecin/codecin.exe', 'codecin/codecin'):
+        p = os.path.join(ROOT, rel)
+        if os.path.exists(p):
+            return p
+    return None
 
 
 @needs_go
@@ -134,10 +149,13 @@ function main() -> int {
         aot.parse_target(aot.host_target())[0]))
     built = aot.build_program(src, out=out)
     r = _run(built)
-    assert r.returncode != 0 or 'before' in r.stdout
+    assert 'before' in r.stdout
+    assert r.returncode != 0, '运行期错误必须返回非 0 退出码'
+    assert 'runtime error' in r.stderr.lower()
 
 
 @needs_go
+@needs_aot_all
 @pytest.mark.parametrize('target', ['linux/amd64', 'linux/arm64', 'darwin/arm64'])
 def test_cross_compile_targets(workdir, target):
     """交叉编译: 各平台都能产出可执行文件。"""
@@ -152,6 +170,22 @@ def test_cross_compile_targets(workdir, target):
         assert _elf_is_static(built), 'Linux 产物必须静态链接 (无 PT_INTERP)'
     elif target.startswith('darwin'):
         assert head[:4] in (b'\xcf\xfa\xed\xfe', b'\xca\xfe\xba\xbe')
+
+
+@needs_go
+def test_cross_compile_linux_amd64_is_static(workdir):
+    """关键声明: Linux 产物静态链接 (无 PT_INTERP, 不依赖 glibc)。
+
+    这条是 AOT 的核心保证, 默认就运行 (仅一次交叉编译)。
+    """
+    if aot.host_target() == 'linux/amd64':
+        pytest.skip('本机即 linux/amd64, 已由本机构建用例覆盖')
+    src = _write(workdir, 'prog.cin', PROGRAM)
+    out = os.path.join(workdir, 'prog-linux-amd64')
+    built = aot.build_program(src, out=out, target='linux/amd64')
+    with open(built, 'rb') as f:
+        assert f.read(4) == b'\x7fELF'
+    assert _elf_is_static(built)
 
 
 @needs_go

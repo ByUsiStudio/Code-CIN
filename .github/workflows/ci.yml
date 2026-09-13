@@ -73,6 +73,8 @@ jobs:
           'native library failed to load'"
       - name: Run tests (原生与 Go CLI 均已就绪)
         run: python -m pytest -rs
+        env:
+          CODECIN_AOT_TESTS: "1"
       - name: 覆盖率报告 (门槛待基线确定后再设 --cov-fail-under)
         run: |
           python -m pip install pytest-cov
