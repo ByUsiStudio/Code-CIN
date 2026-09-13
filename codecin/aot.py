@@ -85,6 +85,46 @@ def stub_source() -> str:
         return f.read()
 
 
+def _cache_fallback_dir(mod_dir: str) -> str:
+    """仓库内的构建缓存目录 (install 脚本同款; 已被 .gitignore 忽略)。"""
+    root = os.path.dirname(os.path.dirname(os.path.abspath(mod_dir)))
+    return os.path.join(root, '.gocache')
+
+
+def _looks_like_cache_denied(text: str) -> bool:
+    low = text.lower()
+    if 'go-build' not in low and 'gocache' not in low and 'cache' not in low:
+        return False
+    return ('access is denied' in low or 'permission denied' in low
+            or 'operation not permitted' in low)
+
+
+def _run_go_build(cmd, mod, env, logger):
+    """执行 go build; 默认构建缓存不可写时自动回退到仓库内缓存重试一次。
+
+    受限环境 (沙箱 / 只读 HOME / 部分 CI) 下 Go 默认的
+    ``$LOCALAPPDATA/go-build`` 或 ``~/.cache/go-build`` 可能不可写,
+    此时直接用用户环境会得到一个难以理解的 "Access is denied"。
+    """
+    proc = subprocess.run(cmd, cwd=mod, env=env, capture_output=True,
+                          text=True, encoding='utf-8', errors='replace',
+                          timeout=1800)
+    detail = (proc.stderr or proc.stdout or '').strip()
+    if proc.returncode != 0 and _looks_like_cache_denied(detail) \
+            and 'GOCACHE' not in os.environ:
+        cache = _cache_fallback_dir(mod)
+        os.makedirs(cache, exist_ok=True)
+        if logger:
+            logger.info(f'AOT: 默认 Go 构建缓存不可写, 回退到 {cache} 重试')
+        retry_env = dict(env)
+        retry_env['GOCACHE'] = cache
+        proc = subprocess.run(cmd, cwd=mod, env=retry_env, capture_output=True,
+                              text=True, encoding='utf-8', errors='replace',
+                              timeout=1800)
+        detail = (proc.stderr or proc.stdout or '').strip()
+    return proc, detail
+
+
 def build(bytecode: bytes,
           mem_image: bytes,
           out: str,
@@ -135,17 +175,16 @@ def build(bytecode: bytes,
             logger.debug(f'AOT build: {cmd} (cwd={mod}, GOOS={goos}, '
                          f'GOARCH={goarch}, CGO_ENABLED=0)')
         try:
-            proc = subprocess.run(cmd, cwd=mod, env=env,
-                                  capture_output=True, text=True,
-                                  encoding='utf-8', errors='replace',
-                                  timeout=900)
+            proc, detail = _run_go_build(cmd, mod, env, logger)
         except FileNotFoundError as e:
             raise AotError('未找到 go 命令; AOT 构建需要 Go 工具链 '
                            '(https://go.dev/dl/)') from e
         except subprocess.TimeoutExpired as e:
             raise AotError('go build 超时') from e
         if proc.returncode != 0:
-            detail = (proc.stderr or proc.stdout or '').strip()
+            if _looks_like_cache_denied(detail) and 'GOCACHE' not in os.environ:
+                detail += ('\n提示: 默认 Go 构建缓存不可写且回退失败; '
+                           '可显式设置 GOCACHE 指向可写目录后重试')
             raise AotError(f'go build 失败 (目标 {goos}/{goarch}): {detail}')
         if not os.path.isfile(out_abs):
             raise AotError(f'go build 未产出文件: {out_abs}')
