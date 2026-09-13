@@ -325,6 +325,9 @@ codecin build basic.cin -o basic --target windows/amd64              # 全 Go �
 
 > 若默认 Go 构建缓存不可写 (只读 HOME / 受限 CI), 构建器会自动回退到仓库内
 > `.gocache` 重试一次, 并在仍失败时提示显式设置 `GOCACHE`。
+>
+> AOT 是**面向源码检出**的构建期功能: 它需要 Go 工具链与 `codecin/native` 的
+> Go 源码 (发行 wheel / 独立 CLI 里不含这些源码), 因此不适用于已安装的二进制。
 
 ### 6.2 PyInstaller 打包 (含 Python 工具链的完整发行版)
 
