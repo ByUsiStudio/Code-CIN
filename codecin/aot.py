@@ -13,9 +13,9 @@
 
 import os
 import platform
+import secrets
 import shutil
 import subprocess
-import tempfile
 from typing import List, Optional
 
 #: 仓库内 codecin-native 模块目录 (含 go.mod)。
@@ -105,7 +105,10 @@ def build(bytecode: bytes,
     goos, goarch = parse_target(target) if target else parse_target(host_target())
     mod = module_dir()
 
-    tmp = tempfile.mkdtemp(prefix='.aotbuild-', dir=mod)
+    # 注意: 这里用 os.makedirs 而不是 tempfile.mkdtemp —— mkdtemp 会创建 0700
+    # 目录, 在受限环境 (沙箱 / 部分 CI 安全策略) 下随后向其中写文件会被拒绝。
+    tmp = os.path.join(mod, '.aotbuild-' + secrets.token_hex(6))
+    os.makedirs(tmp, exist_ok=False)
     try:
         with open(os.path.join(tmp, 'main.go'), 'w', encoding='utf-8',
                   newline='\n') as f:
