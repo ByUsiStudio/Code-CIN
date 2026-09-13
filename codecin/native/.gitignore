@@ -2,3 +2,6 @@
 # AOT 构建的临时包目录 (Go 工具链会忽略 '.' 开头的目录)
 .aotbuild-*/
 .aotprobe-*/
+
+# Go 编译缓存目录
+.gocache/
