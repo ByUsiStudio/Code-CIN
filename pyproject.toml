@@ -37,6 +37,11 @@ packages = ["codecin"]
 [tool.setuptools.dynamic]
 version = { attr = "codecin.__version__" }
 
+[tool.setuptools.packages.find]
+include = ["codecin*"]
+namespaces = true
+
+
 [tool.setuptools.package-data]
 codecin = ["*.dll", "*.so", "*.dylib"]
 
