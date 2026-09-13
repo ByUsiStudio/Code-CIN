@@ -101,6 +101,7 @@ graph LR
 | 调试器 | 交互式 | 断点 + 单步 + 状态查看 |
 | 性能分析 | 指令级 | CPI + 缓存统计 + 热指令 |
 | CROM压缩 | zlib | 节省存储空间 (Go/Python双实现) |
+| AOT 静态编译 | 独立可执行 | 编译为 Windows/Linux/macOS 静态可执行文件, 不需 Python/Go/动态库 |
 
 ---
 
@@ -429,6 +430,32 @@ ruff check codecin cpu.py script tests
 > 再比程序 stdout, 覆盖 `examples/*.cin` 全部 6 个示例 (5.6KB~211KB 字节码)。
 > `basic.cin` 使用 `srand(time())`, 输出依赖时钟, 只做标记位校验, 不参与该比对。
 
+### 编译成独立可执行文件 (AOT)
+
+把 CIN 程序编译成**静态链接的独立可执行文件** —— 产物内嵌字节码与初始内存镜像,
+由内置 Go VM 执行, 运行时**不需要 Python、Go 工具链、libc 或任何动态库**:
+
+```bash
+# 本机平台
+python cpu.py program.cin --build-exe program          # Windows 自动加 .exe
+codecin build program.cin -o program                   # 全 Go 链路
+
+# 交叉编译 (只需要安装 Go 工具链)
+python cpu.py program.cin --build-exe app-linux --build-target linux/amd64
+python cpu.py program.cin --build-exe app-mac   --build-target darwin/arm64
+codecin build program.cin --target windows/amd64 -o app.exe
+```
+
+| 目标 | 说明 |
+|------|------|
+| `windows/amd64` `windows/arm64` | PE, 静态 (CGO_ENABLED=0) |
+| `linux/amd64` `linux/arm64` | ELF, **无 PT_INTERP**, 不依赖 glibc |
+| `darwin/amd64` `darwin/arm64` | Mach-O, 静态 |
+
+常见选项: `--build-target OS/ARCH`、`--build-keep-temp` (保留 `go build` 临时目录排错)。
+产物把 `main` 的返回值作为退出码语义之外的运行状态: 正常结束退出 0, 运行期错误打印
+stderr 并以 1 退出。详见 [开发者编译文档 · AOT](docs/BUILDING.md#aot-编译独立可执行文件)。
+
 ### 命令行选项
 
 **基础执行**
@@ -718,6 +745,7 @@ xychart-beta
 > 汇编器 `.equ`/表达式示例: `examples/asm_constants.asm`。
 >
 > **官方标准库 (`lib/`)**: `math` `str` `array` `sort` `conv` `vec` `rand` `json` `time` `io` `gui` `termux` `test`
+> `bits` `stat` `hash` `validate` `matrix` `queue` (共 19 个)
 > —— 示例 `examples/modules_demo.cin`、`examples/stdlib_demo.cin` (断言全部通过)。详见
 > [CIN 编程指南 · 官方标准库清单](docs/CIN_GUIDE.md#官方标准库清单-lib)。
 >

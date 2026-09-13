@@ -663,9 +663,19 @@ function main() -> int {
 | `lib/gui.cin` | `g_` | `g_rgb` `g_new` `g_clear` `g_rect_outline` `g_bar_chart` `g_line_chart` `g_grid` `g_save` `g_show` |
 | `lib/termux.cin` | `tx_` | `tx_ok` `tx_notify` `tx_toast` `tx_copy` `tx_paste` `tx_vibrate` `tx_say` `tx_sms` `tx_battery_level` `tx_battery_temp` `tx_battery_plugged` `tx_latitude` `tx_longitude` `tx_wifi_ssid` `tx_prompt` `tx_alert` |
 | `lib/test.cin` | `t_` | `t_eq_int` `t_eq_str` `t_near` `t_true` `t_false` `t_reset` `t_report` |
+| `lib/bits.cin` | `bits_` | `bits_popcount` `bits_clz` `bits_ctz` `bits_is_pow2` `bits_next_pow2` `bits_test` `bits_set` `bits_clear` `bits_toggle` `bits_rotl` `bits_rotr` `bits_reverse` `bits_range_mask` `bits_extract` `bits_insert` `bits_bswap` |
+| `lib/stat.cin` | `stat_` | `stat_sum` `stat_min` `stat_max` `stat_range` `stat_mean` `stat_count` `stat_mode` `stat_median_sorted` `stat_percentile_sorted` `stat_q1_sorted` `stat_q3_sorted` `stat_histogram` `stat_variance_x1000` `stat_stdev_x100` `stat_is_sorted` |
+| `lib/hash.cin` | `hash_` | `hash_djb2` `hash_fnv1a` `hash_sdbm` `hash_int` `hash_combine` `hash_bucket` `hash_string_bucket` |
+| `lib/validate.cin` | `val_` | `val_is_digit` `val_is_alpha` `val_is_alnum` `val_is_hex` `val_is_space` `val_is_upper` `val_is_lower` `val_is_int` `val_is_float` `val_is_ident` `val_is_blank` `val_is_hex_color` `val_count_char` `val_clamp_int` `val_parse_int` |
+| `lib/matrix.cin` | `mat_` | `mat_zero` `mat_identity` `mat_get` `mat_set` `mat_add` `mat_sub` `mat_scale` `mat_mul` `mat_transpose` `mat_trace` `mat_sum` `mat_equals` `mat_is_symmetric` `mat_det` `mat_print` |
+| `lib/queue.cin` | `queue_` `stack_` | `queue_clear` `queue_push` `queue_pop` `queue_front` `queue_back` `queue_size` `queue_is_empty` `queue_is_full` `queue_capacity` + `stack_clear` `stack_push` `stack_pop` `stack_peek` `stack_size` `stack_is_empty` `stack_capacity` |
 
 > `lib/io.cin` / `lib/gui.cin` / `lib/termux.cin` 依赖宿主能力 (需 Go 原生运行时);
 > 其余库为纯 CIN, 三执行路径一致。示例见 `examples/stdlib_demo.cin`。
+>
+> `lib/matrix.cin` 的矩阵以一维数组行主序存放 (`m[i*n + j]`), `mat_det` 用拉普拉斯
+> 递归展开, 适合 `n <= 6`。`lib/queue.cin` 的队列/栈使用库内全局状态, 同一程序内
+> 各只有一份实例 (容量 64)。
 
 ---
 

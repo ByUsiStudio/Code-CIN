@@ -46,6 +46,18 @@
 
 ### 新增 (Added)
 
+- **AOT 静态编译: 编译成独立可执行文件 (Windows / Linux / macOS)**：
+  `python cpu.py program.cin --build-exe app` 或 `codecin build program.cin -o app`，
+  支持 `--target OS/ARCH` 交叉编译（windows/amd64|arm64、linux/amd64|arm64、darwin/amd64|arm64）。
+  产物内嵌 UCBC 字节码与初始内存镜像，由内置 Go VM 执行，**不依赖 Python、Go 工具链、
+  libc 或任何动态库**（`CGO_ENABLED=0`，Linux 产物无 `PT_INTERP`）；入口 shell 模板由
+  Go 与 Python 两侧共用（`codecin/native/aot/stub_main.go.txt`）。
+- **官方标准库新增 6 个模块**（`lib/`，共 19 个）：
+  `bits.cin`（位运算/popcount/clz/ctz/循环移位/位域）、`stat.cin`（顺序统计量：中位数/
+  众数/百分位/直方图/方差）、`hash.cin`（djb2/FNV-1a/sdbm/整数混合/桶映射）、
+  `validate.cin`（字符类别判定与安全解析：`val_is_int`/`val_is_ident`/`val_parse_int`）、
+  `matrix.cin`（行主序方阵：加减乘/转置/迹/对称判定/行列式）、
+  `queue.cin`（定长环形队列与栈）。
 - **编译器产物级差分**：Go CLI 新增 `--dump-bytecode`；`script/diff_go_python.py` 现在先比对
   编译出的 UCBC 字节、再比对 stdout —— `examples/*.cin` 6 个示例（5.6KB~211KB 字节码）**逐字节一致**。
 - **Go 侧测试**：新增 `compiler` 与 `engine` 两个测试包（switch 语义、错误通道、字节码校验、

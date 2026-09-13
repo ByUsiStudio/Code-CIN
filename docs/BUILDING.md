@@ -53,6 +53,10 @@ Code CIN/
 │       │   ├── encode.go   # IR → UCBC 字节码编码
 │       │   └── isa_gen.go  # 生成常量 (操作码/SYS/操作数种类)
 │       ├── ir/             # 中间表示 (ir.Program / Instr / Operand)
+│       ├── aot/            # AOT 静态可执行文件运行时与构建器
+│       │   ├── aot.go      # 产物运行时 (aot.Main) + 共享 main.go 模板
+│       │   ├── stub_main.go.txt  # 生成的入口 shell (Go/Python 共用)
+│       │   └── build.go    # go build 编排 (CGO_ENABLED=0 静态链接/交叉编译)
 │       ├── compiler/       # Go 版 CIN 编译器 (tokenizer/parser/codegen)
 │       ├── cmd/codecin/    # 独立 Go CLI (编译 + 运行 .cin)
 │       ├── build.ps1       # Windows 构建脚本
@@ -293,6 +297,37 @@ python cpu.py --crom basic.crom                 # 加载镜像运行
 
 ## 6. 打包独立可执行文件
 
+### 6.1 AOT 编译 (推荐: 真正的静态单文件)
+
+把 CIN 程序直接编译成**静态链接的独立可执行文件** (Windows / Linux / macOS),
+产物内嵌 UCBC 字节码与初始内存镜像, 由内置 Go VM 执行:
+
+```bash
+python cpu.py basic.cin --build-exe basic            # 本机平台
+python cpu.py basic.cin --build-exe app --build-target linux/arm64   # 交叉编译
+codecin build basic.cin -o basic --target windows/amd64              # 全 Go 链路
+```
+
+实现要点:
+
+| 环节 | 说明 |
+|------|------|
+| 入口 shell | `codecin/native/aot/stub_main.go.txt` (Go 与 Python 侧共用同一份模板) |
+| 运行时 | `codecin/native/aot/aot.go` 的 `aot.Main(bytecode, memImage)` |
+| 构建器 | Go: `codecin/native/aot/build.go`; Python: `codecin/aot.py` |
+| 临时包 | 模块内 `.aotbuild-<rand>/`; Go 忽略以 `.` 开头的目录, 故不影响 `go build ./...` |
+| 静态链接 | `CGO_ENABLED=0` (+ `-tags netgo,osusergo`), Linux 产物无 `PT_INTERP`, 不依赖 glibc |
+| 体积 | `-trimpath -ldflags "-s -w"`, 空程序约 6 MB (含 Go 运行时与 VM) |
+| 前置条件 | 仅需 Go 工具链 (1.26+); 产物本身不需要任何运行时 |
+
+产物行为: 标准输入只在被重定向时读取 (交互终端下不阻塞); 正常结束退出码 0,
+运行期错误打印 stderr 并以 1 退出。
+
+> 若默认 Go 构建缓存不可写 (只读 HOME / 受限 CI), 构建器会自动回退到仓库内
+> `.gocache` 重试一次, 并在仍失败时提示显式设置 `GOCACHE`。
+
+### 6.2 PyInstaller 打包 (含 Python 工具链的完整发行版)
+
 使用 PyInstaller, **唯一入口为 `codecin.spec`** (Windows 下直接运行 `build_win.bat`):
 
 ```bash
@@ -304,7 +339,9 @@ pyinstaller --noconfirm --clean codecin.spec
 
 spec 要点 (见文件内注释):
 
-- `binaries` 已携带 `codecin/codecin_native.dll` (ctypes 运行时加载, 静态分析发现不了);
+- `binaries` 已携带原生库 (ctypes 运行时加载, 静态分析发现不了); 库缺失时不会阻断打包;
+- `datas` 携带 `lib/*.cin` 标准库与 `misc/vim` 语法文件 — 缺了它们冻结产物里
+  `import "lib/math.cin"` 会失败 (冻结后 `_CODECIN_ROOT` 指向 bundle 的 `_internal/`);
 - `excludes` 列出 numpy/scipy/matplotlib/pywin32/cryptography 等无关重型库 — 在**只装
   `requirements.txt` 的干净环境**构建可把产物从 ~100 MB 瘦身到几十 MB;
 - 冻结产物下的原生库搜索路径见 `codecin/native.py: _lib_candidates` (exe 目录与 `_MEIPASS`)。
