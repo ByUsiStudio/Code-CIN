@@ -9,7 +9,7 @@
 
 ## 实施状态（批次 A + B + C 已应用）
 
-测试规模：**297 项 Python 测试 + 2 个 Go 测试包**（原 158 项 Python、0 个 Go 测试）；
+测试规模：**413 项 Python 测试 + 2 个 Go 测试包**（原 158 项 Python、0 个 Go 测试）；
 ruff（已扩充规则集）、`gofmt -l`、`go vet`、`go test -race`、ISA 门禁、产物级差分测试全部通过。
 
 ### 批次 A — 止血
