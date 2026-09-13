@@ -81,7 +81,7 @@ def module_dir() -> str:
 
 def stub_source() -> str:
     """读取生成的 main.go 模板。"""
-    with open(STUB_PATH, 'r', encoding='utf-8') as f:
+    with open(STUB_PATH, encoding='utf-8') as f:
         return f.read()
 
 
@@ -216,7 +216,7 @@ def build_program(program_file: str,
     mem = bytearray(DEFAULT_MEM_SIZE)
     for addr, data in res.data_writes:
         end = addr + len(data)
-        if 0 <= addr and end <= len(mem):
+        if addr >= 0 and end <= len(mem):
             mem[addr:end] = data
     if not out:
         out = os.path.splitext(program_file)[0] + exe_suffix(goos)
