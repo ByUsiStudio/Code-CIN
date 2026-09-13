@@ -1,6 +1,7 @@
 """A4: --debug-server 远程驱动式调试协议 (socket 集成测试)。"""
 
 import ast
+import contextlib
 import socket
 import threading
 
@@ -33,10 +34,8 @@ class _Client:
         return line.decode('utf-8', 'replace')
 
     def close(self):
-        try:
+        with contextlib.suppress(Exception):
             self.sock.close()
-        except Exception:
-            pass
 
 
 def _free_port() -> int:

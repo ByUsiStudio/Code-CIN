@@ -21,8 +21,19 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
 from codecin import __version__  # noqa: E402
-from codecin.isa import KIND_FLOAT, KIND_IMM, KIND_MEM, KIND_REG, KIND_STR, \
-    KIND_VEC, KIND_VECLANE, KIND_COND, Constants, Opcode, Syscall  # noqa: E402
+from codecin.isa import (  # noqa: E402
+    KIND_COND,
+    KIND_FLOAT,
+    KIND_IMM,
+    KIND_MEM,
+    KIND_REG,
+    KIND_STR,
+    KIND_VEC,  # noqa: E402
+    KIND_VECLANE,
+    Constants,
+    Opcode,
+    Syscall,
+)
 
 OUT_PATH = os.path.join(ROOT, 'codecin', 'native', 'engine', 'isa_gen.go')
 COMPILER_SYS_PATH = os.path.join(ROOT, 'codecin', 'native', 'compiler', 'syscalls.go')
@@ -85,7 +96,7 @@ def build_version() -> str:
     lines.append('')
     lines.append('package engine')
     lines.append('')
-    lines.append(f'// BuildVersion 是 Code CIN 的版本号 (被 codecin_version() 与日志使用)。')
+    lines.append('// BuildVersion 是 Code CIN 的版本号 (被 codecin_version() 与日志使用)。')
     lines.append(f'const BuildVersion = "{__version__}"')
     lines.append('')
     return '\n'.join(lines)
@@ -160,7 +171,7 @@ def main() -> int:
             ok = False
         return 0 if ok else 1
 
-    for path, content, label in targets:
+    for path, content, _label in targets:
         os.makedirs(os.path.dirname(path), exist_ok=True)
         # newline='\n' 强制 LF: 生成物必须与平台无关 (gofmt 也要求 LF)
         with open(path, 'w', encoding='utf-8', newline='\n') as f:

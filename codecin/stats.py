@@ -18,10 +18,7 @@ class BranchPredictor:
 
     def update(self, pc: int, taken: bool) -> None:
         counter = self.saturating_counters.get(pc, 2)
-        if taken:
-            counter = min(3, counter + 1)
-        else:
-            counter = max(0, counter - 1)
+        counter = min(3, counter + 1) if taken else max(0, counter - 1)
         self.saturating_counters[pc] = counter
 
     def record_prediction(self, predicted: bool, actual: bool) -> None:

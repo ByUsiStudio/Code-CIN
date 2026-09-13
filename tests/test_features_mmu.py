@@ -4,7 +4,6 @@ import pytest
 
 from codecin.errors import MemoryAccessError, PageFaultError
 from codecin.memory import FastMemory, Mmu
-
 from tests.helpers import run_cin_source
 
 PAGE = Mmu.PAGE_SIZE

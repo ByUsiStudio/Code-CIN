@@ -73,6 +73,10 @@ jobs:
           'native library failed to load'"
       - name: Run tests (原生与 Go CLI 均已就绪)
         run: python -m pytest -rs
+      - name: 覆盖率报告 (门槛待基线确定后再设 --cov-fail-under)
+        run: |
+          python -m pip install pytest-cov
+          python -m pytest -q --cov=codecin --cov-report=term-missing
       - name: Go/Python 编译器差分测试
         run: python script/diff_go_python.py
 
@@ -102,8 +106,17 @@ jobs:
       - name: go vet
         run: go vet ./...
         working-directory: codecin/native
-      - name: go test
-        run: go test ./... -count=1
+      - name: gofmt 检查 (生成物也必须是 gofmt 干净的 LF 文件)
+        run: |
+          out="$(gofmt -l .)"
+          if [ -n "$out" ]; then
+            echo "以下文件未格式化:" >&2
+            echo "$out" >&2
+            exit 1
+          fi
+        working-directory: codecin/native
+      - name: go test (含竞态检测)
+        run: go test ./... -race -count=1
         working-directory: codecin/native
       - name: Cross-compile check (linux/darwin/windows, pure-Go)
         run: |

@@ -3,7 +3,6 @@
 import builtins
 
 from codecin.debugger import ConditionalBreakpoint, DebugServer
-
 from tests.helpers import imm, new_cpu, reg
 
 # pc0/1 为 ADDI, pc2 为 HALT

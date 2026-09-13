@@ -3,7 +3,6 @@
 优先调用 Go 原生库 (codecin.native) 进行压缩/解压, 无原生库时回退到 zlib。
 """
 
-import os
 import struct
 import zlib
 from typing import TYPE_CHECKING, Optional
@@ -148,7 +147,8 @@ def load_crom(memory: 'FastMemory', path: str,
                     f".crom 解压超过头部声明的大小 ({limit} bytes): 疑似损坏或恶意文件")
             raw += d.flush()
         except zlib.error as e:
-            raise CPUSimulatorError(f"Failed to decompress .crom: {e}")
+            raise CPUSimulatorError(
+                f"Failed to decompress .crom: {e}") from e
         if len(raw) > limit:
             raise CPUSimulatorError(
                 f".crom 解压超过头部声明的大小 ({limit} bytes)")

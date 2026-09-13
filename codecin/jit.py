@@ -173,7 +173,7 @@ class JITCompiler:
                         f'mem.write_qword(cpu.sp, ({val}) & MASK)']
             if opcode == 'POP':
                 rd = args[0][1]
-                return [f'_v = mem.read_qword(cpu.sp)',
+                return ['_v = mem.read_qword(cpu.sp)',
                         'cpu.sp = (cpu.sp + 8) & MASK',
                         self._reg_write(rd, '_v')]
             if opcode == 'NOP':

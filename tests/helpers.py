@@ -19,7 +19,7 @@ def mem(base: int, off: int = 0):
 
 def new_cpu(**cfg) -> CPU:
     """空程序 CPU (指令由调用方直接赋值)。"""
-    defaults = dict(interactive_mode=False, log_level='ERROR', use_native=False)
+    defaults = {'interactive_mode': False, 'log_level': 'ERROR', 'use_native': False}
     defaults.update(cfg)
     return CPU(Config(**defaults))
 
@@ -56,14 +56,14 @@ def asm_program(source: str, workdir: str, name: str = 'prog.asm', **cfg) -> CPU
     path = os.path.join(workdir, name)
     with open(path, 'w', encoding='utf-8') as f:
         f.write(source)
-    defaults = dict(interactive_mode=False, log_level='ERROR', use_native=False)
+    defaults = {'interactive_mode': False, 'log_level': 'ERROR', 'use_native': False}
     defaults.update(cfg)
     return CPU(Config(**defaults), path)
 
 
 def run_cin_file(path: str, **cfg) -> CPU:
     """从文件编译并运行 CIN 源码 (支持 import 展开与三执行路径)。"""
-    defaults = dict(interactive_mode=False, log_level='ERROR', use_native=False)
+    defaults = {'interactive_mode': False, 'log_level': 'ERROR', 'use_native': False}
     defaults.update(cfg)
     cpu = CPU(Config(**defaults), path)
     cpu.run()

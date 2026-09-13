@@ -8,6 +8,7 @@
 设计约束: 本模块不 import codecin.cpu (仅 TYPE_CHECKING), 通过属性访问 CPU。
 """
 
+import contextlib
 import socket
 import time
 from dataclasses import dataclass
@@ -432,15 +433,11 @@ class DebugServer:
                     resp = f'ERROR: {e}'
                 self._send(conn, resp or 'OK')
         finally:
-            try:
+            with contextlib.suppress(Exception):
                 conn.close()
-            except Exception:
-                pass
             self.connected = False
-            try:
+            with contextlib.suppress(Exception):
                 self.socket.close()
-            except Exception:
-                pass
             self.running = False
 
 

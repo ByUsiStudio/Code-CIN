@@ -3,7 +3,6 @@
 import pytest
 
 from codecin import native as native_mod
-
 from tests.helpers import new_cpu, snapshot
 
 needs_native = pytest.mark.skipif(native_mod.get_engine() is None,

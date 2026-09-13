@@ -57,7 +57,7 @@ def build_doc() -> str:
         hi = next(m.value for m in Opcode if m.value == b - 1)
         lines.append(f'| {name} | {len(group_members(a, b))} | {lo}..{hi} | {note} |')
     lines.append('')
-    for name, a, b, note in GROUPS:
+    for name, a, b, _note in GROUPS:
         members = group_members(a, b)
         lines.append(f'## {name} ({len(members)} 条)\n')
         lines.append('| 助记符 | 编码 | 助记符 | 编码 | 助记符 | 编码 |')
@@ -85,7 +85,7 @@ def main() -> int:
     content = build_doc()
     if args.check:
         if os.path.exists(DOC_PATH):
-            with open(DOC_PATH, 'r', encoding='utf-8') as f:
+            with open(DOC_PATH, encoding='utf-8') as f:
                 existing = f.read()
             if existing == content:
                 print('ISA doc up to date.')

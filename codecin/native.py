@@ -15,16 +15,27 @@ Linux/Termux: libcodecin_native.so, macOS: libcodecin_native.dylib),
 """
 
 import ctypes
-import math
 import os
 import platform
 import struct
 import sys
 from typing import Any, Dict, List, Optional, Tuple
 
-from .isa import (BC_MAGIC, BC_VERSION, KIND_COND, KIND_FLOAT, KIND_IMM,
-                  KIND_MEM, KIND_REG, KIND_STR, KIND_VEC, KIND_VECLANE,
-                  Cond, Constants, Opcode)
+from .isa import (
+    BC_MAGIC,
+    BC_VERSION,
+    KIND_COND,
+    KIND_FLOAT,
+    KIND_IMM,
+    KIND_MEM,
+    KIND_REG,
+    KIND_STR,
+    KIND_VEC,
+    KIND_VECLANE,
+    Cond,
+    Constants,
+    Opcode,
+)
 
 Operand = Tuple[Any, ...]
 Instruction = Tuple[str, List[Operand]]

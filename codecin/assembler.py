@@ -139,7 +139,7 @@ class Assembler:
             raise AssemblerError('', f"File '{filename}' not found", filename=filename)
 
         out: List[Tuple[str, int, str]] = []
-        with open(abs_path, 'r', encoding='utf-8') as f:
+        with open(abs_path, encoding='utf-8') as f:
             for line_num, raw in enumerate(f, 1):
                 stripped = raw.strip()
                 if stripped.startswith('#include'):
@@ -244,7 +244,7 @@ class Assembler:
         sym_final = dict(self.equ)
         sym_final.update(self.labels)
         sym_final.update(self.data_labels)
-        for line, idx, line_num, fname in text_lines:
+        for line, _idx, line_num, fname in text_lines:
             instr = self._parse_instruction(line, sym_final, line_num, fname)
             self.instructions.append(instr)
 
@@ -317,7 +317,7 @@ class Assembler:
                          "'": 39, '"': 34}.get(body[1], ord(body[1]))]
             return [ord(body[0])]
         if token.startswith('"') and token.endswith('"'):
-            vals = [b for b in token[1:-1].encode('utf-8')]
+            vals = list(token[1:-1].encode('utf-8'))
             vals.append(0)
             return vals
         try:
@@ -327,7 +327,7 @@ class Assembler:
             if val is not None:
                 return [val]
             raise AssemblerError(line, f"Invalid data value: {token}",
-                                 line_num, fname)
+                                 line_num, fname) from None
 
     @staticmethod
     def _unquote(token: str) -> str:
@@ -492,7 +492,8 @@ class Assembler:
                 val = _eval_expr(inner, symbols)
                 if val is not None:
                     return ('imm', val)
-                raise AssemblerError(line, f"Bad immediate: {tok}", line_num, fname)
+                raise AssemblerError(line, f"Bad immediate: {tok}",
+                                     line_num, fname) from None
 
         try:
             return ('imm', self.parse_immediate(tok))
@@ -530,7 +531,7 @@ class Assembler:
                 val = _eval_expr(first.lstrip('#'), symbols)
                 if val is None:
                     raise AssemblerError(line, f"Bad memory base: {first}",
-                                         line_num, fname)
+                                         line_num, fname) from None
                 offset = val
 
         if len(parts) > 1:
@@ -541,7 +542,7 @@ class Assembler:
                 val = _eval_expr(second.lstrip('#'), symbols)
                 if val is None:
                     raise AssemblerError(line, f"Bad memory offset: {second}",
-                                         line_num, fname)
+                                         line_num, fname) from None
                 offset += val
 
         return ('mem', base, offset)

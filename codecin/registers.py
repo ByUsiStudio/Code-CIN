@@ -1,8 +1,8 @@
 from typing import Any, Dict, List, Optional
 
 from .console import Console, Table
-from .isa import Constants
 from .errors import ExecutionError
+from .isa import Constants
 
 MASK64 = 0xFFFFFFFFFFFFFFFF
 

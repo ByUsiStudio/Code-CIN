@@ -4,9 +4,8 @@ import os
 
 import pytest
 
-from codecin.cin import CINCompiler, load_program_source
+from codecin.cin import CINCompiler
 from codecin.errors import CompilerError
-
 from tests.helpers import run_cin_file, run_cin_source
 
 EXAMPLES = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),

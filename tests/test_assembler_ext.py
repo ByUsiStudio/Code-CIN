@@ -5,7 +5,6 @@ import pytest
 from codecin.assembler import Assembler
 from codecin.errors import AssemblerError
 from codecin.memory import FastMemory
-
 from tests.helpers import asm_program
 
 ASM_EQU = """

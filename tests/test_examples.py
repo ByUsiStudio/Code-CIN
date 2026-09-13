@@ -32,7 +32,7 @@ def test_example_cin(name, expected):
 @pytest.mark.parametrize('name,reg_expected', sorted(ASM_EXPECTED.items()))
 def test_example_asm(name, reg_expected, workdir):
     path = os.path.join(EXAMPLES, name)
-    with open(path, 'r', encoding='utf-8') as f:
+    with open(path, encoding='utf-8') as f:
         source = f.read()
     cpu = asm_program(source, workdir)
     cpu.run()

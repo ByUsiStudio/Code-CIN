@@ -19,9 +19,9 @@ GO_CLI = os.path.join(ROOT, 'codecin', 'native', 'codecin.exe')
 if not os.path.exists(GO_CLI):
     GO_CLI = os.path.join(ROOT, 'codecin', 'native', 'codecin')
 
-from codecin.cin import CINCompiler          # noqa: E402
-from codecin.cpu import CPU                  # noqa: E402
-from codecin.config import Config            # noqa: E402
+from codecin.cin import CINCompiler  # noqa: E402
+from codecin.config import Config  # noqa: E402
+from codecin.cpu import CPU  # noqa: E402
 
 
 def run_python(path: str):

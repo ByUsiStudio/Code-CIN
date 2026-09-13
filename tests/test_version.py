@@ -13,7 +13,7 @@ import re
 import pytest
 
 try:
-    import tomllib                      # Python 3.11+
+    import tomllib  # Python 3.11+
 except ImportError:                     # pragma: no cover - py3.8~3.10
     tomllib = None
 
@@ -35,7 +35,7 @@ def test_pyproject_has_no_static_version():
 def test_go_generated_version_matches_python():
     import codecin
     path = os.path.join(ROOT, 'codecin', 'native', 'engine', 'version_gen.go')
-    with open(path, 'r', encoding='utf-8') as f:
+    with open(path, encoding='utf-8') as f:
         text = f.read()
     m = re.search(r'const BuildVersion = "([^"]+)"', text)
     assert m, 'version_gen.go 缺少 BuildVersion'

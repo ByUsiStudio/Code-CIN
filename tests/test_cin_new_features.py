@@ -5,7 +5,6 @@ import pytest
 
 from codecin.cin import CINCompiler
 from codecin.errors import CompilerError
-
 from tests.helpers import run_cin_source
 
 
@@ -45,8 +44,8 @@ function main() -> int {
     println("asr=" + int_to_str(e))
     return 0
 }"""
-    import io
     import contextlib
+    import io
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
         cpu = run_cin_source(src, use_native=True)

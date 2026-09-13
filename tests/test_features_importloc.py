@@ -6,7 +6,6 @@ import pytest
 
 from codecin.cin import CINCompiler
 from codecin.errors import CompilerError
-
 from tests.helpers import run_cin_file
 
 

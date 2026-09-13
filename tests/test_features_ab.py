@@ -5,13 +5,10 @@ import os
 import pytest
 
 from codecin import crom
-from codecin.cin import CINCompiler
 from codecin.disasm import _extract_from_cpusa, disassemble_bytes, disassemble_file
 from codecin.errors import CPUSimulatorError
 from codecin.native import decode_program
-
 from tests.helpers import asm_program, run_cin_source
-
 
 # ---------------- A1: assert ----------------
 

@@ -11,7 +11,7 @@ from .cache import Cache
 from .config import Config
 from .console import Colors, Console, Panel
 from .errors import CPUSimulatorError, ExecutionError
-from .isa import Constants, Opcode, Syscall
+from .isa import Constants, Syscall
 from .logger import Logger
 from .memory import FastMemory
 from .registers import RegisterFile, VectorRegisterFile
@@ -162,7 +162,6 @@ class CPU:
             return
 
         if from_bin or ext == '.bin':
-            from .native import decode_program
             from . import crom as crom_mod
             crom_mod.load_bin(self, filename)
             self.logger.info(f"Binary loaded: {len(self.instructions)} instructions")

@@ -196,8 +196,8 @@ def tokenize(source: str,
         if origin and 0 < ln < len(origin):
             ent = origin[ln]
             if ent is not None:
-                f, l = ent
-                return f"{f}:{l}"
+                f, lineno = ent
+                return f"{f}:{lineno}"
         return f"line {ln}"
 
     def skip_comment_block():
@@ -361,19 +361,26 @@ def tokenize(source: str,
             tokens.append(Token('DEC', '--', line))
             i += 2
         elif c == '=' and i + 1 < n and source[i + 1] == '=':
-            tokens.append(Token('EQ', '==', line)); i += 2
+            tokens.append(Token('EQ', '==', line))
+            i += 2
         elif c == '!' and i + 1 < n and source[i + 1] == '=':
-            tokens.append(Token('NEQ', '!=', line)); i += 2
+            tokens.append(Token('NEQ', '!=', line))
+            i += 2
         elif c == '<' and i + 1 < n and source[i + 1] == '=':
-            tokens.append(Token('LE', '<=', line)); i += 2
+            tokens.append(Token('LE', '<=', line))
+            i += 2
         elif c == '>' and i + 1 < n and source[i + 1] == '=':
-            tokens.append(Token('GE', '>=', line)); i += 2
+            tokens.append(Token('GE', '>=', line))
+            i += 2
         elif c == '&' and i + 1 < n and source[i + 1] == '&':
-            tokens.append(Token('AND', '&&', line)); i += 2
+            tokens.append(Token('AND', '&&', line))
+            i += 2
         elif c == '|' and i + 1 < n and source[i + 1] == '|':
-            tokens.append(Token('OR', '||', line)); i += 2
+            tokens.append(Token('OR', '||', line))
+            i += 2
         elif c in _SINGLE_OPS:
-            tokens.append(Token(_SINGLE_OPS[c], c, line)); i += 1
+            tokens.append(Token(_SINGLE_OPS[c], c, line))
+            i += 1
         else:
             raise CompilerError(f"Unexpected character {c!r} at {at_loc(line)}")
 
@@ -389,7 +396,7 @@ def tokenize(source: str,
                     'PERCENTEQ', 'INC', 'DEC',
                     'AMP', 'PIPE', 'CARET', 'TILDE', 'SHL', 'SHR',
                     'ANDEQ', 'OREQ', 'XOREQ', 'SHLEQ', 'SHREQ'}
-    for idx, tok in enumerate(tokens):
+    for tok in tokens:
         if tok.kind in open_kw:
             depth += 1
         elif tok.kind in close_kw:
@@ -439,7 +446,7 @@ def _collect_module_lines(path: str, loaded: set, active: set,
     if real in loaded:
         return
     active.add(real)
-    with open(real, 'r', encoding='utf-8-sig') as f:
+    with open(real, encoding='utf-8-sig') as f:
         # utf-8-sig: 容忍 Windows 编辑器写出的 BOM, 否则首行 `import ...`
         # 匹配不上 _IMPORT_RE, 会报一个与真实原因无关的解析错误
         lines = f.read().split('\n')
@@ -570,7 +577,8 @@ class Parser:
             vtype = ('struct', base)
         # int[] / int[][] 形式 (后缀在类型名上)
         while self.peek().kind == 'LBRACKET' and self.peek(1).kind == 'RBRACKET':
-            self.next(); self.next()
+            self.next()
+            self.next()
             vtype = ('ptrarray', vtype)
         return vtype
 
@@ -720,10 +728,7 @@ class Parser:
             return self.parse_assert()
         if t.kind == 'IDENT' and t.value == 'return':
             self.next()
-            if self.peek().kind in ('NL', 'SEMI', 'RBRACE'):
-                expr = None
-            else:
-                expr = self.parse_expr()
+            expr = None if self.peek().kind in ('NL', 'SEMI', 'RBRACE') else self.parse_expr()
             self.accept('SEMI')
             return ('return', expr)
         if t.kind == 'IDENT' and t.value == 'if':
@@ -740,10 +745,12 @@ class Parser:
         if t.kind == 'IDENT' and t.value == 'switch':
             return self.parse_switch()
         if t.kind == 'IDENT' and t.value == 'break':
-            self.next(); self.accept('SEMI')
+            self.next()
+            self.accept('SEMI')
             return ('break',)
         if t.kind == 'IDENT' and t.value == 'continue':
-            self.next(); self.accept('SEMI')
+            self.next()
+            self.accept('SEMI')
             return ('continue',)
         if self._is_decl_start():
             return self.parse_decl()
@@ -781,7 +788,6 @@ class Parser:
         return ('dowhile', body, cond)
 
     def parse_switch(self):
-        line = self.peek().line
         self.next()  # switch
         cond = self.parse_paren_expr()
         self.expect('LBRACE')
@@ -1271,7 +1277,7 @@ class CodeGen:
         self.emit('CALL', self.lab('main'))
         self.emit('HALT')
 
-        for fname, fdef in functions.items():
+        for _fname, fdef in functions.items():
             self.gen_function(fdef)
 
         return self.res
@@ -1347,7 +1353,7 @@ class CodeGen:
             self.emit('MOV', self.reg(32), self.reg(0))
 
         # struct 局部变量: 堆分配对象
-        for name, (t, loff, is_block) in list(self.locals.items()):
+        for _name, (t, loff, _is_block) in list(self.locals.items()):
             if _is_struct(t) and loff < 0:
                 sd = self.structs[t[1]]
                 self.emit('MOV', self.reg(0), self.imm(sd.size_slots * 8))
@@ -1861,9 +1867,7 @@ class CodeGen:
             self.emit('LB', self.reg(0), ('mem', 0, 0))  # 读 1 字节 (符号扩展)
             self.emit('ANDI', self.reg(0), self.reg(0), self.imm(0xFF))  # 0..255
             return 'int'
-        if _is_fixed_array(base_t):
-            elem_t = _array_elem(base_t)
-        elif _is_ptr_array(base_t):
+        if _is_fixed_array(base_t) or _is_ptr_array(base_t):
             elem_t = _array_elem(base_t)
         else:
             raise CompilerError(f"Indexing non-array type: {base_t}")
@@ -1939,12 +1943,7 @@ class CodeGen:
             base_t = self._expr_type(node[1])
             if base_t == 'string':
                 return 'int'
-            if _is_fixed_array(base_t):
-                elem = _array_elem(base_t)
-            elif _is_ptr_array(base_t):
-                elem = _array_elem(base_t)
-            else:
-                elem = None
+            elem = _array_elem(base_t) if _is_fixed_array(base_t) or _is_ptr_array(base_t) else None
             if _is_fixed_array(elem):
                 return elem
             return elem
