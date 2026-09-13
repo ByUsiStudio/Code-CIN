@@ -5,6 +5,80 @@
 
 ---
 
+## [5.4.2] - 2026-09-13
+
+以「消除静默错误 + 工程可信度」为主线的一次修复与加固，详见
+[优化建议报告](docs/SUGGESTIONS.md)。测试从 158 项增至 297 项（Python）+ 2 个 Go 测试包。
+
+### 修复 (Fixed)
+
+#### 会静默产生错误结果的缺陷
+- **汇编器把十六进制立即数的尾字母 `F` 当类型后缀吃掉**：`#0x1F` 曾被解析成 `1`、
+  `#0xABCDEF` 成 `703710`、`#0xFF` 直接抛异常。改为先判进制再剥后缀（`assembler.py`）。
+- **Go `genSwitch` 负 case 永远匹配不上**：旧实现用 `-1` 当 default 哨兵并跳过 `raw < 0`，
+  于是 `switch(x){case -1:...}` 走 default（Python 侧正确）。改为按无符号位模式比较。
+- **Go `genSwitch` 非常量 case 造成标签错位**：旧实现遇到求值失败的 case 只 `continue`
+  不补标签，导致后续 case 的标签贴到别人的语句体上（静默错误分派）；现在与 Python 一致报编译错误。
+- **`switch` 内 `continue` 泄漏选择器栈槽**：两端都绕过 `ADDI SP,SP,8`，每轮迭代漏 8 字节、
+  长循环必然栈堆碰撞。现在 continue 先弹出选择器再跳转。
+- **Go 代码生成大面积静默吞错**：`println(foo())` 输出 `0`、`~1.5` 输出 float 位模式、
+  `s += "b"` 静默无操作、未定义变量/成员访问/越界下标/浮点取模等都产出静默错误的字节码。
+  引入粘性错误通道 (`compiler.err` + `failf`)，在 `Compile` 末尾统一返回编译错误，文案对齐 Python。
+- **内置函数缺参数导致崩溃**：`sqrt()`、`substr("a",1)` 在 Go 侧 panic、Python 侧抛裸 `IndexError`；
+  两端统一为 `CompilerError`，并新增参数个数表。
+- **步数用尽伪装成正常结束**：原生 VM 返回 `StatusDone`、解释器只 warning 后 break，进程仍以 0 退出。
+  现在两端都报 `instruction limit reached`，CLI 退出码为 1。
+- **数值字面量**：`0xFFu`/`42u`/`1.5f` 在 Python 侧抛裸 `ValueError`（Go 侧十六进制正确、十进制报错）；
+  十进制超出 64 位范围时 Python 静默截断、Go 报错。两端现在行为一致，越界一律报错。
+- **带 UTF-8 BOM 的源文件 `import` 静默失效**（Windows 编辑器常见），两端均已修复。
+- **CROM 解压无上限（zip bomb）**：65KB 的合法文件可解出 64MB+；Python 侧还无条件下按旧版
+  裸格式加载任意文件（如 `NOTACROMFILE`）。两端统一上限为 `mem_size + 4MiB` 并校验头部自洽。
+- **原生库信任不可信字节码头部**：`count` 直接用作 `make` 容量（13 字节输入可触发 137GB 预分配）、
+  版本字节与参数个数从不校验（越界 panic）。现在解码阶段一次性拒绝。
+- **VM 输出无上限**：新增 16 MiB 输出上限，超限报错；HTTP 下载与本地资源读取同样加上限。
+
+### 性能 (Performance)
+
+- **原生路径不再逐条记账**：`_apply_native_state` 曾按指令数在 Python 里循环调用
+  `record_instruction`（且算出的直方图随即被 `clear()` 丢弃）。改为 O(1) 批量写入：
+  62 万条指令的基准从 ~838ms 降到 ~14ms（约 60 倍），吞吐 0.4M → 45M instr/s。
+- **解释器快路径**：无断点/单步/JIT/追踪/节流时走紧凑循环，解释执行提速约 1.15x。
+
+### 新增 (Added)
+
+- **编译器产物级差分**：Go CLI 新增 `--dump-bytecode`；`script/diff_go_python.py` 现在先比对
+  编译出的 UCBC 字节、再比对 stdout —— `examples/*.cin` 6 个示例（5.6KB~211KB 字节码）**逐字节一致**。
+- **Go 侧测试**：新增 `compiler` 与 `engine` 两个测试包（switch 语义、错误通道、字节码校验、
+  CROM 往返与 zip bomb、步数上限），CI 以 `-race` 运行。
+- **CI `integration` 作业**：真实编译 Go CLI 与原生库后运行全量测试与差分测试，并断言原生库已加载
+  （否则红灯，不再静默 skip 约 20 个原生用例）；另加"被 `.gitignore` 吞掉的源码"守卫与 gofmt 门禁。
+- **`release.yml`**：打 tag 时校验 tag 与 `codecin.__version__` 一致，构建 5 平台 Go CLI、
+  三平台原生库与 sdist/wheel 并发布到 Release。
+- **版本单一真源**：`pyproject.toml` 改为 `dynamic = ["version"]`（源自 `codecin.__version__`），
+  Go 侧版本由 `script/gen_native_isa.py` 生成并由 CI `--check` 校验；新增 `codecin --version`；
+  原生库不再自报与包版本无关的 `1.0`。
+- **打包配置**：新增 `[build-system]`、`[project.scripts]`、`[tool.setuptools]`；
+  PyInstaller 两个 spec 补上 `lib/`、`misc/vim` 数据文件与平台原生库。
+- **`.gitattributes` / `.editorconfig`**：统一 LF（避免 Windows 下生成物被写成 CRLF 导致
+  `gofmt -l` 误报与整文件 diff）。
+- **ISA 单一真源守卫**：新增测试校验 `ARG_COUNTS`、`stats.latency`、`jit._JIT_OPS`
+  与 `Opcode` 表一致（防拼写/漏项漂移）。
+
+### 变更 (Changed)
+
+- **`.gitignore` 重写**：删除 `*cache*` / `*tmp*` 两个会吞掉真实源码的通配
+  （`tests/test_cache.py` 曾因此不在仓库中，现已补回）；补齐 `*.so` / `*.dylib` / `*.dll`
+  与各类缓存目录。
+- **构建产物不再入库**：`git rm --cached codecin/codecin_native.dll` —— 旧产物由
+  `9a3087c`（脏工作树）构建却随源码长期提交，用户拿到的二进制与源码不对应。
+- **ruff 规则集扩充**：从 `["E9","F63","F7","F82"]`（基本等价于"能否 import"）
+  扩到 `E4/E5/E7/E9/F/I/UP/B/SIM/C4`，并清理全部违规。
+- **文档修正**：`go.mod` 改为 `go 1.26` 并与 README/BUILDING/安装脚本统一为「Go 1.26+」；
+  删除架构图中的 "C++ 生成"；补 `docs/ISA.md` 到文档索引；纠正 `basic.cin 400 行` 等错误陈述；
+  Termux 安装脚本不再编译 Go CLI 的真实情况同步到 README/CHANGELOG。
+
+---
+
 ## [5.3.0] - 2026-09-11
 
 项目正式重命名为 **Code CIN**，从 Python 优先架构切换为 **Go 优先** 架构。新增完整的 Go 原生 CIN 编译器与独立 CLI，

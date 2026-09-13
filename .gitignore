@@ -44,5 +44,3 @@ __pycache__/
 # 汇编临时样例: 保留仓库内的 test_asm.asm (docs/BUILDING.md 的验收基准)
 /test_*.asm
 !/test_asm.asm
-
-SUGGESTIONS.md
