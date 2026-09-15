@@ -40,9 +40,11 @@ namespaces = true
 [tool.setuptools.dynamic]
 version = { attr = "codecin.__version__" }
 
+"""
 [tool.setuptools.package-data]
 "codecin"        = ["*.dll", "*.so", "*.dylib", "py.typed"]
 "codecin.native" = ["**/*"]
+"""
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
