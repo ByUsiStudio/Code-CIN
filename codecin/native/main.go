@@ -24,7 +24,7 @@ import (
 //   err_len u16 | err ...
 
 // buildVersion 由构建时注入: -ldflags "-X main.buildVersion=<版本>"
-// (install.sh / install.ps1 / build.ps1 会传入 codecin 包版本)。
+// (codecin/native/build.ps1 / build.sh 会传入 codecin 包版本)。
 var buildVersion = "dev"
 
 // marshalResult 把执行结果序列化为 ABI 缓冲。

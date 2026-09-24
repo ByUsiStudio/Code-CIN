@@ -141,7 +141,7 @@ if [ $? -ne 0 ]; then
 fi
 finish_step "同步 Python 依赖"
 
-step_func "编译 Go 原生库与 codecin CLI"
+step_func "编译 Go 原生库"
 cd codecin/native
 export CGO_ENABLED=1 GOCACHE="$PWD/../../.gocache" GOTMPDIR="$PWD/../../.gotmp"
 mkdir -p "$GOCACHE" "$GOTMPDIR"
@@ -150,13 +150,12 @@ if ! go build -buildmode=c-shared -ldflags '-linkmode external -extldflags "-sta
     warning "静态链接不可用, 回退动态链接"
     go build -buildmode=c-shared -o ../libcodecin_native.so .
 fi
-# go build -o ../codecin ./cmd/codecin
 cd ../..
 rm -f codecin/codecin_native.h codecin/libcodecin_native.h 2>/dev/null || true
-success "Go 原生库与 CLI 编译完成"
+success "Go 原生库编译完成"
 thin_line
 true
-finish_step "编译 Go 原生库与 CLI"
+finish_step "编译 Go 原生库"
 
 step_func "生成启动脚本 (codecin-cli)"
 cat > codecin-cli << 'EOF'
@@ -175,8 +174,8 @@ for arg in "$@"; do
         args+=("$original_pwd/$arg")
     fi
 done
-if [ -x codecin/codecin ]; then
-    exec codecin/codecin "${args[@]}"
+if command -v codecin >/dev/null 2>&1; then
+    exec codecin "${args[@]}"
 else
     exec uv run python cpu.py "${args[@]}"
 fi
