@@ -74,6 +74,9 @@ class BuildPyWithNative(build_py):
         self._install_built_libs()
 
     def _install_built_libs(self):
+        if _should_skip():
+            print("[codecin] 跳过安装原生库 (CODECIN_SKIP_NATIVE / CODECIN_NO_GO)")
+            return
         target = Path(self.build_lib) / "codecin"
         for name in LIB_NAMES:
             src = PKG / name
