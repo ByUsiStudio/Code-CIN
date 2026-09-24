@@ -42,7 +42,7 @@ namespaces = true
 version = { attr = "codecin.__version__" }
 
 [tool.setuptools.package-data]
-"codecin"        = ["*.dll", "*.so", "*.dylib", "py.typed", "lib/*.cin", "lib/**/*.cin"]
+"codecin"        = ["py.typed", "lib/*.cin", "lib/**/*.cin"]
 "codecin.lib"    = ["*.cin"]
 "codecin.native" = ["**/*"]
 
