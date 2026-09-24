@@ -513,10 +513,11 @@ def load_program_source(path: str) -> str:
 
 
 def collect_imported_files(path: str) -> List[str]:
-    """返回 ``path`` 及其 import 闭包涉及的全部 .cin 真实路径 (含自身, 去重保序)。
+    """返回 ``path`` 及其 import 闭包涉及的全部 .cin 真实路径。
 
-    供 AOT/打包等需要在编译前检查依赖完整性的场景使用; import 缺失或循环
-    引用时抛 :class:`CompilerError`。
+    第一个元素恒为 ``path`` 自身, 其余为依赖模块 (去重保序)。供 AOT/打包等
+    需要在编译前检查依赖完整性的场景使用; import 缺失或循环引用时抛
+    :class:`CompilerError`。
     """
     real = os.path.realpath(os.path.abspath(path))
     out: List[Tuple[str, str]] = []
@@ -525,7 +526,10 @@ def collect_imported_files(path: str) -> List[str]:
     for fname, _line in out:
         if fname not in files:
             files.append(fname)
-    return files
+    # 深度优先展开会让被依赖模块排在前面, 这里把主程序固定到首位
+    if real in files:
+        files.remove(real)
+    return [real, *files]
 
 
 def _remap_tokens(tokens: List[Token], origin: List[Optional[Tuple[str, int]]]
