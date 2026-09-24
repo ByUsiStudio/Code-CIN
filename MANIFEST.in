@@ -4,7 +4,7 @@
 include README.md CHANGELOG.md LICENSE
 include pyproject.toml setup.py
 recursive-include codecin/lib *.cin
-recursive-include codecin/native *.go *.txt go.mod go.sum
+recursive-include codecin/native *.go *.txt go.mod go.sum build.sh build.ps1
 include codecin/*.h codecin/*.dll codecin/*.so codecin/*.dylib
 recursive-include docs *.md
 recursive-include misc *

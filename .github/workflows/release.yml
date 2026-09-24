@@ -18,17 +18,25 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
+      # 触发方式决定检出什么:
+      #   * push tag  -> 检出该 tag (refs/tags/vX.Y.Z)
+      #   * 手动触发  -> 检出默认分支 (此时 tag 通常还不存在, 发布步骤会创建它)
+      # 直接写 ref: ${{ github.event.inputs.tag }} 会让手动触发去 fetch 一个还不
+      # 存在的 ref, actions/checkout 会直接失败。
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.inputs.tag || github.ref }}
+          ref: ${{ github.event_name == 'push' && github.ref || '' }}
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: tag 必须等于包版本, 且 CHANGELOG 必须已记录该版本
+      - name: tag 必须等于包版本, CHANGELOG 必须已记录, 且已有 tag 必须指向本次构建的提交
+        env:
+          TAG: ${{ github.event.inputs.tag || github.ref_name }}
         run: |
-          TAG="${{ github.event.inputs.tag || github.ref_name }}"
           VER="$(sed -n 's/^__version__ = "\(.*\)"/\1/p' codecin/__init__.py | head -1)"
-          echo "tag=$TAG version=$VER"
+          HEAD_SHA="$(git rev-parse HEAD)"
+          echo "tag=$TAG version=$VER head=$HEAD_SHA"
           if [ -z "$VER" ]; then
             echo "::error::无法从 codecin/__init__.py 读取 __version__" >&2
             exit 1
@@ -38,8 +46,20 @@ jobs:
             exit 1
           fi
           if ! grep -q "## \[$VER\]" CHANGELOG.md; then
-            echo "::error::CHANGELOG.md 中没有 [$VER] 条目" >&2
+            echo "::error::CHANGELOG.md 中没有 [$VER] 条目; 请先补上变更日志并推送" >&2
             exit 1
+          fi
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
+            git fetch --depth=1 origin "refs/tags/$TAG:refs/tags/$TAG"
+            TAG_SHA="$(git rev-parse "refs/tags/$TAG^{commit}")"
+            if [ "$TAG_SHA" != "$HEAD_SHA" ]; then
+              echo "::error::tag $TAG 已存在且指向 $TAG_SHA, 与本次检出的 $HEAD_SHA 不同;" >&2
+              echo "::error::用 tag 推送触发本工作流, 或先把 tag 移到目标提交, 否则发布物与 tag 不对应。" >&2
+              exit 1
+            fi
+            echo "已有 tag $TAG 与本次构建提交一致"
+          else
+            echo "tag $TAG 尚不存在; 将在发布步骤创建并指向 $HEAD_SHA"
           fi
 
   native:
@@ -55,11 +75,11 @@ jobs:
             slug: linux-x64
             out: libcodecin_native.so
             ldflags: '-linkmode external -extldflags -static'
-          - os: macos-13
+          - os: macos-15-intel
             slug: macos-x64
             out: libcodecin_native.dylib
             ldflags: ''
-          - os: macos-14
+          - os: macos-15
             slug: macos-arm64
             out: libcodecin_native.dylib
             ldflags: ''
@@ -70,7 +90,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.inputs.tag || github.ref }}
+          ref: ${{ github.event_name == 'push' && github.ref || '' }}
       - uses: actions/setup-go@v5
         with:
           go-version-file: codecin/native/go.mod
@@ -108,7 +128,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.inputs.tag || github.ref }}
+          ref: ${{ github.event_name == 'push' && github.ref || '' }}
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
@@ -155,7 +175,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.inputs.tag || github.ref }}
+          ref: ${{ github.event_name == 'push' && github.ref || '' }}
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
