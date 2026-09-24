@@ -361,6 +361,39 @@ python -m twine check dist/*
   (包目录、exe 目录与 `_MEIPASS`)。
 - `--debug`/`--step` 的 rich 输出依赖终端。
 
+### 6.3 原生库资产 (x64 与 arm64)
+
+Release 会为**六种平台组合**构建 c-shared 原生库, 资产名带 `平台-架构` 后缀
+(六个平台的原生库文件名必须互不相同, 否则汇总时会互相覆盖):
+
+| 资产 | 目标 | Runner |
+|------|------|--------|
+| `libcodecin_native-linux-x64.so` | linux/amd64 | `ubuntu-latest` |
+| `libcodecin_native-linux-arm64.so` | linux/arm64 | `ubuntu-24.04-arm` |
+| `libcodecin_native-macos-x64.dylib` | darwin/amd64 | `macos-15-intel` |
+| `libcodecin_native-macos-arm64.dylib` | darwin/arm64 | `macos-15` |
+| `codecin_native-windows-x64.dll` | windows/amd64 | `windows-latest` |
+| `codecin_native-windows-arm64.dll` | windows/arm64 | `windows-11-arm` |
+
+构建后会用 `go version -m <库>` 读出真实的 `GOOS`/`GOARCH` 并**断言与资产名一致**
+—— 防止把错架构的库当成 arm64/x64 发出去。
+
+**ARM64 用户怎么用**: PyPI 上的 wheel 是 `py3-none-any`, 里面只带构建机的原生库
+(当前为 linux-x64), 所以 arm64 机器装完会自动回退纯 Python 解释执行。想要原生加速,
+从 Release 下载对应资产放进包目录即可:
+
+```bash
+# Linux arm64 示例
+pip install codecin
+cd "$(python -c 'import codecin,os;print(os.path.dirname(codecin.__file__))')"
+curl -L -O https://github.com/ByUsiStudio/Code-CIN/releases/latest/download/libcodecin_native-linux-arm64.so
+python -c "from codecin import native; print(native.get_engine())"   # 非 None 即生效
+```
+
+`_lib_candidates` 的查找顺序是 **架构专属名 → 通用名**, 所以同目录下即使还有一个
+其它架构的通用名库, 也会优先选本机架构的那个。架构不符时 `get_engine` 会记一条
+warning 并回退纯 Python, 不会让整个运行失败。
+
 ---
 
 ## 7. 日志系统 (rich) 与 debug 超详细输出

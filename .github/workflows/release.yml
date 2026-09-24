@@ -71,21 +71,44 @@ jobs:
       fail-fast: false
       matrix:
         include:
+          # 资产名必须带 平台-架构 后缀: 否则六个平台的库文件名相同,
+          # release 汇总时会互相覆盖 (只剩最后一个)。
+          # 命名与 codecin/native.py::_lib_candidates 的查找顺序一致。
           - os: ubuntu-latest
             slug: linux-x64
-            out: libcodecin_native.so
+            goos: linux
+            goarch: amd64
+            asset: libcodecin_native-linux-x64.so
+            ldflags: '-linkmode external -extldflags -static'
+          - os: ubuntu-24.04-arm
+            slug: linux-arm64
+            goos: linux
+            goarch: arm64
+            asset: libcodecin_native-linux-arm64.so
             ldflags: '-linkmode external -extldflags -static'
           - os: macos-15-intel
             slug: macos-x64
-            out: libcodecin_native.dylib
+            goos: darwin
+            goarch: amd64
+            asset: libcodecin_native-macos-x64.dylib
             ldflags: ''
           - os: macos-15
             slug: macos-arm64
-            out: libcodecin_native.dylib
+            goos: darwin
+            goarch: arm64
+            asset: libcodecin_native-macos-arm64.dylib
             ldflags: ''
           - os: windows-latest
             slug: windows-x64
-            out: codecin_native.dll
+            goos: windows
+            goarch: amd64
+            asset: codecin_native-windows-x64.dll
+            ldflags: ''
+          - os: windows-11-arm
+            slug: windows-arm64
+            goos: windows
+            goarch: arm64
+            asset: codecin_native-windows-arm64.dll
             ldflags: ''
     steps:
       - uses: actions/checkout@v4
@@ -95,12 +118,17 @@ jobs:
         with:
           go-version-file: codecin/native/go.mod
           cache: true
+      - name: 记录 runner 架构
+        shell: bash
+        run: |
+          echo "runner=${{ matrix.os }} GOOS=$(go env GOOS) GOARCH=$(go env GOARCH)"
+          echo "期望 GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }}"
       - name: Build c-shared (静态链接优先, 失败回退动态)
         working-directory: codecin/native
         shell: bash
         run: |
           set -e
-          OUT="../${{ matrix.out }}"
+          OUT="../${{ matrix.asset }}"
           if [ -n "${{ matrix.ldflags }}" ]; then
             if go build -buildmode=c-shared -ldflags "${{ matrix.ldflags }}" -o "$OUT" . ; then
               exit 0
@@ -108,16 +136,26 @@ jobs:
             echo "静态链接不可用, 回退动态链接" >&2
           fi
           go build -buildmode=c-shared -o "$OUT" .
+      - name: 校验产物架构与资产名一致
+        shell: bash
+        run: |
+          # c-shared 库本身是 Go 二进制, 构建元数据里带有真实的 GOOS/GOARCH。
+          # 这一步防止把错架构的库以 arm64/x64 的名义发出去。
+          f="codecin/${{ matrix.asset }}"
+          test -f "$f" || { echo "::error::产物不存在: $f"; exit 1; }
+          info="$(go version -m "$f")"
+          echo "$info"
+          echo "$info" | grep -q "GOOS=${{ matrix.goos }}" \
+            || { echo "::error::$f 的 GOOS 与资产名不符 (期望 ${{ matrix.goos }})"; exit 1; }
+          echo "$info" | grep -q "GOARCH=${{ matrix.goarch }}" \
+            || { echo "::error::$f 的 GOARCH 与资产名不符 (期望 ${{ matrix.goarch }})"; exit 1; }
       - name: 清理 c-shared 头文件
         shell: bash
         run: rm -f codecin/*.h
       - uses: actions/upload-artifact@v4
         with:
           name: native-${{ matrix.slug }}
-          path: |
-            codecin/*.so
-            codecin/*.dylib
-            codecin/*.dll
+          path: codecin/${{ matrix.asset }}
           if-no-files-found: error
 
   python-dist:
@@ -153,6 +191,35 @@ jobs:
           slibs = [n for n in names if '/codecin/lib/' in n and n.endswith('.cin')]
           assert len(slibs) >= 19, f'{sdist} 缺少内置标准库'
           print(f'{sdist}: {len(slibs)} 个内置标准库模块')
+          PY
+      - name: 记录并校验 wheel 内嵌原生库的架构
+        # wheel 的 tag 是 py3-none-any, 打包时会把本 runner 的原生库一并放进去。
+        # 这里显式打印它的架构并断言与本 runner 一致, 避免哪天静默变成另一种架构。
+        # 其他平台的用户请从 Release 下载对应架构的原生库。
+        run: |
+          python - <<'PY'
+          import glob, os, subprocess, zipfile
+          whl = glob.glob('dist/*.whl')[0]
+          z = zipfile.ZipFile(whl)
+          libs = [n for n in z.namelist()
+                  if n.endswith(('.so', '.dylib', '.dll'))]
+          if not libs:
+              print(f'{whl} 未内嵌原生库 (纯 Python wheel)')
+              raise SystemExit(0)
+          runner = subprocess.run(['go', 'env', 'GOOS', 'GOARCH'],
+                                  capture_output=True, text=True).stdout.split()
+          want = {f'GOOS={runner[0]}', f'GOARCH={runner[1]}'}
+          out = '/tmp/whllib'
+          for name in libs:
+              z.extract(name, out)
+              info = subprocess.run(['go', 'version', '-m', os.path.join(out, name)],
+                                    capture_output=True, text=True).stdout
+              got = {line.strip().split()[-1]
+                     for line in info.splitlines()
+                     if line.strip().startswith(('GOOS=', 'GOARCH='))}
+              print(f'{name}: {sorted(got)}  (runner: {sorted(want)})')
+              assert want <= got, f'{name} 的架构 {got} 与本 runner {want} 不符'
+          print('wheel 内嵌原生库架构与本 runner 一致')
           PY
       - name: wheel 可安装可导入, 且内置标准库可用
         run: |

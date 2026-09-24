@@ -153,15 +153,47 @@ def decode_program(data: bytes) -> Tuple[List[Instruction], int]:
 _LIB_CACHE: Optional['NativeEngine'] = False  # type: ignore
 
 
+def _os_slug() -> str:
+    """Release 资产命名里的平台段。"""
+    system = platform.system()
+    if system == 'Windows':
+        return 'windows'
+    if system == 'Darwin':
+        return 'macos'
+    return 'linux'
+
+
+def _arch_slug() -> str:
+    """Release 资产命名里的架构段。"""
+    machine = platform.machine().lower()
+    if machine in ('x86_64', 'amd64'):
+        return 'x64'
+    if machine in ('aarch64', 'arm64'):
+        return 'arm64'
+    if machine in ('i386', 'i686', 'x86'):
+        return 'x86'
+    return machine
+
+
 def _lib_candidates() -> List[str]:
     here = os.path.dirname(os.path.abspath(__file__))
     system = platform.system()
     if system == 'Windows':
-        names = ['codecin_native.dll']
+        prefix, ext = 'codecin_native', 'dll'
+        canonical = ['codecin_native.dll']
     elif system == 'Darwin':
-        names = ['libcodecin_native.dylib', 'codecin_native.dylib']
+        prefix, ext = 'libcodecin_native', 'dylib'
+        canonical = ['libcodecin_native.dylib', 'codecin_native.dylib']
     else:
-        names = ['libcodecin_native.so', 'codecin_native.so']
+        prefix, ext = 'libcodecin_native', 'so'
+        canonical = ['libcodecin_native.so', 'codecin_native.so']
+
+    # Release 资产带平台/架构后缀 (如 libcodecin_native-linux-arm64.so)。
+    # 排在通用名之前: 同一个目录里同时存在两种架构的库时, 必须优先选本机的那个,
+    # 否则会拿到"能 dlopen 但跑不了/符号不对"的库。
+    specific = [f'{prefix}-{_os_slug()}-{_arch_slug()}.{ext}']
+    names = specific + canonical
+
     candidates = [os.path.join(here, 'native', n) for n in names]
     candidates += [os.path.join(here, n) for n in names]
     env = os.environ.get('CODECIN_NATIVE_LIB')
@@ -318,6 +350,7 @@ def get_engine(logger=None) -> Optional[NativeEngine]:
         return _LIB_CACHE
 
     engine = None
+    failures = []
     for path in _lib_candidates():
         if not os.path.exists(path):
             continue
@@ -327,10 +360,18 @@ def get_engine(logger=None) -> Optional[NativeEngine]:
             if logger:
                 logger.debug(f"Loaded native library: {path} ({engine.version()})")
             break
-        except OSError as e:
+        except (OSError, AttributeError) as e:
+            # OSError: 架构不符 / 依赖缺失 / 不是动态库
+            # AttributeError: 能加载但缺导出符号或 ABI 版本不符 (例如旁边的旧库)
+            # 两种情况都应继续尝试下一个候选并最终回退纯 Python, 而不是让整个运行炸掉。
+            failures.append((path, e))
             if logger:
                 logger.debug(f"Failed to load native library {path}: {e}")
             engine = None
+
+    if engine is None and failures and logger:
+        path, err = failures[-1]
+        logger.warning(f"原生库不可用, 回退纯 Python 解释执行: {path} ({err})")
 
     _LIB_CACHE = engine
     return engine

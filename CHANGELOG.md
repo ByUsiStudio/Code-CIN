@@ -10,8 +10,24 @@
 以「Python 只做 CLI、Go 是唯一实现」为主线的架构收敛，配套标准库打包修复与 AOT 依赖加固。
 详见 [第二轮更新建议](docs/SUGGESTIONS_NEXT.md)。
 
+### 新增 (Added)
+
+- **原生库新增 ARM64 目标**：Release 现在为 **六种平台组合**构建 c-shared 库 ——
+  linux/amd64、**linux/arm64**（`ubuntu-24.04-arm`）、darwin/amd64、darwin/arm64、
+  windows/amd64、**windows/arm64**（`windows-11-arm`）。
+  资产名带 `平台-架构` 后缀（如 `libcodecin_native-linux-arm64.so`）：
+  此前六个平台产物同名，`release` 汇总时会互相覆盖，只剩最后一个。
+- **产物架构校验**：每个原生库构建后都用 `go version -m` 读出真实的 `GOOS`/`GOARCH`
+  并断言与资产名一致，杜绝把错架构的库以 arm64/x64 的名义发出去。
+- **原生库查找支持架构专属名**：`codecin/native.py: _lib_candidates` 现在按
+  **架构专属名 → 通用名** 的顺序查找，同目录下同时存在两种架构的库时会优先选本机的那个。
+
 ### 变更 (Changed)
 
+- **`get_engine` 不再因原生库 ABI/符号不符而中断运行**：此前只捕获 `OSError`，
+  旁边放一个旧版或架构不符的库会抛 `AttributeError` 并让整个运行崩掉（哪怕
+  `native.py` 承诺过"加载失败自动回退纯 Python"）。现在同时捕获 `AttributeError`，
+  逐候选继续尝试，全部失败时记一条 warning 再回退。
 - **Go 侧不再提供 CLI**：删除 `codecin/native/cmd/codecin/`（独立 Go CLI）、`codecin/native/tmpdump/`
   与仅供 CLI 调用的 `codecin/native/aot/build.go`。语言实现仍在 Go 侧
   （CIN 编译器、字节码 VM、CROM、AOT stub），但**只以库的形式存在**；
