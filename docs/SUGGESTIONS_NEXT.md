@@ -12,7 +12,13 @@
 
 ## ⚠️ 两点必读说明
 
-**1. 本机沙箱限制（影响 3 个测试用例，不是仓库缺陷）。** 本机沙箱用受限令牌运行子进程，
+**1. 审查期间仓库 HEAD 变动过。** 起点 `017ccb8`（版本 5.4.2）→ 审查中 `git pull` 到
+`5424540`（改 `pyproject.toml` 的 `packages.find`、新增 `setup.py`、版本升 5.4.3）→
+收尾时本地提交 `c8c5af6`（删除 `install.ps1` / `install.sh` / `codecin.spec` /
+`codecin_linux.spec`，新增 `build.bat` / `build.sh`）。因此 §5 的打包与安装结论
+以 **`c8c5af6`** 为准；其余各节在两个版本上都成立。
+
+**2. 本机沙箱限制（影响 3 个测试用例，不是仓库缺陷）。** 本机沙箱用受限令牌运行子进程，
 `tempfile.mkdtemp()` 与 `os.chmod(dir, 0o700)` 会造出当前用户也访问不了的目录，
 导致 `go build` 写 GOCACHE/临时目录被拒。因此：
 - `tests/test_aot.py` 的 3 个用例失败（`CODECIN_AOT_TESTS=1` 的交叉编译用例本就跳过）；
