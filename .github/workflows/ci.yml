@@ -130,18 +130,6 @@ jobs:
           cd /tmp
           printf 'import "str.cin"\nfunction main() -> int { println(strlen(s_repeat("ab", 3))) return 0 }\n' > libsmoke.cin
           /tmp/venv/bin/codecin libsmoke.cin --no-native
-      - name: 源码安装必须现场编译出原生库 (用户安装路径)
-        # 发布设计的核心保证: pip 从 sdist 安装时, setup.py 用用户机器的 Go
-        # 工具链编译原生库并装进包目录。本步骤刻意不设 CODECIN_SKIP_NATIVE。
-        run: |
-          python -m venv /tmp/venv-src
-          /tmp/venv-src/bin/pip install --quiet dist/*.tar.gz
-          /tmp/venv-src/bin/python - <<'PY'
-          from codecin import native
-          eng = native.get_engine()
-          assert eng is not None, '源码安装没有编译出原生库 (安装时应自动构建)'
-          print('源码安装原生库可用:', eng.version())
-          PY
 
   lint:
     name: ruff

@@ -10,6 +10,8 @@ rem 用法: build.bat [twine 附加参数, 例如 -r testpypi]
 setlocal
 cd /d "%~dp0"
 if exist dist rmdir /s /q dist
+rem 打包过程一律不编译原生库, 保证 dist/ 里没有 .so/.dll/.dylib
+set CODECIN_SKIP_NATIVE=1
 python -m build --sdist || exit /b 1
 python -m twine check dist/* || exit /b 1
 python -m twine upload dist/*.tar.gz %*

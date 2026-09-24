@@ -11,6 +11,8 @@
 set -e
 cd "$(dirname "$0")"
 rm -rf dist
+# CODECIN_SKIP_NATIVE: 打包过程一律不编译原生库, 保证 dist/ 里没有 .so/.dll/.dylib
+export CODECIN_SKIP_NATIVE=1
 python -m build --sdist
 python -m twine check dist/*
 python -m twine upload dist/*.tar.gz "$@"
