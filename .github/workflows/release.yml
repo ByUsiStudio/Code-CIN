@@ -71,7 +71,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # 资产名必须带 平台-架构 后缀: 否则六个平台的库文件名相同,
+          # 资产名必须带 平台-架构 后缀: 否则各平台的库文件名相同,
           # release 汇总时会互相覆盖 (只剩最后一个)。
           # 命名与 codecin/native.py::_lib_candidates 的查找顺序一致。
           - os: ubuntu-latest
@@ -169,51 +169,31 @@ jobs:
           go-version-file: codecin/native/go.mod
           cache: true
       - run: python -m pip install --upgrade build twine
-      - run: python -m build
+      - name: Build sdist + 纯 Python wheel
+        env:
+          CODECIN_SKIP_NATIVE: "1"
+        run: python -m build
       - run: python -m twine check dist/*
-      - name: 断言 wheel/sdist 内含 codecin/lib/*.cin
+      - name: 断言 sdist/wheel 含内置标准库, 且都不含预编译原生库
         run: |
           python - <<'PY'
           import glob, tarfile, zipfile
           whl = glob.glob('dist/*.whl')[0]
-          libs = [n for n in zipfile.ZipFile(whl).namelist()
+          names = zipfile.ZipFile(whl).namelist()
+          libs = [n for n in names
                   if n.startswith('codecin/lib/') and n.endswith('.cin')]
           assert len(libs) >= 19, f'{whl} 缺少内置标准库: {libs}'
           print(f'{whl}: {len(libs)} 个内置标准库模块')
+          bins = [n for n in names if n.endswith(('.so', '.dylib', '.dll'))]
+          assert not bins, f'{whl} 不应携带预编译原生库: {bins}'
           sdist = glob.glob('dist/*.tar.gz')[0]
-          names = tarfile.open(sdist).getnames()
-          slibs = [n for n in names if '/codecin/lib/' in n and n.endswith('.cin')]
+          snames = tarfile.open(sdist).getnames()
+          slibs = [n for n in snames
+                   if '/codecin/lib/' in n and n.endswith('.cin')]
           assert len(slibs) >= 19, f'{sdist} 缺少内置标准库'
-          print(f'{sdist}: {len(slibs)} 个内置标准库模块')
-          PY
-      - name: 记录并校验 wheel 内嵌原生库的架构
-        # wheel 的 tag 是 py3-none-any, 打包时会把本 runner 的原生库一并放进去。
-        # 这里显式打印它的架构并断言与本 runner 一致, 避免哪天静默变成另一种架构。
-        # 其他平台的用户请从 Release 下载对应架构的原生库。
-        run: |
-          python - <<'PY'
-          import glob, os, subprocess, zipfile
-          whl = glob.glob('dist/*.whl')[0]
-          z = zipfile.ZipFile(whl)
-          libs = [n for n in z.namelist()
-                  if n.endswith(('.so', '.dylib', '.dll'))]
-          if not libs:
-              print(f'{whl} 未内嵌原生库 (纯 Python wheel)')
-              raise SystemExit(0)
-          runner = subprocess.run(['go', 'env', 'GOOS', 'GOARCH'],
-                                  capture_output=True, text=True).stdout.split()
-          want = {f'GOOS={runner[0]}', f'GOARCH={runner[1]}'}
-          out = '/tmp/whllib'
-          for name in libs:
-              z.extract(name, out)
-              info = subprocess.run(['go', 'version', '-m', os.path.join(out, name)],
-                                    capture_output=True, text=True).stdout
-              got = {line.strip().split()[-1]
-                     for line in info.splitlines()
-                     if line.strip().startswith(('GOOS=', 'GOARCH='))}
-              print(f'{name}: {sorted(got)}  (runner: {sorted(want)})')
-              assert want <= got, f'{name} 的架构 {got} 与本 runner {want} 不符'
-          print('wheel 内嵌原生库架构与本 runner 一致')
+          sbins = [n for n in snames if n.endswith(('.so', '.dylib', '.dll'))]
+          assert not sbins, f'{sdist} 不应携带预编译原生库: {sbins}'
+          print(f'{sdist}: {len(slibs)} 个内置标准库模块, 无预编译库')
           PY
       - name: wheel 可安装可导入, 且内置标准库可用
         run: |
@@ -223,6 +203,16 @@ jobs:
           cd /tmp
           printf 'import "str.cin"\nfunction main() -> int { println(strlen(s_repeat("ab", 3))) return 0 }\n' > libsmoke.cin
           /tmp/venv/bin/codecin libsmoke.cin --no-native
+      - name: 源码安装必须现场编译出原生库 (用户安装路径)
+        run: |
+          python -m venv /tmp/venv-src
+          /tmp/venv-src/bin/pip install --quiet dist/*.tar.gz
+          /tmp/venv-src/bin/python - <<'PY'
+          from codecin import native
+          eng = native.get_engine()
+          assert eng is not None, '源码安装没有编译出原生库 (安装时应自动构建)'
+          print('源码安装原生库可用:', eng.version())
+          PY
       - uses: actions/upload-artifact@v4
         with:
           name: python-dist

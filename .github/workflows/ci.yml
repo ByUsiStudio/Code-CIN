@@ -96,22 +96,32 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install build
-      - name: Build sdist + wheel
+      - name: Build sdist + 纯 Python wheel
+        # PyPI 包不携带预编译原生库 (用户安装时用 Go 现场编译), 因此发布物用
+        # CODECIN_SKIP_NATIVE=1 构建。
+        env:
+          CODECIN_SKIP_NATIVE: "1"
         run: python -m build
-      - name: 断言 wheel/sdist 内含 codecin/lib/*.cin
+      - name: 断言含内置标准库, 且不含预编译原生库
         run: |
           python - <<'PY'
           import glob, tarfile, zipfile
           whl = glob.glob('dist/*.whl')[0]
-          libs = [n for n in zipfile.ZipFile(whl).namelist()
+          names = zipfile.ZipFile(whl).namelist()
+          libs = [n for n in names
                   if n.startswith('codecin/lib/') and n.endswith('.cin')]
           assert len(libs) >= 19, f'{whl} 缺少内置标准库: {libs}'
-          print(f'{whl}: {len(libs)} 个内置标准库模块')
+          bins = [n for n in names if n.endswith(('.so', '.dylib', '.dll'))]
+          assert not bins, f'{whl} 不应携带预编译原生库: {bins}'
+          print(f'{whl}: {len(libs)} 个内置标准库模块, 无预编译库')
           sdist = glob.glob('dist/*.tar.gz')[0]
-          names = tarfile.open(sdist).getnames()
-          slibs = [n for n in names if '/codecin/lib/' in n and n.endswith('.cin')]
+          snames = tarfile.open(sdist).getnames()
+          slibs = [n for n in snames
+                   if '/codecin/lib/' in n and n.endswith('.cin')]
           assert len(slibs) >= 19, f'{sdist} 缺少内置标准库'
-          print(f'{sdist}: {len(slibs)} 个内置标准库模块')
+          sbins = [n for n in snames if n.endswith(('.so', '.dylib', '.dll'))]
+          assert not sbins, f'{sdist} 不应携带预编译原生库: {sbins}'
+          print(f'{sdist}: {len(slibs)} 个内置标准库模块, 无预编译库')
           PY
       - name: 装 wheel 后跑一个使用内置标准库的程序
         run: |
@@ -120,6 +130,18 @@ jobs:
           cd /tmp
           printf 'import "str.cin"\nfunction main() -> int { println(strlen(s_repeat("ab", 3))) return 0 }\n' > libsmoke.cin
           /tmp/venv/bin/codecin libsmoke.cin --no-native
+      - name: 源码安装必须现场编译出原生库 (用户安装路径)
+        # 发布设计的核心保证: pip 从 sdist 安装时, setup.py 用用户机器的 Go
+        # 工具链编译原生库并装进包目录。本步骤刻意不设 CODECIN_SKIP_NATIVE。
+        run: |
+          python -m venv /tmp/venv-src
+          /tmp/venv-src/bin/pip install --quiet dist/*.tar.gz
+          /tmp/venv-src/bin/python - <<'PY'
+          from codecin import native
+          eng = native.get_engine()
+          assert eng is not None, '源码安装没有编译出原生库 (安装时应自动构建)'
+          print('源码安装原生库可用:', eng.version())
+          PY
 
   lint:
     name: ruff

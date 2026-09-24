@@ -41,8 +41,12 @@ namespaces = true
 version = { attr = "codecin.__version__" }
 
 [tool.setuptools.package-data]
-# 内置标准库 (codecin/lib/*.cin) 必须随包分发, 否则安装后 `import "math.cin"` 会失败
-"codecin"        = ["*.dll", "*.so", "*.dylib", "py.typed", "lib/*.cin", "lib/**/*.cin"]
+# 内置标准库 (codecin/lib/*.cin) 必须随包分发, 否则安装后 `import "math.cin"` 会失败。
+#
+# 原生库 (*.dll / *.so / *.dylib) **刻意不打包**: 它是构建产物, 由用户安装时的
+# setup.py 在本地编译 (见 setup.py: BuildPyWithNative), 预编译好的库只作为
+# Release 资产按平台/架构分发。
+"codecin"        = ["py.typed", "lib/*.cin", "lib/**/*.cin"]
 "codecin.lib"    = ["*.cin"]
 "codecin.native" = ["**/*"]
 

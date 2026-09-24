@@ -12,11 +12,17 @@
 
 ### 新增 (Added)
 
-- **原生库新增 ARM64 目标**：Release 现在为 **六种平台组合**构建 c-shared 库 ——
+- **原生库改为"安装时编译"**：PyPI 包**不再携带任何预编译库**（`package-data` 与
+  `MANIFEST.in` 都移除了 `*.dll/*.so/*.dylib`）。`setup.py: BuildPyWithNative`
+  在构建时调用 `codecin/native/build.*` 用**用户机器的 Go 工具链**现场编译，
+  并把产物单独拷进安装目录 —— 所以 `pip install codecin`（sdist）装完即带原生加速。
+  `build.sh`/`build.bat` 相应改为**只发布 sdist**：若同时发布 wheel，pip 会优先装
+  wheel 而不执行构建，用户就拿不到原生加速。没有 Go 的用户可从 Release 下载预编译库。
+- **原生库新增 ARM64 目标**：Release 现在为 **五种平台组合**构建 c-shared 库 ——
   linux/amd64、**linux/arm64**（`ubuntu-24.04-arm`）、darwin/amd64、darwin/arm64、
-  windows/amd64、**windows/arm64**（`windows-11-arm`）。
+  windows/amd64。
   资产名带 `平台-架构` 后缀（如 `libcodecin_native-linux-arm64.so`）：
-  此前六个平台产物同名，`release` 汇总时会互相覆盖，只剩最后一个。
+  此前各平台产物同名，`release` 汇总时会互相覆盖，只剩最后一个。
 - **产物架构校验**：每个原生库构建后都用 `go version -m` 读出真实的 `GOOS`/`GOARCH`
   并断言与资产名一致，杜绝把错架构的库以 arm64/x64 的名义发出去。
 - **原生库查找支持架构专属名**：`codecin/native.py: _lib_candidates` 现在按

@@ -337,34 +337,42 @@ codecin build basic.cin -o basic --target windows/amd64              # 全 Go �
 > AOT 是**面向源码检出**的构建期功能: 它需要 Go 工具链与 `codecin/native` 的
 > Go 源码 (发行 wheel / 独立 CLI 里不含这些源码), 因此不适用于已安装的二进制。
 
-### 6.2 分发包 (pip wheel / sdist)
+### 6.2 分发包 (sdist 为主)
 
 发行路径统一为 **pip 包**, 不再维护 PyInstaller spec 或独立安装脚本
 (5.5.0 起 `codecin.spec` / `codecin_linux.spec` / `install.sh` / `install.ps1`
 / `build_win.bat` 已删除):
 
 ```bash
-python -m build            # 产出 dist/*.whl 与 dist/*.tar.gz
-python -m twine check dist/*
+sh build.sh                # = python -m build --sdist + twine check/upload
+python -m build            # 需要 wheel 时手动构建 (默认会带上本机原生库)
 ```
 
 要点:
 
-- `codecin/lib/*.cin` (内置标准库) 通过 `pyproject.toml` 的
-  `[tool.setuptools.package-data]` 与根目录 `MANIFEST.in` **同时进入 wheel 与 sdist**;
-  缺了它们安装后任何 `import "math.cin"` 都会失败。CI 的 `dist` 作业会断言
-  wheel/sdist 内至少含 19 个 `.cin` 并实际安装后跑一个使用标准库的程序。
-- 原生库 (`.dll/.so/.dylib`) 由 `setup.py` 的 `build_py` 钩子在构建时调用
-  `codecin/native/build.ps1|build.sh` 生成; 没有 Go 工具链时设置
-  `CODECIN_SKIP_NATIVE=1` 跳过 (产物仍可用, 只是没有原生加速)。
-- 冻结/打包产物下的原生库搜索路径见 `codecin/native.py: _lib_candidates`
-  (包目录、exe 目录与 `_MEIPASS`)。
+- **原生库不进包**。`.dll/.so/.dylib` 是构建产物: `pyproject.toml` 的
+  `package-data` 与 `MANIFEST.in` 都刻意不含它们。库由 `setup.py` 的
+  `build_py` 钩子 (`BuildPyWithNative`) 在构建时调用
+  `codecin/native/build.ps1|build.sh` 编译, 并单独拷进安装目录 ——
+  所以 **`pip install codecin`(从 sdist) 会在用户机器上现场编译出原生库**。
+- `build.sh` / `build.bat` **只发布 sdist**。若把 wheel 也发到 PyPI, pip 会优先装
+  wheel 而不执行上面那条构建, 用户就拿不到原生加速 —— 要发 wheel 就得自己确认
+  清楚它的目标平台。
+- `CODECIN_SKIP_NATIVE=1` 可跳过本地编译 (产物仍可用, 只是回退纯 Python 解释执行);
+  CI/Release 构建发布物时都会设这个变量, 以保证 `dist/` 里没有任何平台二进制。
+- `codecin/lib/*.cin` (内置标准库) 通过 `package-data` 与 `MANIFEST.in`
+  **同时进入 wheel 与 sdist**; 缺了它们安装后任何 `import "math.cin"` 都会失败。
+  CI 的 `dist` 作业会断言 wheel/sdist 内至少含 19 个 `.cin`, 断言**不含**预编译库,
+  并实际从 sdist 安装后验证原生库确实被编译出来。
+- 原生库搜索路径见 `codecin/native.py: _lib_candidates`
+  (包目录、`codecin/native/`、exe 目录与 `_MEIPASS`)。
 - `--debug`/`--step` 的 rich 输出依赖终端。
 
-### 6.3 原生库资产 (x64 与 arm64)
+### 6.3 预编译原生库资产 (x64 与 arm64)
 
-Release 会为**六种平台组合**构建 c-shared 原生库, 资产名带 `平台-架构` 后缀
-(六个平台的原生库文件名必须互不相同, 否则汇总时会互相覆盖):
+不想在安装时编译 (或机器上没有 Go/cgo) 的用户, 可以直接从 Release 拿预编译库。
+Release 为**五种平台组合**构建 c-shared 库, 资产名带 `平台-架构` 后缀
+(各平台的原生库文件名必须互不相同, 否则汇总时会互相覆盖):
 
 | 资产 | 目标 | Runner |
 |------|------|--------|
@@ -373,17 +381,18 @@ Release 会为**六种平台组合**构建 c-shared 原生库, 资产名带 `平
 | `libcodecin_native-macos-x64.dylib` | darwin/amd64 | `macos-15-intel` |
 | `libcodecin_native-macos-arm64.dylib` | darwin/arm64 | `macos-15` |
 | `codecin_native-windows-x64.dll` | windows/amd64 | `windows-latest` |
-| `codecin_native-windows-arm64.dll` | windows/arm64 | `windows-11-arm` |
+
+> `windows/arm64` 暂未纳入: `windows-11-arm` 仍是 public preview, 需要时在
+> `.github/workflows/release.yml` 的 `native` 矩阵里加回一条
+> (`os: windows-11-arm` / `asset: codecin_native-windows-arm64.dll`) 即可,
+> 查找侧 (`native.py`) 已经支持该命名。
 
 构建后会用 `go version -m <库>` 读出真实的 `GOOS`/`GOARCH` 并**断言与资产名一致**
 —— 防止把错架构的库当成 arm64/x64 发出去。
 
-**ARM64 用户怎么用**: PyPI 上的 wheel 是 `py3-none-any`, 里面只带构建机的原生库
-(当前为 linux-x64), 所以 arm64 机器装完会自动回退纯 Python 解释执行。想要原生加速,
-从 Release 下载对应资产放进包目录即可:
+**用法** (任一平台): 装完包后把对应资产丢进包目录即可, 例如 Linux arm64:
 
 ```bash
-# Linux arm64 示例
 pip install codecin
 cd "$(python -c 'import codecin,os;print(os.path.dirname(codecin.__file__))')"
 curl -L -O https://github.com/ByUsiStudio/Code-CIN/releases/latest/download/libcodecin_native-linux-arm64.so

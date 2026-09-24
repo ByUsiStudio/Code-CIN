@@ -71,6 +71,16 @@ class BuildPyWithNative(build_py):
     def run(self):
         build_native_lib()
         super().run()
+        self._install_built_libs()
+
+    def _install_built_libs(self):
+        target = Path(self.build_lib) / "codecin"
+        for name in LIB_NAMES:
+            src = PKG / name
+            if src.exists():
+                target.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(src, target / name)
+                print(f"[codecin] 原生库已安装到: {target / name}")
 
 
 setup(cmdclass={"build_py": BuildPyWithNative})

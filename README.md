@@ -379,6 +379,12 @@ pip install codecin          # 内置标准库 (codecin/lib/*.cin) 随包分发
 codecin --version
 ```
 
+> 安装时会用**本机的 Go 工具链现场编译原生加速库** (没有 Go 也能装, 只是回退
+> 纯 Python 解释执行; 用 `CODECIN_SKIP_NATIVE=1 pip install codecin` 可显式跳过)。
+> 不想本地编译的话, 也可以直接从
+> [Release](https://github.com/ByUsiStudio/Code-CIN/releases) 下载对应平台/架构的
+> 预编译原生库放进包目录, 详见 [构建文档 · 6.3](docs/BUILDING.md#63-预编译原生库资产-x64-与-arm64)。
+
 **手动（源码树）**
 
 1. 克隆项目:
