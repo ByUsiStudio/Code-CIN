@@ -22,18 +22,13 @@ __pycache__/
 # ==================== 构建产物 ====================
 /dist/
 /build/
-# Go CLI 二进制 (由 install 脚本 / go build 生成)
-/codecin/codecin
-/codecin/codecin.exe
-/codecin/native/codecin
-/codecin/native/codecin.exe
-# c-shared 原生库与生成的头文件 (由 install 脚本 / build.ps1 生成, 不入库)
+# 注: Go 侧不提供 CLI, 不存在 codecin/codecin.exe 之类的命令行产物。
+# c-shared 原生库与生成的头文件 (由 build.ps1 / build.sh 生成, 不入库)
 /codecin/*.dll
 /codecin/*.so
 /codecin/*.dylib
 /codecin/*.h
 /codecin/native/*.h
-/codecin/native/tmpdump/
 
 # ==================== 运行产物 / 临时文件 ====================
 /*.crom

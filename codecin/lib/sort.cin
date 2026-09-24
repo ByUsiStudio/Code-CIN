@@ -1,5 +1,5 @@
 // Code CIN 官方标准库: 排序与查找 (sort)
-// 用法: import "lib/sort.cin"
+// 用法: import "sort.cin"
 
 // 是否已升序有序
 function sort_is_sorted(int[] a, int n) -> int {

@@ -1,5 +1,5 @@
 // Code CIN 官方标准库: 方阵运算 (matrix)
-// 用法: import "lib/matrix.cin"
+// 用法: import "matrix.cin"
 //
 // 矩阵以**一维数组**行主序存放 (m[i*n + j] 表示第 i 行第 j 列),
 // 因此可直接用 CIN 的 int[] 与固定数组, 无需动态内存。

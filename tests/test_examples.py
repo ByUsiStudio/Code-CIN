@@ -9,13 +9,13 @@ from tests.helpers import asm_program, run_cin_file
 EXAMPLES = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                         'examples')
 
-# 每个示例期望的返回值 (X0 或指定寄存器)
+  每个示例期望的返回值 (X0 或指定寄存器)
 CIN_EXPECTED = {
-    'control_flow.cin': 24,     # sum=20(偶数至20 break) + d=4
-    'literals_types.cin': 77,   # 31+13+15+6+6+4+2
-    'modules_demo.cin': 12,     # import lib/math.cin + lib/str.cin
-    'bitwise_builtins.cin': 256,  # 位运算/整除/下标/新内建各项之和
-    'stdlib_demo.cin': 0,       # 官方标准库断言全部通过 (t_report 返回失败数)
+    'control_flow.cin': 24,       sum=20(偶数至20 break) + d=4
+    'literals_types.cin': 77,     31+13+15+6+6+4+2
+    'modules_demo.cin': 12,       import lib/math.cin + lib/str.cin
+    'bitwise_builtins.cin': 256,    位运算/整除/下标/新内建各项之和
+    'stdlib_demo.cin': 0,         官方标准库断言全部通过 (t_report 返回失败数)
 }
 ASM_EXPECTED = {
     'asm_constants.asm': ('x0', 63),
@@ -25,7 +25,7 @@ ASM_EXPECTED = {
 @pytest.mark.parametrize('name,expected', sorted(CIN_EXPECTED.items()))
 def test_example_cin(name, expected):
     path = os.path.join(EXAMPLES, name)
-    cpu = run_cin_file(path)   # 文件级运行: 支持 import 展开
+    cpu = run_cin_file(path)     文件级运行: 支持 import 展开
     assert cpu.regs.read(0) == expected, f'{name}: X0={cpu.regs.read(0)}'
 
 

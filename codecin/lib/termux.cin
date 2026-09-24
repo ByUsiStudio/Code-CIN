@@ -1,5 +1,5 @@
 // Code CIN 官方标准库: Termux API 便捷封装 (termux)
-// 用法: import "lib/termux.cin"
+// 用法: import "termux.cin"
 // 说明: 需 termux-api 命令 + Termux:API 应用; 非 Termux 环境下调用返回 -1/空串。
 import "json.cin"
 

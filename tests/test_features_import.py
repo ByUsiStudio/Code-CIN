@@ -85,7 +85,7 @@ def test_duplicate_import_is_idempotent(workdir):
 
 
 def test_import_stdlib_math_and_str(workdir):
-    src = ('import "lib/math.cin"\nimport "lib/str.cin"\n'
+    src = ('import "math.cin"\nimport "str.cin"\n'
            'function main() -> int {\n'
            '    int a = f_floor(3.9)\n'
            '    int b = f_ceil(1.2)\n'

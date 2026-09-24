@@ -414,24 +414,52 @@ def tokenize(source: str,
     return filtered
 
 
-# ==================== import 预处理 (B2) ====================
-# import "path.cin" 仅在文件顶部/列首识别; 相对源文件目录或仓库 lib/ 目录解析;
+# ==================== import 预处理 (B3) ====================
+# import "path.cin" 仅在文件顶部/列首识别。解析规则:
+#   * "./x.cin" / "../x.cin"  -> 相对当前 .cin 文件所在目录;
+#   * 其余形式                -> codecin 内置标准库 codecin/lib/。
 # 同一文件每个编译仅包含一次, 循环引用报错。
 
 _IMPORT_RE = re.compile(r'^import\s+["\']([^"\']+)["\']\s*;?\s*$')
 
-_CODECIN_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_CODECIN_ROOT = os.path.dirname(os.path.abspath(__file__))
+
+#: 内置标准库目录 (随包分发: codecin/lib/*.cin)
+_LIB_DIR = os.path.join(_CODECIN_ROOT, 'lib')
+
+#: 相对引用的前缀: 必须以 "." 开头
+_RELATIVE_PREFIXES = ('./', '../', '.\\', '..\\')
 
 
-def _resolve_import(name: str, source_dir: str, lib_dir: str) -> str:
-    candidates = [os.path.join(source_dir, name),
-                  os.path.join(lib_dir, name) if lib_dir else '',
-                  os.path.join(_CODECIN_ROOT, name)]
-    for cand in candidates:
-        if cand and os.path.isfile(cand):
+def _is_relative_import(name: str) -> bool:
+    """``import "./x.cin"`` / ``import "../x.cin"`` 视为相对引用。"""
+    return name.startswith(_RELATIVE_PREFIXES)
+
+
+def _resolve_import(name: str, source_dir: str) -> str:
+    """解析 import 目标路径。
+
+    规则 (B3):
+      * ``import "./x.cin"`` / ``import "../x.cin"`` —— 相对**当前 .cin 文件**所在目录;
+      * 其余任何形式 (``import "x.cin"``、``import "lib/x.cin"``) —— 直接解析到
+        **codecin 内置标准库** ``codecin/lib/`` (``lib/`` 前缀保留为兼容写法)。
+    """
+    if _is_relative_import(name):
+        cand = os.path.normpath(os.path.join(source_dir, name))
+        if os.path.isfile(cand):
             return cand
-    raise CompilerError(f"Import file not found: {name!r} (searched "
-                        f"{source_dir}, {lib_dir}, {_CODECIN_ROOT})")
+        raise CompilerError(
+            f"Import file not found: {name!r} (相对引用, 已查找 {cand})")
+
+    candidates = [os.path.join(_LIB_DIR, name)]
+    if name.startswith('lib/'):
+        candidates.append(os.path.join(_LIB_DIR, name[len('lib/'):]))
+    for cand in candidates:
+        if os.path.isfile(cand):
+            return cand
+    raise CompilerError(
+        f"Import file not found: {name!r} (内置标准库, 已查找 "
+        f"{os.path.join(_LIB_DIR, name)})")
 
 
 def _collect_module_lines(path: str, loaded: set, active: set,
@@ -453,9 +481,7 @@ def _collect_module_lines(path: str, loaded: set, active: set,
     for line in lines:
         m = _IMPORT_RE.match(line)
         if m:
-            target = _resolve_import(
-                m.group(1), os.path.dirname(real),
-                os.path.join(_CODECIN_ROOT, 'lib'))
+            target = _resolve_import(m.group(1), os.path.dirname(real))
             _collect_module_lines(target, loaded, active, out)
             continue
         out.append((real, line))

@@ -1,7 +1,7 @@
 // Code CIN 官方标准库: 哈希 (hash)
-// 用法: import "lib/hash.cin"
+// 用法: import "hash.cin"
 //
-// 全部为 64 位整数运算 (自然溢出即取模 2^64), 与 lib/rand.cin 的
+// 全部为 64 位整数运算 (自然溢出即取模 2^64),   lib/rand.cin 的
 // 随机数配合可做简易哈希表 / 布隆过滤器的散列函数。
 
 // djb2: h = h*33 + c
