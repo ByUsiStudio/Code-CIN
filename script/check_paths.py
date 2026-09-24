@@ -53,7 +53,7 @@ def main(argv):
                 results[label] = run(path, extra)
             except subprocess.TimeoutExpired:
                 results[label] = (None, b'<timeout>')
-        base_label, base = PATHS[0][0], results[PATHS[0][0]]
+        base = results[PATHS[0][0]]
         mismatched = [lbl for lbl, _ in PATHS if results[lbl] != base]
         if mismatched:
             failed += 1
