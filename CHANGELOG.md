@@ -5,6 +5,49 @@
 
 ---
 
+## [5.5.0] - 2026-09-24
+
+以「Python 只做 CLI、Go 是唯一实现」为主线的架构收敛，配套标准库打包修复与 AOT 依赖加固。
+详见 [第二轮更新建议](docs/SUGGESTIONS_NEXT.md)。
+
+### 变更 (Changed)
+
+- **Go 侧不再提供 CLI**：删除 `codecin/native/cmd/codecin/`（独立 Go CLI）、`codecin/native/tmpdump/`
+  与仅供 CLI 调用的 `codecin/native/aot/build.go`。语言实现仍在 Go 侧
+  （CIN 编译器、字节码 VM、CROM、AOT stub），但**只以库的形式存在**；
+  CI 新增门禁断言 `codecin/native/` 下不存在 `package main`。
+- **唯一 CLI 入口是 Python**：`python cpu.py` / 安装后的 `codecin` console script。
+- **内置标准库迁入包内**：`lib/` → `codecin/lib/`，并通过
+  `[tool.setuptools.package-data]` 与新增的 `MANIFEST.in` 进入 wheel/sdist —— 修复
+  「`pip install codecin` 之后所有 `import "lib/*.cin"` 直接编译失败」的问题。
+- **CIN import 解析规则 (B3)**：
+  - `import "./x.cin"` / `import "../x.cin"` —— 相对**当前 .cin 文件**所在目录；
+  - 其余任何形式（`import "x.cin"`、`import "lib/x.cin"`）—— 直接解析到
+    **codecin 内置标准库** `codecin/lib/`（`lib/` 前缀保留为兼容写法）。
+  仓库内示例与测试已统一为裸名字形式。
+- **AOT 依赖检查与嵌入**：`--build-exe` 现在会先解析 import 闭包做依赖完整性检查
+  （缺失/循环引用报 `AotError` 而不是等到 `go build` 失败），把依赖清单打印出来，
+  并在编译期把依赖库全部展开嵌入产物；数据段越界不再静默丢弃，而是报错并提示
+  `--mem-size`。Windows 目标未带 `.exe` 的输出路径会自动补上后缀。
+- **发布与 CI**：移除 `release.yml` 的 Go CLI 构建矩阵；原生库资产补上架构维度
+  （macOS x64/arm64）并使用与本地一致的静态链接参数；`workflow_dispatch` 现在
+  会 checkout 输入 tag；新增 `dist` 作业断言 wheel/sdist 内含 19 个内置标准库模块
+  并实际安装后跑一个使用标准库的程序；CI 补 `timeout-minutes` 与 `permissions`，
+  覆盖率合并为一次运行并设 `--cov-fail-under=70`。
+- **移除旧的安装/打包脚本**：`install.sh` / `install.ps1` / `codecin.spec` /
+  `codecin_linux.spec` / `build_win.bat` 已删除，相关文档同步更新为 pip 安装路径。
+
+### 修复 (Fixed)
+
+- `python cpu.py --help` 的首行版本号长期停留在 `Code CIN v5.3`，现直接取
+  `codecin.__version__`（此前是全仓唯一残留的版本串）。
+- `--build-exe` 在程序文件不存在时抛裸 `FileNotFoundError` traceback，现在与普通路径
+  一样给出 `Build Error` 面板。
+- `--build-exe` 传给 `build_program` 的显式输出路径在 Windows 上不再产生无法执行的
+  无扩展名文件。
+
+---
+
 ## [5.4.2] - 2026-09-13
 
 以「消除静默错误 + 工程可信度」为主线的一次修复与加固，详见
