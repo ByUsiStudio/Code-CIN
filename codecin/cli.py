@@ -9,10 +9,11 @@ import os
 import sys
 from typing import List, Optional
 
+from . import __version__
 from .config import Config
 from .console import Colors, Console, Panel
 
-HELP_INTRO = f"""{Colors.colorize('Code CIN v5.3', Colors.CYAN, True)}
+HELP_INTRO = f"""{Colors.colorize(f'Code CIN v{__version__}', Colors.CYAN, True)}
 
 {Colors.colorize('Usage:', Colors.YELLOW)}
   python cpu.py <program.[cin|pl|asm|bin]> [options]

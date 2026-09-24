@@ -12,7 +12,7 @@
 
 Code CIN 是一门简洁的类 C 高级语言及其跨平台运行时（VM）。它从 CIN 源码出发，编译为 UCPU 字节码后由 **Go 原生 VM**（默认）/ JIT / Python 解释器三路径执行，行为一致。除完整语言工具链外，还内置 **2D 绘图画布（导出 PNG）** 与 **联网音频播放** 等宿主能力。
 
-正在从 Python 优先**逐步切换为 Go 优先**：Go 原生库已接管字节码 VM、CROM 与 CIN 编译器（`codecin/native/compiler`），并提供独立的 Go CLI（`codecin`）；Python 保留为 CLI 壳与回退路径。支持 CIN/PL/ASM 三语言、ARM64 与 RISC-V 指令集扩展、JIT 编译、缓存系统、性能分析与调试。
+正在从 Python 优先**逐步切换为 Go 优先**：Go 是语言实现的核心（`codecin/native/` 下的 CIN 编译器、字节码 VM、CROM），**Go 侧不提供任何 CLI 入口**；Python 只作为唯一 CLI 外壳与回退路径。支持 CIN/PL/ASM 三语言、ARM64 与 RISC-V 指令集扩展、JIT 编译、缓存系统、性能分析与调试。
 
 模块化包结构（`codecin/`，Go 侧 `codecin/native/`），全线日志与错误输出基于 **rich**（彩色表格、面板、traceback），`--debug` 模式提供逐指令/寄存器/内存/栈/缓存的超详细追踪。
 
@@ -372,36 +372,35 @@ flowchart TD
 
 ### 快速开始
 
-**方式一：一键安装（推荐）**
+**安装（pip）**
 
 ```bash
-# Linux / macOS / Termux
-bash install.sh
-# Windows (PowerShell)
-powershell -ExecutionPolicy Bypass -File install.ps1
-# Termux 专用（克隆 + 装依赖 + 编译原生库 + 启动器, 不编译 Go CLI）
-bash script/install_termux.sh
+pip install codecin          # 内置标准库 (codecin/lib/*.cin) 随包分发
+codecin --version
 ```
 
-`install.sh` / `install.ps1` 会自动：检测/安装 Go → 编译 Go 原生库与 `codecin` CLI → 安装 Python 依赖 → 生成 `codecin` 启动器。
-`script/install_termux.sh` 只编译 Go 原生库（Termux 上 Go CLI 暂不编译），启动器回退到 `python cpu.py`。
-
-**方式二：手动**
+**手动（源码树）**
 
 1. 克隆项目:
    ```
-   git clone https://github.com/ByUsiStudio/codecin.git
-   cd codecin
+   git clone https://github.com/ByUsiStudio/code-cin.git
+   cd code-cin
    ```
 
-2. 运行（Go CLI 或 Python 入口）:
+2. 编译 Go 原生库 (可选, 缺省时自动回退纯 Python 解释执行):
    ```
-   go run ./codecin/native/cmd/codecin basic.cin   # Go 独立 CLI
-   python cpu.py basic.cin                          # Python 入口 (自动用 Go 原生库)
+   cd codecin/native && ./build.sh        # Windows: .\build.ps1
+   ```
+
+3. 运行:
+   ```
+   python cpu.py basic.cin                          # 唯一 CLI 入口 (自动用 Go 原生库)
+   codecin basic.cin                                # 安装后等价的 console script
    python cpu.py --help
    ```
 
-> 未编译原生库时, Python 入口自动回退纯 Python 解释执行; GUI/联网音频需 Go 原生库 (默认启用)。
+> **Python 只是 CLI 外壳**: 语言实现 (`codecin/native/` 下的 Go 编译器与字节码 VM) 全部在 Go 侧,
+> **Go 侧不提供任何 CLI 入口** (`package main`)。
 
 ### 开发与测试
 
@@ -413,37 +412,35 @@ ruff check codecin cpu.py script tests
 ```
 
 仓库内置 GitHub Actions CI (`.github/workflows/ci.yml`): 多 Python 版本测试、ruff、Go 构建校验,
-以及一个 `integration` 作业会**真实编译 Go CLI 与原生库**后跑全量测试与差分测试 (缺少原生库即红灯)。
+一个 `integration` 作业会**真实编译原生库**后跑全量测试 (带覆盖率门槛),
+以及一个 `dist` 作业断言 wheel/sdist 里确实带有内置标准库。
 完整逐条指令表由 `script/gen_isa_docs.py` 从 `codecin/isa.py` 生成至 [docs/ISA.md](docs/ISA.md)。
 
 ### 执行路径
 
 | 路径 | 启用方式 | 特点 |
 |------|----------|------|
-| Go 独立 CLI | `codecin program.cin` | **全 Go 链路**: Go 版 CIN 编译器 + Go VM, 不依赖 Python |
 | Go 原生 | 默认优先 (需编译库) | Python 编译 + Go VM 整程序一次执行, 速度最快 |
 | JIT | `--jit` | 基本块动态编译, 与 `--debug` 互斥 |
 | 解释执行 | `--no-native` 或回退 | 支持全部 debug/step 功能 |
 
-> Go 版编译器 (`codecin/native/compiler/`) 与 Python 编译器的产物**逐字节一致**:
-> `script/diff_go_python.py` 先用 Go CLI 的 `--dump-bytecode` 比编译出的 UCBC 字节,
-> 再比程序 stdout, 覆盖 `examples/*.cin` 全部 6 个示例 (5.6KB~211KB 字节码)。
-> `basic.cin` 使用 `srand(time())`, 输出依赖时钟, 只做标记位校验, 不参与该比对。
+> 三条路径对同一程序必须给出相同结果, 由 `script/check_paths.py` 与
+> `tests/test_three_paths.py` 覆盖。
 
 ### 编译成独立可执行文件 (AOT)
 
 把 CIN 程序编译成**静态链接的独立可执行文件** —— 产物内嵌字节码与初始内存镜像,
-由内置 Go VM 执行, 运行时**不需要 Python、Go 工具链、libc 或任何动态库**:
+由内置 Go VM 执行, 运行时**不需要 Python、Go 工具链、libc 或任何动态库**。
+构建时会解析 `import` 闭包做依赖完整性检查, 并把**全部依赖库在编译期展开嵌入产物**
+(产物不读取任何 `.cin` 文件):
 
 ```bash
 # 本机平台
-python cpu.py program.cin --build-exe program          # Windows 自动加 .exe
-codecin build program.cin -o program                   # 全 Go 链路
+python cpu.py program.cin --build-exe program          # Windows 自动补 .exe
 
 # 交叉编译 (只需要安装 Go 工具链)
 python cpu.py program.cin --build-exe app-linux --build-target linux/amd64
 python cpu.py program.cin --build-exe app-mac   --build-target darwin/arm64
-codecin build program.cin --target windows/amd64 -o app.exe
 ```
 
 | 目标 | 说明 |
@@ -453,7 +450,7 @@ codecin build program.cin --target windows/amd64 -o app.exe
 | `darwin/amd64` `darwin/arm64` | Mach-O, 静态 |
 
 常见选项: `--build-target OS/ARCH`、`--build-keep-temp` (保留 `go build` 临时目录排错)。
-`import "lib/*.cin"` 在**编译期**展开, 因此产物自带用到的标准库, 运行时不需要 `lib/` 目录。
+`import "math.cin"`（裸名字 = codecin 内置标准库 `codecin/lib/`）在**编译期**展开, 因此产物自带用到的标准库, 运行时不需要任何 `.cin` 文件。
 正常结束退出码 0, 运行期错误打印 stderr 并以 1 退出。
 详见 [开发者编译文档 · AOT](docs/BUILDING.md#aot-编译独立可执行文件)。
 
@@ -745,7 +742,7 @@ xychart-beta
 > `examples/literals_types.cin` (char/short/long/unsigned、0x/0b/0o 与字符字面量、`++/--`、转换内建函数);
 > 汇编器 `.equ`/表达式示例: `examples/asm_constants.asm`。
 >
-> **官方标准库 (`lib/`)**: `math` `str` `array` `sort` `conv` `vec` `rand` `json` `time` `io` `gui` `termux` `test`
+> **官方标准库 (`codecin/lib/`)**: `math` `str` `array` `sort` `conv` `vec` `rand` `json` `time` `io` `gui` `termux` `test`
 > `bits` `stat` `hash` `validate` `matrix` `queue` (共 19 个)
 > —— 示例 `examples/modules_demo.cin`、`examples/stdlib_demo.cin` (断言全部通过)。详见
 > [CIN 编程指南 · 官方标准库清单](docs/CIN_GUIDE.md#官方标准库清单-lib)。

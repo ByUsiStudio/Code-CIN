@@ -10,10 +10,14 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   test:
     name: pytest (py${{ matrix.python-version }})
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -35,10 +39,9 @@ jobs:
         run: python -m pytest
       - name: 检测被 .gitignore 意外吞掉的源码
         run: |
-          # 只列被忽略的"文件"(git ls-files 不列目录), 并排除有意忽略的临时/调试路径。
-          # tmpdump/ 是待删除的调试程序, 暂时豁免 (见 docs/SUGGESTIONS.md §2.4)。
+          # 只列被忽略的"文件"(git ls-files 不列目录), 并排除有意忽略的临时/构建路径。
           leaks=$(git ls-files --others --ignored --exclude-standard -- '*.py' '*.go' '*.cin' '*.asm' \
-            | grep -vE '^(\.tmp|dist/|build/)' | grep -v '/tmpdump/' || true)
+            | grep -vE '^(\.tmp|dist/|build/)' || true)
           if [ -n "$leaks" ]; then
             echo "以下源码/样例被 .gitignore 忽略, 不会被提交:" >&2
             echo "$leaks" >&2
@@ -46,8 +49,9 @@ jobs:
           fi
 
   integration:
-    name: 原生/Go 集成 (真实跑原生路径与差分)
+    name: 原生/Go 集成 (真实跑原生路径)
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -61,9 +65,6 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r requirements-dev.txt
-      - name: Build Go CLI
-        working-directory: codecin/native
-        run: go build -o codecin ./cmd/codecin
       - name: Build native shared library
         working-directory: codecin/native
         run: go build -buildmode=c-shared -o ../libcodecin_native.so .
@@ -71,20 +72,59 @@ jobs:
         run: |
           python -c "from codecin import native; assert native.get_engine() is not None, \
           'native library failed to load'"
-      - name: Run tests (原生与 Go CLI 均已就绪)
-        run: python -m pytest -rs
+      - name: Run tests (原生库已就绪, 带覆盖率门槛)
+        run: |
+          python -m pytest -rs \
+            --cov=codecin --cov-report=term-missing --cov-fail-under=70
         env:
           CODECIN_AOT_TESTS: "1"
-      - name: 覆盖率报告 (门槛待基线确定后再设 --cov-fail-under)
+
+  dist:
+    name: 打包 (wheel/sdist 必须含内置标准库)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: codecin/native/go.mod
+          cache: true
+      - name: Install build tooling
         run: |
-          python -m pip install pytest-cov
-          python -m pytest -q --cov=codecin --cov-report=term-missing
-      - name: Go/Python 编译器差分测试
-        run: python script/diff_go_python.py
+          python -m pip install --upgrade pip
+          python -m pip install build
+      - name: Build sdist + wheel
+        run: python -m build
+      - name: 断言 wheel/sdist 内含 codecin/lib/*.cin
+        run: |
+          python - <<'PY'
+          import glob, tarfile, zipfile
+          whl = glob.glob('dist/*.whl')[0]
+          libs = [n for n in zipfile.ZipFile(whl).namelist()
+                  if n.startswith('codecin/lib/') and n.endswith('.cin')]
+          assert len(libs) >= 19, f'{whl} 缺少内置标准库: {libs}'
+          print(f'{whl}: {len(libs)} 个内置标准库模块')
+          sdist = glob.glob('dist/*.tar.gz')[0]
+          names = tarfile.open(sdist).getnames()
+          slibs = [n for n in names if '/codecin/lib/' in n and n.endswith('.cin')]
+          assert len(slibs) >= 19, f'{sdist} 缺少内置标准库'
+          print(f'{sdist}: {len(slibs)} 个内置标准库模块')
+          PY
+      - name: 装 wheel 后跑一个使用内置标准库的程序
+        run: |
+          python -m venv /tmp/venv
+          /tmp/venv/bin/pip install --quiet dist/*.whl
+          cd /tmp
+          printf 'import "str.cin"\nfunction main() -> int { println(strlen(s_repeat("ab", 3))) return 0 }\n' > libsmoke.cin
+          /tmp/venv/bin/codecin libsmoke.cin --no-native
 
   lint:
     name: ruff
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -96,13 +136,14 @@ jobs:
   native:
     name: Go native (build check)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version-file: codecin/native/go.mod
           cache: true
-      - name: Build all Go packages + CLI
+      - name: Build all Go packages (Go 侧不含 CLI 入口)
         run: go build ./...
         working-directory: codecin/native
       - name: go vet
@@ -120,13 +161,21 @@ jobs:
       - name: go test (含竞态检测)
         run: go test ./... -race -count=1
         working-directory: codecin/native
+      - name: 断言 Go 侧没有 CLI 入口 (main 包)
+        run: |
+          if grep -rl '^package main' --include='*.go' . ; then
+            echo "Go 侧不允许存在 CLI 入口 (package main):" >&2
+            grep -rl '^package main' --include='*.go' . >&2
+            exit 1
+          fi
+        working-directory: codecin/native
       - name: Cross-compile check (linux/darwin/windows, pure-Go)
         run: |
           set -e
           for target in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64; do
             echo "--> $target"
             GOOS="${target%/*}" GOARCH="${target#*/}" CGO_ENABLED=0 \
-              go build ./engine ./ir ./compiler ./cmd/codecin
+              go build ./engine ./ir ./compiler ./aot
           done
         working-directory: codecin/native
       - name: Build c-shared (Linux)

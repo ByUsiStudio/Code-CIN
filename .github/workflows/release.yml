@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: '要发布的 tag (例如 v5.4.2)'
+        description: '要发布的 tag (例如 v5.5.0)'
         required: true
 
 permissions:
@@ -14,14 +14,17 @@ permissions:
 
 jobs:
   version-check:
-    name: 校验 tag 与 codecin.__version__
+    name: 校验 tag / 版本 / CHANGELOG
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: tag 必须等于包版本
+      - name: tag 必须等于包版本, 且 CHANGELOG 必须已记录该版本
         run: |
           TAG="${{ github.event.inputs.tag || github.ref_name }}"
           VER="$(sed -n 's/^__version__ = "\(.*\)"/\1/p' codecin/__init__.py | head -1)"
@@ -34,82 +37,63 @@ jobs:
             echo "::error::tag ($TAG) 与 codecin.__version__ (v$VER) 不一致; 请先同步版本再打 tag" >&2
             exit 1
           fi
+          if ! grep -q "## \[$VER\]" CHANGELOG.md; then
+            echo "::error::CHANGELOG.md 中没有 [$VER] 条目" >&2
+            exit 1
+          fi
 
-  cli:
-    name: Go CLI (${{ matrix.target }})
+  native:
+    name: 原生库 (${{ matrix.slug }})
     needs: version-check
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
         include:
-          - target: linux/amd64
-            slug: linux-amd64
-          - target: linux/arm64
-            slug: linux-arm64
-          - target: darwin/amd64
-            slug: darwin-amd64
-          - target: darwin/arm64
-            slug: darwin-arm64
-          - target: windows/amd64
-            slug: windows-amd64
+          - os: ubuntu-latest
+            slug: linux-x64
+            out: libcodecin_native.so
+            ldflags: '-linkmode external -extldflags -static'
+          - os: macos-13
+            slug: macos-x64
+            out: libcodecin_native.dylib
+            ldflags: ''
+          - os: macos-14
+            slug: macos-arm64
+            out: libcodecin_native.dylib
+            ldflags: ''
+          - os: windows-latest
+            slug: windows-x64
+            out: codecin_native.dll
+            ldflags: ''
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
       - uses: actions/setup-go@v5
         with:
           go-version-file: codecin/native/go.mod
           cache: true
-      - name: Build
+      - name: Build c-shared (静态链接优先, 失败回退动态)
         working-directory: codecin/native
+        shell: bash
         run: |
           set -e
-          GOOS="${TARGET%/*}"
-          GOARCH="${TARGET#*/}"
-          EXT=""
-          [ "$GOOS" = "windows" ] && EXT=".exe"
-          GOOS="$GOOS" GOARCH="$GOARCH" CGO_ENABLED=0 go build -trimpath \
-            -o "../codecin-${GOOS}-${GOARCH}${EXT}" ./cmd/codecin
-        env:
-          TARGET: ${{ matrix.target }}
-      - uses: actions/upload-artifact@v4
-        with:
-          name: cli-${{ matrix.slug }}
-          path: codecin/codecin-*
-          if-no-files-found: error
-
-  native:
-    name: 原生库 (${{ matrix.os }})
-    needs: version-check
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: codecin/native/go.mod
-          cache: true
-      - name: Build c-shared (Linux)
-        if: runner.os == 'Linux'
-        working-directory: codecin/native
-        run: go build -buildmode=c-shared -o ../libcodecin_native.so .
-      - name: Build c-shared (macOS)
-        if: runner.os == 'macOS'
-        working-directory: codecin/native
-        run: go build -buildmode=c-shared -o ../libcodecin_native.dylib .
-      - name: Build c-shared (Windows)
-        if: runner.os == 'Windows'
-        working-directory: codecin/native
-        shell: pwsh
-        run: go build -buildmode=c-shared -o ../codecin_native.dll .
+          OUT="../${{ matrix.out }}"
+          if [ -n "${{ matrix.ldflags }}" ]; then
+            if go build -buildmode=c-shared -ldflags "${{ matrix.ldflags }}" -o "$OUT" . ; then
+              exit 0
+            fi
+            echo "静态链接不可用, 回退动态链接" >&2
+          fi
+          go build -buildmode=c-shared -o "$OUT" .
       - name: 清理 c-shared 头文件
         shell: bash
         run: rm -f codecin/*.h
       - uses: actions/upload-artifact@v4
         with:
-          name: native-${{ matrix.os }}
+          name: native-${{ matrix.slug }}
           path: |
             codecin/*.so
             codecin/*.dylib
@@ -117,22 +101,47 @@ jobs:
           if-no-files-found: error
 
   python-dist:
-    name: sdist / wheel
+    name: sdist / wheel (含内置标准库)
     needs: version-check
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: codecin/native/go.mod
+          cache: true
       - run: python -m pip install --upgrade build twine
       - run: python -m build
       - run: python -m twine check dist/*
-      - name: wheel 可安装可导入 (版本来自 codecin.__version__)
+      - name: 断言 wheel/sdist 内含 codecin/lib/*.cin
         run: |
-          python -m pip install --force-reinstall dist/*.whl
-          python -c "import codecin; print('installed', codecin.__version__)"
-          codecin --version
+          python - <<'PY'
+          import glob, tarfile, zipfile
+          whl = glob.glob('dist/*.whl')[0]
+          libs = [n for n in zipfile.ZipFile(whl).namelist()
+                  if n.startswith('codecin/lib/') and n.endswith('.cin')]
+          assert len(libs) >= 19, f'{whl} 缺少内置标准库: {libs}'
+          print(f'{whl}: {len(libs)} 个内置标准库模块')
+          sdist = glob.glob('dist/*.tar.gz')[0]
+          names = tarfile.open(sdist).getnames()
+          slibs = [n for n in names if '/codecin/lib/' in n and n.endswith('.cin')]
+          assert len(slibs) >= 19, f'{sdist} 缺少内置标准库'
+          print(f'{sdist}: {len(slibs)} 个内置标准库模块')
+          PY
+      - name: wheel 可安装可导入, 且内置标准库可用
+        run: |
+          python -m venv /tmp/venv
+          /tmp/venv/bin/pip install --quiet dist/*.whl
+          /tmp/venv/bin/codecin --version
+          cd /tmp
+          printf 'import "str.cin"\nfunction main() -> int { println(strlen(s_repeat("ab", 3))) return 0 }\n' > libsmoke.cin
+          /tmp/venv/bin/codecin libsmoke.cin --no-native
       - uses: actions/upload-artifact@v4
         with:
           name: python-dist
@@ -140,17 +149,20 @@ jobs:
 
   release:
     name: 发布 Release
-    needs: [cli, native, python-dist]
+    needs: [native, python-dist]
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
       - name: 汇总资产
         run: |
           mkdir -p release-assets
-          find artifacts -type f \( -name 'codecin-*' -o -name '*.so' -o -name '*.dylib' \
+          find artifacts -type f \( -name '*.so' -o -name '*.dylib' \
             -o -name '*.dll' -o -name '*.whl' -o -name '*.tar.gz' \) \
             -exec cp {} release-assets/ \;
           ls -l release-assets

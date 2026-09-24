@@ -33,7 +33,10 @@ def _go_cli():
     return None
 
 
-needs_go_cli = pytest.mark.skipif(_go_cli() is None, reason='Go CLI not built')
+needs_go_cli = pytest.mark.skipif(
+    _go_cli() is None,
+    reason='Go CLI 已于 5.5.0 下线 (Python 是唯一 CLI 入口); '
+           '待 Go 编译器经原生库暴露后恢复双编译器对照')
 
 
 def _run_python_source(src: str, use_native: bool = True) -> str:
@@ -127,7 +130,7 @@ function helper() -> int {
 '''
 
 MAIN_WITH_IMPORT = '''
-import "mod.cin"
+import "./mod.cin"
 
 function main() -> int {
     println("R=" + int_to_str(helper() + 1))
