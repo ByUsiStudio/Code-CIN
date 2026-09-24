@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=68", "wheel"]
+requires = ["setuptools>=77", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -8,7 +8,10 @@ dynamic = ["version"]
 description = "Code CIN - 高级语言与运行时 (CIN/PL/ASM 工具链 + Go 原生 VM + ARM64/RISC-V/FP/Vector 指令集)"
 readme = "README.md"
 requires-python = ">=3.8"
-license = { text = "MIT" }
+# SPDX 表达式写法; 旧的 `license = { text = "MIT" }` 表格形式已被弃用,
+# 2027-02 起将不再受支持 (需要 setuptools>=77)。
+license = "MIT"
+license-files = ["LICENSE"]
 authors = [
     { name = "ByUsi Studio" },
     { name = "北啊呢" },
