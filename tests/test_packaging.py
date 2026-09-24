@@ -9,9 +9,7 @@
   用户就拿不到原生加速。
 """
 
-import io
 import os
-import re
 import tomllib
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -24,7 +22,7 @@ def _pyproject():
 
 
 def _read(name):
-    with io.open(os.path.join(ROOT, name), encoding='utf-8') as f:
+    with open(os.path.join(ROOT, name), encoding='utf-8') as f:
         return f.read()
 
 
@@ -72,11 +70,12 @@ def test_publish_scripts_upload_sdist_only():
         text = _read(name)
         assert 'python -m build --sdist' in text, \
             f'{name} 未显式构建 sdist'
-        assert re.search(r'upload\s+dist/\*\.tar\.gz', text), \
-            f'{name} 应只上传 sdist (dist/*.tar.gz)'
-        assert 'twine upload dist/*\n' not in text and \
-            'twine upload dist/* ' not in text, \
-            f'{name} 不应无条件上传 dist/* 全部产物'
+        uploads = [ln.strip() for ln in text.splitlines()
+                   if 'upload' in ln and 'dist/' in ln]
+        assert uploads, f'{name} 里找不到上传命令'
+        for line in uploads:
+            assert 'dist/*.tar.gz' in line, \
+                f'{name} 上传了非 sdist 产物: {line}'
 
 
 def test_setup_hook_installs_built_library():
