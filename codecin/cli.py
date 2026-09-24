@@ -163,10 +163,16 @@ def _apply_namespace(config: Config, ns: argparse.Namespace) -> None:
         config.optimize = ns.optimize
 
 
-def _run_aot_build(ns: argparse.Namespace, console, program_file: str) -> int:
+def _run_aot_build(ns: argparse.Namespace, console, program_file: str,
+                   config) -> int:
     """AOT: 把 CIN 程序编译成独立静态可执行文件 (--build-exe)。"""
     from . import aot
     from .errors import CPUSimulatorError
+
+    if not os.path.isfile(program_file):
+        console.print(Panel(f"File '{program_file}' not found",
+                            title='Build Error', border_style='red'))
+        return 1
 
     target = ns.build_target or aot.host_target()
     try:
@@ -181,10 +187,23 @@ def _run_aot_build(ns: argparse.Namespace, console, program_file: str) -> int:
         f"AOT build: {program_file} -> {out} (静态链接, 目标 {target})",
         Colors.CYAN))
     try:
+        # 依赖检查与嵌入由 build_program 内部完成; 这里先把清单展示给用户
+        deps = aot.program_dependencies(program_file)
+        embedded = [os.path.basename(p) for p in deps[1:]]
+        if embedded:
+            console.print(Colors.colorize(
+                f"依赖库 {len(embedded)} 个 (编译期嵌入产物): "
+                f"{', '.join(embedded)}", Colors.CYAN))
         built = aot.build_program(program_file, out=out, target=target,
-                                  keep_temp=ns.build_keep_temp)
+                                  keep_temp=ns.build_keep_temp,
+                                  mem_size=config.mem_size)
     except (aot.AotError, CPUSimulatorError) as e:
         console.print(Panel(str(e), title='Build Error', border_style='red'))
+        return 1
+    except Exception as e:                       # 兜底: 不再向上抛裸 traceback
+        console.print(Panel(str(e), title='Build Error', border_style='red'))
+        if config.debug_mode:
+            console.print_exception()
         return 1
     console.print(Colors.colorize(f"AOT build 完成: {built}", Colors.GREEN))
     return 0
@@ -235,7 +254,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         return 0
 
     if ns.build_exe is not None:
-        return _run_aot_build(ns, console, program_file)
+        return _run_aot_build(ns, console, program_file, config)
 
     try:
         from .cpu import CPU

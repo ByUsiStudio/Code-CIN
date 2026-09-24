@@ -81,8 +81,13 @@ def module_dir() -> str:
 
 def stub_source() -> str:
     """读取生成的 main.go 模板。"""
-    with open(STUB_PATH, encoding='utf-8') as f:
-        return f.read()
+    try:
+        with open(STUB_PATH, encoding='utf-8') as f:
+            return f.read()
+    except OSError as e:
+        raise AotError(
+            f'找不到 AOT 模板 {STUB_PATH}; --build-exe 需要包含 '
+            f'codecin/native/ 的源码树') from e
 
 
 def _cache_fallback_dir(mod_dir: str) -> str:
@@ -197,29 +202,87 @@ def build(bytecode: bytes,
             shutil.rmtree(tmp, ignore_errors=True)
 
 
+def program_dependencies(program_file: str) -> List[str]:
+    """返回程序依赖的全部 .cin 文件 (含自身, 去重保序)。
+
+    与 ``build_program`` 使用同一套解析规则: ``"./x.cin"`` 相对当前文件,
+    其余形式直接解析到内置标准库 ``codecin/lib/``。
+    """
+    from .cin import collect_imported_files
+    return collect_imported_files(program_file)
+
+
 def build_program(program_file: str,
                   out: Optional[str] = None,
                   target: Optional[str] = None,
                   keep_temp: bool = False,
+                  mem_size: Optional[int] = None,
                   logger=None) -> str:
-    """便捷入口: 直接由 .cin 源文件构建可执行文件。"""
-    from .cin import CINCompiler
+    """便捷入口: 直接由 .cin 源文件构建可执行文件。
+
+    构建前会解析 import 闭包做**依赖完整性检查** (缺失/循环 -> :class:`AotError`),
+    再把全部依赖模块在编译期展开并**嵌入**产物 —— 产物运行时不读取任何 .cin。
+    """
+    from .cin import CINCompiler, collect_imported_files
+    from .errors import CompilerError
     from .native import encode_program
+
+    if not os.path.isfile(program_file):
+        raise AotError(f'找不到程序文件: {program_file}')
 
     goos, _goarch = parse_target(target) if target else \
         parse_target(host_target())
-    res = CINCompiler().compile(program_file)
+
+    # 1) 依赖完整性检查: 编译前就把问题说清楚, 不必等 go build 失败
+    try:
+        deps = collect_imported_files(program_file)
+    except CompilerError as e:
+        raise AotError(f'依赖检查失败: {e}') from e
+    missing = [p for p in deps if not os.path.isfile(p)]
+    if missing:
+        raise AotError('依赖库缺失: ' + ', '.join(missing))
+
+    # 2) 编译: import 在编译期展开, 依赖因此被内联进字节码
+    try:
+        res = CINCompiler().compile(program_file)
+    except CompilerError as e:
+        raise AotError(f'编译失败: {e}') from e
+
     labels = dict(res.labels)
     labels.update(res.data_labels)
     bytecode = encode_program(res.instructions,
                               getattr(res, 'entry_pc', 0) or 0, labels)
-    mem = bytearray(DEFAULT_MEM_SIZE)
+
+    # 3) 初始内存镜像: 数据段越界必须报错 (旧实现静默丢弃越界写入)
+    total = int(mem_size) if mem_size else DEFAULT_MEM_SIZE
+    if total < 256:
+        total = 256
+    mem = bytearray(total)
+    oob = []
     for addr, data in res.data_writes:
         end = addr + len(data)
-        if addr >= 0 and end <= len(mem):
-            mem[addr:end] = data
+        if addr < 0 or end > len(mem):
+            oob.append((addr, len(data)))
+            continue
+        mem[addr:end] = data
+    if oob:
+        raise AotError(
+            f'数据段超出内存大小 {total} 字节: '
+            + ', '.join(f'addr=0x{a:x} size={n}' for a, n in oob[:4])
+            + '; 用 --mem-size 增大后重试')
+
+    if logger:
+        extra = [os.path.basename(p) for p in deps[1:]]
+        if extra:
+            logger.info(f'AOT: 已嵌入 {len(extra)} 个依赖库: '
+                        f'{", ".join(extra)}')
+        else:
+            logger.info('AOT: 无外部依赖 (单文件程序)')
+
     if not out:
         out = os.path.splitext(program_file)[0] + exe_suffix(goos)
+    if goos == 'windows' and not out.lower().endswith('.exe'):
+        out += '.exe'          # README: Windows 目标自动补 .exe
     return build(bytes(bytecode), bytes(mem), out, target=target,
                  keep_temp=keep_temp, logger=logger)
 

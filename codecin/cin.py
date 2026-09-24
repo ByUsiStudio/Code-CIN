@@ -512,6 +512,22 @@ def load_program_source(path: str) -> str:
     return text
 
 
+def collect_imported_files(path: str) -> List[str]:
+    """返回 ``path`` 及其 import 闭包涉及的全部 .cin 真实路径 (含自身, 去重保序)。
+
+    供 AOT/打包等需要在编译前检查依赖完整性的场景使用; import 缺失或循环
+    引用时抛 :class:`CompilerError`。
+    """
+    real = os.path.realpath(os.path.abspath(path))
+    out: List[Tuple[str, str]] = []
+    _collect_module_lines(real, set(), set(), out)
+    files: List[str] = []
+    for fname, _line in out:
+        if fname not in files:
+            files.append(fname)
+    return files
+
+
 def _remap_tokens(tokens: List[Token], origin: List[Optional[Tuple[str, int]]]
                   ) -> None:
     """把拼合文本中的 token 行号重定位到源文件 (file, line)。"""
