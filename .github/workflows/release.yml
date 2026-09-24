@@ -104,12 +104,6 @@ jobs:
             goarch: amd64
             asset: codecin_native-windows-x64.dll
             ldflags: ''
-          - os: windows-11-arm
-            slug: windows-arm64
-            goos: windows
-            goarch: arm64
-            asset: codecin_native-windows-arm64.dll
-            ldflags: ''
     steps:
       - uses: actions/checkout@v4
         with:
