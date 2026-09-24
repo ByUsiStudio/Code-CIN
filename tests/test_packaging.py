@@ -10,15 +10,10 @@
 """
 
 import os
-import tomllib
+import re
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BINARY_SUFFIX = ('.dll', '.so', '.dylib')
-
-
-def _pyproject():
-    with open(os.path.join(ROOT, 'pyproject.toml'), 'rb') as f:
-        return tomllib.load(f)
 
 
 def _read(name):
@@ -26,18 +21,36 @@ def _read(name):
         return f.read()
 
 
+def _section(name):
+    """取 pyproject.toml 里 ``[name]`` 段的原文 (不含段头)。
+
+    刻意不用 ``tomllib``: 它要 Python 3.11+, 而 CI 的矩阵包含 3.9。
+    """
+    out, inside = [], False
+    for line in _read('pyproject.toml').splitlines():
+        stripped = line.strip()
+        if stripped.startswith('['):
+            inside = stripped == f'[{name}]'
+            continue
+        if inside:
+            out.append(line)
+    return '\n'.join(out)
+
+
+def _package_data_patterns():
+    """package-data 段里所有引号内的 glob。"""
+    return re.findall(r'"([^"]+)"', _section('tool.setuptools.package-data'))
+
+
 def test_package_data_lists_stdlib():
-    data = _pyproject()['tool']['setuptools']['package-data']
-    all_patterns = [p for pats in data.values() for p in pats]
-    assert any('lib/*.cin' in p for p in all_patterns), \
-        f'内置标准库未列入 package-data: {data}'
+    patterns = _package_data_patterns()
+    assert any('lib/*.cin' in p for p in patterns), \
+        f'内置标准库未列入 package-data: {patterns}'
 
 
 def test_package_data_has_no_native_binaries():
     """原生库是构建产物, 不能进包 (否则会带错平台/架构的库)。"""
-    data = _pyproject()['tool']['setuptools']['package-data']
-    bad = [p for pats in data.values() for p in pats
-           if p.endswith(BINARY_SUFFIX)]
+    bad = [p for p in _package_data_patterns() if p.endswith(BINARY_SUFFIX)]
     assert not bad, f'package-data 仍在打包预编译原生库: {bad}'
 
 
@@ -56,11 +69,13 @@ def test_manifest_ships_go_sources_but_not_binaries():
 
 def test_license_uses_spdx_string():
     """旧的 { text = "MIT" } 表格写法已弃用, 2027-02 起不再受支持。"""
-    project = _pyproject()['project']
-    assert isinstance(project['license'], str), \
+    project = _section('project')
+    assert re.search(r'^license\s*=\s*"', project, re.M), \
         'project.license 必须使用 SPDX 字符串写法'
-    requires = _pyproject()['build-system']['requires']
-    assert any('setuptools>=77' in r for r in requires), \
+    assert not re.search(r'^license\s*=\s*\{', project, re.M), \
+        'project.license 不能再用 { text = ... } 表格写法'
+    requires = _section('build-system')
+    assert 'setuptools>=77' in requires, \
         'SPDX license 写法需要 setuptools>=77'
 
 
