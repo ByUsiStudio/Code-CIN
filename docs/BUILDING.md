@@ -53,19 +53,25 @@ Code CIN/
 │       │   ├── encode.go   # IR → UCBC 字节码编码
 │       │   └── isa_gen.go  # 生成常量 (操作码/SYS/操作数种类)
 │       ├── ir/             # 中间表示 (ir.Program / Instr / Operand)
-│       ├── aot/            # AOT 静态可执行文件运行时与构建器
-│       │   ├── aot.go      # 产物运行时 (aot.Main) + 共享 main.go 模板
-│       │   ├── stub_main.go.txt  # 生成的入口 shell (Go/Python 共用)
-│       │   └── build.go    # go build 编排 (CGO_ENABLED=0 静态链接/交叉编译)
+│       ├── aot/            # AOT 产物运行时 (aot.Main) + 共享 main.go 模板
+│       │   ├── aot.go      # 产物运行时 + stub_main.go.txt (Go/Python 共用)
+│       │   └── stub_main.go.txt  # 生成的入口 shell
 │       ├── compiler/       # Go 版 CIN 编译器 (tokenizer/parser/codegen)
-│       ├── cmd/codecin/    # 独立 Go CLI (编译 + 运行 .cin)
+│       ├── main.go         # c-shared 库入口 (与 Python ctypes 共享, 非 CLI)
 │       ├── build.ps1       # Windows 构建脚本
 │       └── build.sh        # Linux / Termux / macOS 构建脚本
 ├── basic.cin               # CIN 综合示例 (回归基准)
 ├── test_asm.asm            # 汇编测试样例
-├── codecin.spec               # PyInstaller 打包配置
 └── docs/                   # 文档 (本目录)
 ```
+
+> **Go 侧不提供 CLI** (5.5.0 起): 语言实现全部在 Go, 但只以库的形式存在 ——
+> `codecin/native/` 下唯一的 `package main` 是 cgo 的 c-shared 库入口 `main.go`。
+> 唯一命令行入口是 Python (`python cpu.py` / 安装后的 `codecin`)。
+> `tests/test_no_go_cli.py` 与 CI 的 `native` 作业都会对此把关。
+>
+> 构建产物 (`codecin/native/codecin*` 之类) 不入库, 构建命令一律是
+> `go build -buildmode=c-shared`, 详见 §3。
 
 三条执行路径共享同一套 ISA / 汇编器 / 编译器:
 
@@ -87,7 +93,7 @@ Code CIN/
 | rich | 任意近期版本 | 是* | 终端输出、日志、表格、错误面板与彩色 traceback |
 | Go | 1.26+ | 否** | 编译原生加速库 |
 | C 编译器 | gcc / clang | 随 Go | Go cgo (c-shared 模式) 需要 |
-| PyInstaller | 任意 | 否 | 打包独立 exe |
+| Go + C 工具链 | 1.26+ | 否 | 编译原生加速库与 AOT 产物 |
 
 \* rich 为唯一第三方依赖, 未安装时可尝试运行但输出/日志功能受限。
 \** 不编译原生库也可运行, 会自动回退纯 Python (性能下降)。
@@ -215,7 +221,7 @@ sh build.sh
   cd codecin/native
   for t in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64 windows/amd64; do
     GOOS="${t%/*}" GOARCH="${t#*/}" CGO_ENABLED=0 \
-      go build ./engine ./ir ./compiler ./cmd/codecin
+      go build ./engine ./ir ./compiler ./aot
   done
   ```
 
@@ -224,7 +230,7 @@ sh build.sh
 ### 验证
 
 ```bash
-python -c "from codecin import native; print(native.load_native_library())"
+python -c "from codecin import native; print(native.get_engine())"
 ```
 
 输出非 `None` 即加载成功。之后运行程序时日志会出现原生库路径; 若失败可看到回退 warning, 加 `--no-native` 可复现纯 Python 行为。
@@ -237,17 +243,19 @@ python -c "from codecin import native; print(native.load_native_library())"
 > 修改指令集后: `python script/gen_native_isa.py` → 重新编译原生库 → 跑 `python -m pytest`。
 > CI 中的 `script/gen_native_isa.py --check` 会拦截两者漂移。
 
-### 独立 Go CLI (codecin)
+### 为什么没有 Go CLI
 
-Go 优先架构提供不依赖 Python 的独立 CLI, 用 Go 版 CIN 编译器 + 字节码 VM 编译并运行 `.cin`:
+Go 是语言实现的**唯一核心** (编译器 / 字节码 VM / CROM / AOT 产物运行时),
+但**不提供任何命令行入口**: `codecin/native/` 下唯一的 `package main` 是
+cgo 的 c-shared 库入口 `main.go`。唯一 CLI 是 Python 侧
+(`python cpu.py` / 安装后的 `codecin` console script)。
 
-```bash
-cd codecin/native
-go build -o codecin ./cmd/codecin
-./codecin ../../basic.cin          # 编译 + 运行 (Go 全链路)
-```
+这避免了历史上"两套 CLI、两套语义、产物不对应"的问题:
 
-Python 入口 (`python cpu.py ...`) 保留为 CLI 壳与回退路径, 两者语义一致。
+- Go 侧源码树里不再有 `cmd/codecin/`, 也没有需要单独分发的 Go 二进制;
+- `tests/test_no_go_cli.py` 与 CI 的 `native` 作业都会断言这一点;
+- AOT(`--build-exe`)仍然产出独立可执行文件, 那是**用户程序的产物**,
+  不是工具链 CLI。
 
 ---
 
@@ -329,27 +337,29 @@ codecin build basic.cin -o basic --target windows/amd64              # 全 Go �
 > AOT 是**面向源码检出**的构建期功能: 它需要 Go 工具链与 `codecin/native` 的
 > Go 源码 (发行 wheel / 独立 CLI 里不含这些源码), 因此不适用于已安装的二进制。
 
-### 6.2 PyInstaller 打包 (含 Python 工具链的完整发行版)
+### 6.2 分发包 (pip wheel / sdist)
 
-使用 PyInstaller, **唯一入口为 `codecin.spec`** (Windows 下直接运行 `build_win.bat`):
+发行路径统一为 **pip 包**, 不再维护 PyInstaller spec 或独立安装脚本
+(5.5.0 起 `codecin.spec` / `codecin_linux.spec` / `install.sh` / `install.ps1`
+/ `build_win.bat` 已删除):
 
 ```bash
-pip install -r requirements.txt pyinstaller   # 建议在干净 venv 中执行
-build_win.bat                                  # Windows
-# 或任意平台:
-pyinstaller --noconfirm --clean codecin.spec
+python -m build            # 产出 dist/*.whl 与 dist/*.tar.gz
+python -m twine check dist/*
 ```
 
-spec 要点 (见文件内注释):
+要点:
 
-- `binaries` 已携带原生库 (ctypes 运行时加载, 静态分析发现不了); 库缺失时不会阻断打包;
-- `datas` 携带 `lib/*.cin` 标准库与 `misc/vim` 语法文件 — 缺了它们冻结产物里
-  `import "lib/math.cin"` 会失败 (冻结后 `_CODECIN_ROOT` 指向 bundle 的 `_internal/`);
-- `excludes` 列出 numpy/scipy/matplotlib/pywin32/cryptography 等无关重型库 — 在**只装
-  `requirements.txt` 的干净环境**构建可把产物从 ~100 MB 瘦身到几十 MB;
-- 冻结产物下的原生库搜索路径见 `codecin/native.py: _lib_candidates` (exe 目录与 `_MEIPASS`)。
-
-产物在 `dist/codecin/`。`--debug`/`--step` 的 rich 输出依赖终端, spec 中保持 `console=True`。
+- `codecin/lib/*.cin` (内置标准库) 通过 `pyproject.toml` 的
+  `[tool.setuptools.package-data]` 与根目录 `MANIFEST.in` **同时进入 wheel 与 sdist**;
+  缺了它们安装后任何 `import "math.cin"` 都会失败。CI 的 `dist` 作业会断言
+  wheel/sdist 内至少含 19 个 `.cin` 并实际安装后跑一个使用标准库的程序。
+- 原生库 (`.dll/.so/.dylib`) 由 `setup.py` 的 `build_py` 钩子在构建时调用
+  `codecin/native/build.ps1|build.sh` 生成; 没有 Go 工具链时设置
+  `CODECIN_SKIP_NATIVE=1` 跳过 (产物仍可用, 只是没有原生加速)。
+- 冻结/打包产物下的原生库搜索路径见 `codecin/native.py: _lib_candidates`
+  (包目录、exe 目录与 `_MEIPASS`)。
+- `--debug`/`--step` 的 rich 输出依赖终端。
 
 ---
 

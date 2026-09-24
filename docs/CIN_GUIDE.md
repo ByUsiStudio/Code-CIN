@@ -624,15 +624,24 @@ python cpu.py prog.cin --save             # 运行后保存 prog.crom 内存镜�
 
 ## 模块与标准库 (import)
 
-`import "path.cin"` 只能出现在**文件顶部 (列首)**。解析顺序: 源文件目录 →
-仓库 `lib/` 目录 → 仓库根; 同一文件每个编译仅包含一次 (防重复), 循环引用报错。
+`import "..."` 只能出现在**文件顶部 (列首)**。解析规则只有两条 (B3):
+
+| 写法 | 解析到 |
+|------|--------|
+| `import "./util.cin"`、`import "../shared/x.cin"` | **相对当前 .cin 文件**所在目录 (可以带子目录) |
+| `import "math.cin"`、`import "lib/math.cin"` | **codecin 内置标准库** `codecin/lib/` (随 pip 包分发) |
+
+> 也就是说: 想引用自己项目里的文件就写 `"./"` 前缀; 不写前缀一律当作内置库名。
+> `codecin/lib/` 前缀是历史写法的兼容别名, 等价于 `math.cin`。
+> 同一文件每个编译仅包含一次 (防重复), 循环引用报错, 缺失的模块报
+> `Import file not found` 并指出查了哪里。
 
 ```cin
 // main.cin
-import "lib/math.cin"     // f_abs/f_floor/f_ceil/f_round/f_min/f_max/i_min/i_max/i_clamp
-import "lib/str.cin"      // s_upper/s_lower/s_contains/s_starts_with/s_ends_with/
+import "math.cin"         // f_abs/f_floor/f_ceil/f_round/f_min/f_max/i_min/i_max/i_clamp
+import "str.cin"          // s_upper/s_lower/s_contains/s_starts_with/s_ends_with/
                           // s_count/s_repeat
-import "helpers.cin"      // 自建模块 (放同目录)
+import "./helpers.cin"    // 自建模块 (与 main.cin 同目录)
 
 function main() -> int {
     int v = f_floor(3.9)
@@ -646,35 +655,35 @@ function main() -> int {
 - 库函数名建议 `f_*` (浮点) / `s_*` (字符串) / `i_*` (整数) 前缀避免冲突;
 - 模块示例: `examples/modules_demo.cin`、`examples/stdlib_demo.cin`。
 
-### 官方标准库清单 (`lib/`)
+### 官方标准库清单 (`codecin/lib/`)
 
 | 库 | 前缀 | 主要函数 |
 |----|------|----------|
-| `lib/math.cin` | `f_` `i_` | `f_abs` `f_floor` `f_ceil` `f_round` `f_min` `f_max` `i_min` `i_max` `i_clamp` |
-| `lib/str.cin` | `s_` | `s_upper` `s_lower` `s_contains` `s_starts_with` `s_ends_with` `s_count` `s_repeat` |
-| `lib/array.cin` | `a_` | `a_sum` `a_max` `a_min` `a_avg` `a_find` `a_contains` `a_count` `a_reverse` `a_fill` `a_copy` `a_index_of_max` `a_index_of_min` `a_sum_range` `a_lower_bound` |
-| `lib/sort.cin` | `sort_` `bin_` | `sort_bubble` `sort_selection` `sort_insertion` `sort_quick` `sort_quick_all` `sort_is_sorted` `bin_search` |
-| `lib/conv.cin` | `c_` | `c_to_hex` `c_parse_hex` `c_to_bin` `c_parse_bin` `c_pad_left` `c_pad_right` `c_pad_int` `c_repeat` `c_chr` `c_to_int` `c_parse_float` |
-| `lib/vec.cin` | `v_` | `v_sum` `v_mean` `v_var` `v_std` `v_dot` `v_min` `v_max` `v_add` `v_scale` `v_normalize` `v_norm` `v_lerp` |
-| `lib/rand.cin` | `r_` | `r_range` `r_bool` `r_float` `r_float_range` `r_shuffle` `r_choice` `r_chance` |
-| `lib/json.cin` | `j_` | `j_raw` `j_str` `j_int` `j_float` `j_bool` `j_has` (扁平 JSON 取值) |
-| `lib/time.cin` | `t_` | `t_now` `t_hms` `t_ms` `t_breakdown` `t_human` `t_two` |
-| `lib/io.cin` | `io_` | `io_read` `io_write` `io_append` `io_exists` `io_size` `io_remove` `io_mkdir` `io_list` `io_join` `io_basename` `io_dirname` `io_line_count` `io_get_line` `io_split_get` `io_split_count` |
-| `lib/gui.cin` | `g_` | `g_rgb` `g_new` `g_clear` `g_rect_outline` `g_bar_chart` `g_line_chart` `g_grid` `g_save` `g_show` |
-| `lib/termux.cin` | `tx_` | `tx_ok` `tx_notify` `tx_toast` `tx_copy` `tx_paste` `tx_vibrate` `tx_say` `tx_sms` `tx_battery_level` `tx_battery_temp` `tx_battery_plugged` `tx_latitude` `tx_longitude` `tx_wifi_ssid` `tx_prompt` `tx_alert` |
-| `lib/test.cin` | `t_` | `t_eq_int` `t_eq_str` `t_near` `t_true` `t_false` `t_reset` `t_report` |
-| `lib/bits.cin` | `bits_` | `bits_popcount` `bits_clz` `bits_ctz` `bits_is_pow2` `bits_next_pow2` `bits_test` `bits_set` `bits_clear` `bits_toggle` `bits_rotl` `bits_rotr` `bits_reverse` `bits_range_mask` `bits_extract` `bits_insert` `bits_bswap` |
-| `lib/stat.cin` | `stat_` | `stat_sum` `stat_min` `stat_max` `stat_range` `stat_mean` `stat_count` `stat_mode` `stat_median_sorted` `stat_percentile_sorted` `stat_q1_sorted` `stat_q3_sorted` `stat_histogram` `stat_variance_x1000` `stat_stdev_x100` `stat_is_sorted` |
-| `lib/hash.cin` | `hash_` | `hash_djb2` `hash_fnv1a` `hash_sdbm` `hash_int` `hash_combine` `hash_bucket` `hash_string_bucket` |
-| `lib/validate.cin` | `val_` | `val_is_digit` `val_is_alpha` `val_is_alnum` `val_is_hex` `val_is_space` `val_is_upper` `val_is_lower` `val_is_int` `val_is_float` `val_is_ident` `val_is_blank` `val_is_hex_color` `val_count_char` `val_clamp_int` `val_parse_int` |
-| `lib/matrix.cin` | `mat_` | `mat_zero` `mat_identity` `mat_get` `mat_set` `mat_add` `mat_sub` `mat_scale` `mat_mul` `mat_transpose` `mat_trace` `mat_sum` `mat_equals` `mat_is_symmetric` `mat_det` `mat_print` |
-| `lib/queue.cin` | `queue_` `stack_` | `queue_clear` `queue_push` `queue_pop` `queue_front` `queue_back` `queue_size` `queue_is_empty` `queue_is_full` `queue_capacity` + `stack_clear` `stack_push` `stack_pop` `stack_peek` `stack_size` `stack_is_empty` `stack_capacity` |
+| `codecin/lib/math.cin` | `f_` `i_` | `f_abs` `f_floor` `f_ceil` `f_round` `f_min` `f_max` `i_min` `i_max` `i_clamp` |
+| `codecin/lib/str.cin` | `s_` | `s_upper` `s_lower` `s_contains` `s_starts_with` `s_ends_with` `s_count` `s_repeat` |
+| `codecin/lib/array.cin` | `a_` | `a_sum` `a_max` `a_min` `a_avg` `a_find` `a_contains` `a_count` `a_reverse` `a_fill` `a_copy` `a_index_of_max` `a_index_of_min` `a_sum_range` `a_lower_bound` |
+| `codecin/lib/sort.cin` | `sort_` `bin_` | `sort_bubble` `sort_selection` `sort_insertion` `sort_quick` `sort_quick_all` `sort_is_sorted` `bin_search` |
+| `codecin/lib/conv.cin` | `c_` | `c_to_hex` `c_parse_hex` `c_to_bin` `c_parse_bin` `c_pad_left` `c_pad_right` `c_pad_int` `c_repeat` `c_chr` `c_to_int` `c_parse_float` |
+| `codecin/lib/vec.cin` | `v_` | `v_sum` `v_mean` `v_var` `v_std` `v_dot` `v_min` `v_max` `v_add` `v_scale` `v_normalize` `v_norm` `v_lerp` |
+| `codecin/lib/rand.cin` | `r_` | `r_range` `r_bool` `r_float` `r_float_range` `r_shuffle` `r_choice` `r_chance` |
+| `codecin/lib/json.cin` | `j_` | `j_raw` `j_str` `j_int` `j_float` `j_bool` `j_has` (扁平 JSON 取值) |
+| `codecin/lib/time.cin` | `t_` | `t_now` `t_hms` `t_ms` `t_breakdown` `t_human` `t_two` |
+| `codecin/lib/io.cin` | `io_` | `io_read` `io_write` `io_append` `io_exists` `io_size` `io_remove` `io_mkdir` `io_list` `io_join` `io_basename` `io_dirname` `io_line_count` `io_get_line` `io_split_get` `io_split_count` |
+| `codecin/lib/gui.cin` | `g_` | `g_rgb` `g_new` `g_clear` `g_rect_outline` `g_bar_chart` `g_line_chart` `g_grid` `g_save` `g_show` |
+| `codecin/lib/termux.cin` | `tx_` | `tx_ok` `tx_notify` `tx_toast` `tx_copy` `tx_paste` `tx_vibrate` `tx_say` `tx_sms` `tx_battery_level` `tx_battery_temp` `tx_battery_plugged` `tx_latitude` `tx_longitude` `tx_wifi_ssid` `tx_prompt` `tx_alert` |
+| `codecin/lib/test.cin` | `t_` | `t_eq_int` `t_eq_str` `t_near` `t_true` `t_false` `t_reset` `t_report` |
+| `codecin/lib/bits.cin` | `bits_` | `bits_popcount` `bits_clz` `bits_ctz` `bits_is_pow2` `bits_next_pow2` `bits_test` `bits_set` `bits_clear` `bits_toggle` `bits_rotl` `bits_rotr` `bits_reverse` `bits_range_mask` `bits_extract` `bits_insert` `bits_bswap` |
+| `codecin/lib/stat.cin` | `stat_` | `stat_sum` `stat_min` `stat_max` `stat_range` `stat_mean` `stat_count` `stat_mode` `stat_median_sorted` `stat_percentile_sorted` `stat_q1_sorted` `stat_q3_sorted` `stat_histogram` `stat_variance_x1000` `stat_stdev_x100` `stat_is_sorted` |
+| `codecin/lib/hash.cin` | `hash_` | `hash_djb2` `hash_fnv1a` `hash_sdbm` `hash_int` `hash_combine` `hash_bucket` `hash_string_bucket` |
+| `codecin/lib/validate.cin` | `val_` | `val_is_digit` `val_is_alpha` `val_is_alnum` `val_is_hex` `val_is_space` `val_is_upper` `val_is_lower` `val_is_int` `val_is_float` `val_is_ident` `val_is_blank` `val_is_hex_color` `val_count_char` `val_clamp_int` `val_parse_int` |
+| `codecin/lib/matrix.cin` | `mat_` | `mat_zero` `mat_identity` `mat_get` `mat_set` `mat_add` `mat_sub` `mat_scale` `mat_mul` `mat_transpose` `mat_trace` `mat_sum` `mat_equals` `mat_is_symmetric` `mat_det` `mat_print` |
+| `codecin/lib/queue.cin` | `queue_` `stack_` | `queue_clear` `queue_push` `queue_pop` `queue_front` `queue_back` `queue_size` `queue_is_empty` `queue_is_full` `queue_capacity` + `stack_clear` `stack_push` `stack_pop` `stack_peek` `stack_size` `stack_is_empty` `stack_capacity` |
 
-> `lib/io.cin` / `lib/gui.cin` / `lib/termux.cin` 依赖宿主能力 (需 Go 原生运行时);
+> `codecin/lib/io.cin` / `codecin/lib/gui.cin` / `codecin/lib/termux.cin` 依赖宿主能力 (需 Go 原生运行时);
 > 其余库为纯 CIN, 三执行路径一致。示例见 `examples/stdlib_demo.cin`。
 >
-> `lib/matrix.cin` 的矩阵以一维数组行主序存放 (`m[i*n + j]`), `mat_det` 用拉普拉斯
-> 递归展开, 适合 `n <= 6`。`lib/queue.cin` 的队列/栈使用库内全局状态, 同一程序内
+> `codecin/lib/matrix.cin` 的矩阵以一维数组行主序存放 (`m[i*n + j]`), `mat_det` 用拉普拉斯
+> 递归展开, 适合 `n <= 6`。`codecin/lib/queue.cin` 的队列/栈使用库内全局状态, 同一程序内
 > 各只有一份实例 (容量 64)。
 
 ---
