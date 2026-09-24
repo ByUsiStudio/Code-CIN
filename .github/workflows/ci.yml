@@ -161,13 +161,18 @@ jobs:
       - name: go test (含竞态检测)
         run: go test ./... -race -count=1
         working-directory: codecin/native
-      - name: 断言 Go 侧没有 CLI 入口 (main 包)
+      - name: 断言 Go 侧没有 CLI 入口
         run: |
-          if grep -rl '^package main' --include='*.go' . ; then
-            echo "Go 侧不允许存在 CLI 入口 (package main):" >&2
-            grep -rl '^package main' --include='*.go' . >&2
+          # 唯一的 package main 必须是与 Python 共享的 c-shared 库入口 main.go;
+          # 任何额外的 main 包都意味着 Go 侧又长出了 CLI。
+          extra=$(grep -rl '^package main' --include='*.go' . | grep -v '^\./main\.go$' || true)
+          if [ -n "$extra" ]; then
+            echo "Go 侧不允许存在 CLI 入口 (package main), 除 ./main.go 外发现:" >&2
+            echo "$extra" >&2
             exit 1
           fi
+          grep -q '#include <stdlib.h>' main.go || {
+            echo "./main.go 不再是 c-shared 库入口?" >&2; exit 1; }
         working-directory: codecin/native
       - name: Cross-compile check (linux/darwin/windows, pure-Go)
         run: |
