@@ -1,5 +1,5 @@
 // Code CIN 官方标准库: 文件与路径 (io)
-// 用法: import "lib/io.cin"
+// 用法: import "io.cin"
 // 依赖内建: file_read / file_write / file_append / file_exists / file_size ...
 // 注意: 全部为 Go 原生能力 (需原生运行时)。
 

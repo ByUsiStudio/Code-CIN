@@ -1,5 +1,5 @@
-// Code CIN 纯 CIN 数学扩展 (B2 lib/math.cin)
-// 用法: import "lib/math.cin"
+// Code CIN 纯 CIN 数学扩展 (codecin/lib/math.cin)
+// 用法: import "math.cin"
 // 说明: '/' 为浮点除法; 这里提供显式取整/最值/夹取辅助函数。
 
 function f_abs(float x) -> float {

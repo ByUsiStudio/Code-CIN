@@ -41,7 +41,9 @@ namespaces = true
 version = { attr = "codecin.__version__" }
 
 [tool.setuptools.package-data]
-"codecin"        = ["*.dll", "*.so", "*.dylib", "py.typed"]
+# 内置标准库 (codecin/lib/*.cin) 必须随包分发, 否则安装后 `import "math.cin"` 会失败
+"codecin"        = ["*.dll", "*.so", "*.dylib", "py.typed", "lib/*.cin", "lib/**/*.cin"]
+"codecin.lib"    = ["*.cin"]
 "codecin.native" = ["**/*"]
 
 [tool.pytest.ini_options]

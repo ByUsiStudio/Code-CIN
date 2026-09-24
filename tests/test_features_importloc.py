@@ -23,7 +23,7 @@ def test_tokenizer_error_reports_module_file_and_line(workdir):
         '}\n'
         'int x = ?\n'))                     # 第 4 行词法错误
     main = _write(workdir, 'main.cin', (
-        'import "badmod.cin"\n'
+        'import "./badmod.cin"\n'
         'function main() -> int { return mod(1) }\n'))
     with pytest.raises(CompilerError) as exc:
         CINCompiler().compile(main)
@@ -41,7 +41,7 @@ def test_parser_error_reports_module_file_and_line(workdir):
         '    return b\n'
         '}\n'))
     main = _write(workdir, 'main.cin', (
-        'import "pmod.cin"\n'
+        'import "./pmod.cin"\n'
         'function main() -> int { return helper(2) }\n'))
     with pytest.raises(CompilerError) as exc:
         CINCompiler().compile(main)
@@ -58,7 +58,7 @@ def test_assert_in_module_reports_module_line(workdir, capsys):
         '    return v * 2\n'
         '}\n'))
     main = _write(workdir, 'amain.cin', (
-        'import "amod.cin"\n'
+        'import "./amod.cin"\n'
         'function main() -> int { return checked(-5) }\n'))
     cpu = run_cin_file(main)
     del cpu

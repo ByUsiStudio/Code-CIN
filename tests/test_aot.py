@@ -30,7 +30,7 @@ needs_aot_all = pytest.mark.skipif(
     reason='交叉编译用例较慢; 设置 CODECIN_AOT_TESTS=1 启用')
 
 PROGRAM = '''
-import "lib/stat.cin"
+import "stat.cin"
 
 function main() -> int {
     int s = 0
@@ -118,7 +118,7 @@ def test_build_host_executable(workdir):
 
     r = _run(built)
     assert r.returncode == 0, r.stderr
-    # 同时验证标准库 import 已在编译期展开 (产物不需要 lib/ 目录)
+    # 同时验证标准库 import 已在编译期展开 (产物不需要 codecin/lib 目录)
     assert 'sum=55 stat=15' in r.stdout
 
     # 对照组: Go CLI 直接运行同一程序 (编译+执行链路必须一致)

@@ -1,4 +1,4 @@
-"""新增官方标准库 (lib/bits|stat|hash|validate|matrix|queue.cin) 测试。
+"""新增官方标准库 (codecin/lib: bits|stat|hash|validate|matrix|queue.cin) 测试。
 
 每个用例返回 0 表示全部通过, 非 0 为具体失败点编号, 便于定位。
 """
@@ -17,7 +17,7 @@ def _run(workdir, source, name='lib_ext_test.cin', **cfg):
 
 def test_bits_lib(workdir):
     src = '''
-import "lib/bits.cin"
+import "bits.cin"
 function main() -> int {
     if (bits_popcount(0xFF) != 8) { return 1 }
     if (bits_popcount(0) != 0) { return 2 }
@@ -55,7 +55,7 @@ function main() -> int {
 
 def test_stat_lib(workdir):
     src = '''
-import "lib/stat.cin"
+import "stat.cin"
 function main() -> int {
     int a[6] = {4, 8, 1, 8, 3, 6}
     if (stat_sum(a, 6) != 30) { return 1 }
@@ -87,7 +87,7 @@ function main() -> int {
 
 def test_hash_lib(workdir):
     src = '''
-import "lib/hash.cin"
+import "hash.cin"
 function main() -> int {
     if (hash_djb2("") != 5381) { return 1 }
     if (hash_fnv1a("") != 0xCBF29CE484222325) { return 2 }
@@ -108,7 +108,7 @@ function main() -> int {
 
 def test_validate_lib(workdir):
     src = '''
-import "lib/validate.cin"
+import "validate.cin"
 function main() -> int {
     if (val_is_digit('7') != 1) { return 1 }
     if (val_is_digit('a') != 0) { return 2 }
@@ -151,7 +151,7 @@ function main() -> int {
 
 def test_matrix_lib(workdir):
     src = '''
-import "lib/matrix.cin"
+import "matrix.cin"
 function main() -> int {
     int n = 2
     int a[4] = {1, 2, 3, 4}
@@ -199,7 +199,7 @@ function main() -> int {
 
 def test_queue_lib(workdir):
     src = '''
-import "lib/queue.cin"
+import "queue.cin"
 function main() -> int {
     queue_clear()
     if (queue_is_empty() != 1) { return 1 }
@@ -251,12 +251,12 @@ function main() -> int {
 def test_new_libs_are_importable_together(workdir):
     """多个新库同时导入不得冲突 (全局符号/名称)。"""
     src = '''
-import "lib/bits.cin"
-import "lib/stat.cin"
-import "lib/hash.cin"
-import "lib/validate.cin"
-import "lib/matrix.cin"
-import "lib/queue.cin"
+import "bits.cin"
+import "stat.cin"
+import "hash.cin"
+import "validate.cin"
+import "matrix.cin"
+import "queue.cin"
 function main() -> int {
     if (bits_popcount(3) != 2) { return 1 }
     int a[3] = {1, 2, 3}

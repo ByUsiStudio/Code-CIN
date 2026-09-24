@@ -1,7 +1,7 @@
 // Code CIN 官方标准库: 字符/字符串校验 (validate)
-// 用法: import "lib/validate.cin"
+// 用法: import "validate.cin"
 //
-// 与 lib/str.cin 互补: str.cin 做变换 (大小写/裁剪/包含),
+// 与 str.cin 互补: str.cin 做变换 (大小写/裁剪/包含),
 // 本库做**判定与安全解析** (字符类别、整数字符串、标识符、限幅)。
 
 // 字符类别 (参数为字符的字节值, 如 'a' 或 s[i])

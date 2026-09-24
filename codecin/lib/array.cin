@@ -1,5 +1,5 @@
 // Code CIN 官方标准库: 整数数组工具 (array)
-// 用法: import "lib/array.cin"
+// 用法: import "array.cin"
 // 约定: CIN 数组不携带长度, 需显式传入元素个数 n。
 
 // 求和

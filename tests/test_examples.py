@@ -13,7 +13,7 @@ EXAMPLES = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__
 CIN_EXPECTED = {
     'control_flow.cin': 24,     # sum=20(偶数至20 break) + d=4
     'literals_types.cin': 77,   # 31+13+15+6+6+4+2
-    'modules_demo.cin': 12,     # import lib/math.cin + lib/str.cin
+    'modules_demo.cin': 12,     # import math.cin + str.cin (内置标准库)
     'bitwise_builtins.cin': 256,  # 位运算/整除/下标/新内建各项之和
     'stdlib_demo.cin': 0,       # 官方标准库断言全部通过 (t_report 返回失败数)
 }

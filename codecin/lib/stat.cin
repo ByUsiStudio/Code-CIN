@@ -1,7 +1,7 @@
 // Code CIN 官方标准库: 顺序统计 (stat)
-// 用法: import "lib/stat.cin"
+// 用法: import "stat.cin"
 //
-// 与 lib/vec.cin (浮点统计) 互补: 本库面向 int 数组的**顺序统计量**
+// 与 vec.cin (浮点统计) 互补: 本库面向 int 数组的**顺序统计量**
 // (中位数/众数/百分位/直方图) 与免排序的聚合量。
 // 需要升序输入的接口以 _sorted 结尾。
 

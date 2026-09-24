@@ -1,13 +1,13 @@
 // Code CIN 官方标准库演示 (array / sort / conv / vec / json / time / test)
 // 运行: python cpu.py examples/stdlib_demo.cin
 //       codecin examples/stdlib_demo.cin
-import "lib/test.cin"
-import "lib/array.cin"
-import "lib/sort.cin"
-import "lib/conv.cin"
-import "lib/vec.cin"
-import "lib/json.cin"
-import "lib/time.cin"
+import "test.cin"
+import "array.cin"
+import "sort.cin"
+import "conv.cin"
+import "vec.cin"
+import "json.cin"
+import "time.cin"
 
 function main() -> int {
     t_reset()

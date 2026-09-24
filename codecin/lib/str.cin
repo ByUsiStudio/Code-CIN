@@ -1,5 +1,5 @@
-// Code CIN 纯 CIN 字符串扩展 (B2 lib/str.cin)
-// 用法: import "lib/str.cin"
+// Code CIN 纯 CIN 字符串扩展 (codecin/lib/str.cin)
+// 用法: import "str.cin"
 // 依赖内建: upper / lower / substr / indexof / strlen / strcmp
 // 注意: 这些函数分配新堆块; 大量循环拼接会消耗堆 (64 位槽, 不回收)。
 

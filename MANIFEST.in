@@ -1,0 +1,12 @@
+# sdist 内容清单: 让内置标准库与 Go 侧源码都进入源码分发包。
+# (wheel 侧由 pyproject.toml 的 [tool.setuptools.package-data] 负责)
+
+include README.md CHANGELOG.md LICENSE
+include pyproject.toml setup.py
+recursive-include codecin/lib *.cin
+recursive-include codecin/native *.go *.txt go.mod go.sum
+include codecin/*.h codecin/*.dll codecin/*.so codecin/*.dylib
+recursive-include docs *.md
+recursive-include misc *
+recursive-include examples *.cin *.asm *.pl
+recursive-include script *.py

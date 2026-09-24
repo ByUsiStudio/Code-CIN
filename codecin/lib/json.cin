@@ -1,5 +1,5 @@
 // Code CIN 官方标准库: 极简 JSON 取值 (json)
-// 用法: import "lib/json.cin"
+// 用法: import "json.cin"
 // 说明: 面向扁平对象 (Termux API 等返回的 JSON), 不做完整语法解析。
 //       支持 "key": value 的字符串/数字/布尔/空值提取。
 
