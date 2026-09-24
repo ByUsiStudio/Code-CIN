@@ -19,18 +19,18 @@ from codecin.errors import CompilerError
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
- : 构建需要 Go 工具链
+#: 构建需要 Go 工具链
 needs_go = pytest.mark.skipif(shutil.which('go') is None,
                               reason='未安装 Go 工具链')
 
- : 交叉编译用例各需要为目标平台重编一遍 Go 标准库 (首次 1~2 分钟),
- : 因此默认只跑本机构建; CI 的 integration 作业设置 CODECIN_AOT_TESTS=1 全跑。
+#: 交叉编译用例各需要为目标平台重编一遍 Go 标准库 (首次 1~2 分钟),
+#: 因此默认只跑本机构建; CI 的 integration 作业设置 CODECIN_AOT_TESTS=1 全跑。
 needs_aot_all = pytest.mark.skipif(
     os.environ.get('CODECIN_AOT_TESTS') != '1',
     reason='交叉编译用例较慢; 设置 CODECIN_AOT_TESTS=1 启用')
 
 PROGRAM = '''
-import "stat.cin"
+import "lib/stat.cin"
 
 function main() -> int {
     int s = 0
@@ -65,12 +65,12 @@ def _elf_is_static(path):
     e_phnum = struct.unpack_from('<H', data, 0x38)[0]
     for i in range(e_phnum):
         off = e_phoff + i * e_phentsize
-        if struct.unpack_from('<I', data, off)[0] == 3:     PT_INTERP
+        if struct.unpack_from('<I', data, off)[0] == 3:   # PT_INTERP
             return False
     return True
 
 
-  ---------------- 目标解析 (不需要 Go) ----------------
+# ---------------- 目标解析 (不需要 Go) ----------------
 
 def test_parse_target_valid():
     assert aot.parse_target('linux/amd64') == ('linux', 'amd64')
@@ -105,7 +105,7 @@ def test_stub_template_is_shared_with_go():
         assert 'stub_main.go.txt' in f.read(), 'Go 侧未引用共享模板'
 
 
-  ---------------- 实际构建 ----------------
+# ---------------- 实际构建 ----------------
 
 @needs_go
 def test_build_host_executable(workdir):
@@ -118,10 +118,10 @@ def test_build_host_executable(workdir):
 
     r = _run(built)
     assert r.returncode == 0, r.stderr
-      同时验证标准库 import 已在编译期展开 (产物不需要 lib/ 目录)
+    # 同时验证标准库 import 已在编译期展开 (产物不需要 lib/ 目录)
     assert 'sum=55 stat=15' in r.stdout
 
-      对照组: Go CLI 直接运行同一程序 (编译+执行链路必须一致)
+    # 对照组: Go CLI 直接运行同一程序 (编译+执行链路必须一致)
     go_cli = _go_cli()
     if go_cli:
         ref = subprocess.run([go_cli, src], capture_output=True, text=True,

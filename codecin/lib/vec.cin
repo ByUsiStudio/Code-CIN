@@ -1,5 +1,5 @@
 // Code CIN 官方标准库: 浮点向量与统计 (vec)
-// 用法: import "vec.cin"
+// 用法: import "lib/vec.cin"
 
 // 求和
 function v_sum(float[] a, int n) -> float {

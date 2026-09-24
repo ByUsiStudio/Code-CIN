@@ -1,8 +1,8 @@
 // import + lib/ 标准库演示 (B2)
 // 运行: python cpu.py examples/modules_demo.cin
 
-import "math.cin"
-import "str.cin"
+import "lib/math.cin"
+import "lib/str.cin"
 
 function main() -> int {
     println("abs=" + float_to_str(f_abs(-3.25)))

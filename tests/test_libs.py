@@ -1,4 +1,4 @@
-"""方方标准库 (lib/*.cin) 测试。"""
+"""官方标准库 (lib/*.cin) 测试。"""
 
 import os
 
@@ -20,7 +20,7 @@ def _run(workdir, source, name='lib_test.cin', **cfg):
 
 def test_array_lib(workdir):
     src = '''
-import "array.cin"
+import "lib/array.cin"
 function main() -> int {
     int a[6] = {4, 8, 1, 8, 3, 6}
     if (a_sum(a, 6) != 30) { return 1 }
@@ -39,7 +39,7 @@ function main() -> int {
 
 def test_sort_lib(workdir):
     src = '''
-import "sort.cin"
+import "lib/sort.cin"
 function main() -> int {
     int a[7] = {9, 2, 7, 1, 8, 3, 5}
     sort_quick_all(a, 7)
@@ -63,7 +63,7 @@ function main() -> int {
 
 def test_conv_lib(workdir):
     src = '''
-import "conv.cin"
+import "lib/conv.cin"
 function main() -> int {
     if (strcmp(c_to_hex(255), "FF") != 0) { return 1 }
     if (strcmp(c_to_hex(0), "0") != 0) { return 2 }
@@ -82,7 +82,7 @@ function main() -> int {
 
 def test_vec_lib(workdir):
     src = '''
-import "vec.cin"
+import "lib/vec.cin"
 function main() -> int {
     float v[5] = {2.0, 4.0, 4.0, 4.0, 6.0}
     if (v_sum(v, 5) != 20.0) { return 1 }
@@ -98,7 +98,7 @@ function main() -> int {
 
 def test_rand_lib_in_range(workdir):
     src = '''
-import "rand.cin"
+import "lib/rand.cin"
 function main() -> int {
     srand(12345)
     for (int i = 0; i < 50; i = i + 1) {
@@ -119,7 +119,7 @@ function main() -> int {
 
 def test_json_lib(workdir):
     src = '''
-import "json.cin"
+import "lib/json.cin"
 function main() -> int {
     string j = "{\\"s\\":\\"hi\\",\\"n\\":-7,\\"b\\":false,\\"f\\":1.25}"
     if (strcmp(j_str(j, "s"), "hi") != 0) { return 1 }
@@ -135,7 +135,7 @@ function main() -> int {
 
 def test_time_lib(workdir):
     src = '''
-import "time.cin"
+import "lib/time.cin"
 function main() -> int {
     if (strcmp(t_hms(3661), "01:01:01") != 0) { return 1 }
     if (strcmp(t_ms(125), "02:05") != 0) { return 2 }
@@ -149,7 +149,7 @@ function main() -> int {
 
 def test_test_lib(workdir):
     src = '''
-import "test.cin"
+import "lib/test.cin"
 function main() -> int {
     t_reset()
     t_eq_int(1 + 1, 2, "add")
@@ -168,7 +168,7 @@ def test_io_lib(workdir):
     p = os.path.join(workdir, 'io_lib.txt').replace('\\', '/')
     sub = os.path.join(workdir, 'io_sub').replace('\\', '/')
     src = f'''
-import "io.cin"
+import "lib/io.cin"
 function main() -> int {{
     if (io_write("{p}", "a\\nb\\nc") != 0) {{ return 1 }}
     if (io_exists("{p}") != 1) {{ return 2 }}
@@ -188,7 +188,7 @@ function main() -> int {{
 def test_gui_lib(workdir):
     p = os.path.join(workdir, 'gui_lib.png').replace('\\', '/')
     src = f'''
-import "gui.cin"
+import "lib/gui.cin"
 function main() -> int {{
     int a[5] = {{3, 7, 2, 9, 5}}
     g_bar_chart(a, 5, 50, 30)
@@ -205,7 +205,7 @@ function main() -> int {{
 @needs_native
 def test_termux_lib_present(workdir):
     src = '''
-import "termux.cin"
+import "lib/termux.cin"
 function main() -> int {
     int ok = tx_ok()
     if (ok == 0) { return 10 }

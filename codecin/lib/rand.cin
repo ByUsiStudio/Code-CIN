@@ -1,5 +1,5 @@
 // Code CIN 官方标准库: 随机工具 (rand)
-// 用法: import "rand.cin"
+// 用法: import "lib/rand.cin"
 // 说明: 基于内建 rand(); 需要可复现时先调用内建 srand(种子)。
 
 // [lo, hi] 闭区间随机整数

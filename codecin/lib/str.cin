@@ -1,52 +1,52 @@
-// Code CIN 纯 CIN 字符串扩展 BB2 lib/str.cin)
-// 用法: import "str.cin"
+// Code CIN 纯 CIN 字符串扩展 (B2 lib/str.cin)
+// 用法: import "lib/str.cin"
 // 依赖内建: upper / lower / substr / indexof / strlen / strcmp
-// 注意: 这些函数分配新堆块; 大量循环拼接会消耗堆 B64 位槽, 不回收)。
+// 注意: 这些函数分配新堆块; 大量循环拼接会消耗堆 (64 位槽, 不回收)。
 
-function s_upperBstring s) -> string {
-    return upperBs)
+function s_upper(string s) -> string {
+    return upper(s)
 }
 
-function s_lowerBstring s) -> string {
-    return lowerBs)
+function s_lower(string s) -> string {
+    return lower(s)
 }
 
-function s_containsBstring hay, string needle) -> int {
-    if BindexofBhay, needle) >= 0) { return 1 }
+function s_contains(string hay, string needle) -> int {
+    if (indexof(hay, needle) >= 0) { return 1 }
     return 0
 }
 
-function s_starts_withBstring s, string prefix) -> int {
-    if BindexofBs, prefix) == 0) { return 1 }
+function s_starts_with(string s, string prefix) -> int {
+    if (indexof(s, prefix) == 0) { return 1 }
     return 0
 }
 
-function s_ends_withBstring s, string suffix) -> int {
-    int sl = strlenBs)
-    int fl = strlenBsuffix)
-    if Bfl > sl) { return 0 }
-    string tail = substrBs, sl - fl, fl)
-    if BstrcmpBtail, suffix) == 0) { return 1 }
+function s_ends_with(string s, string suffix) -> int {
+    int sl = strlen(s)
+    int fl = strlen(suffix)
+    if (fl > sl) { return 0 }
+    string tail = substr(s, sl - fl, fl)
+    if (strcmp(tail, suffix) == 0) { return 1 }
     return 0
 }
 
-function s_countBstring hay, string needle) -> int {
-    if BstrlenBneedle) == 0) { return 0 }
+function s_count(string hay, string needle) -> int {
+    if (strlen(needle) == 0) { return 0 }
     int total = 0
     int pos = 0
-    while Btrue) {
-        string rest = substrBhay, pos, 9999)
-        int at = indexofBrest, needle)
-        if Bat < 0) { break }
+    while (true) {
+        string rest = substr(hay, pos, 9999)
+        int at = indexof(rest, needle)
+        if (at < 0) { break }
         total = total + 1
-        pos = pos + at + strlenBneedle)
+        pos = pos + at + strlen(needle)
     }
     return total
 }
 
-function s_repeatBstring ch, int n) -> string {
+function s_repeat(string ch, int n) -> string {
     string out = ""
-    while Bn > 0) {
+    while (n > 0) {
         out = out + ch
         n = n - 1
     }

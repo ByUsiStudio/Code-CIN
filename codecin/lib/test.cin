@@ -1,5 +1,5 @@
 // Code CIN 官方标准库: 轻量测试断言 (test)
-// 用法: import "test.cin"
+// 用法: import "lib/test.cin"
 // 说明: 提供计数器与断言; 结束时调用 t_report() 输出汇总 (返回失败数)。
 
 // 通过 / 失败计数 (全局)

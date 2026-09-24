@@ -1,5 +1,5 @@
 // Code CIN 官方标准库: 时间工具 (time)
-// 用法: import "time.cin"
+// 用法: import "lib/time.cin"
 // 依赖内建: time()
 
 // 当前 Unix 时间戳 (秒)

@@ -1,5 +1,5 @@
 // Code CIN 官方标准库: 队列与栈 (queue)
-// 用法: import "queue.cin"
+// 用法: import "lib/queue.cin"
 //
 // 定长环形队列 (FIFO) 与定长栈 (LIFO), 使用库内全局状态,
 // 因此同一程序内只保留一份实例; 需要多实例时请用 struct 自行封装。

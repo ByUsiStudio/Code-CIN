@@ -1,5 +1,5 @@
 // Code CIN 官方标准库: 进制与字符串格式化 (conv)
-// 用法: import "conv.cin"
+// 用法: import "lib/conv.cin"
 
 // 十六进制数字字符 -> 数值 ('0'-'9' 'A'-'F' 'a'-'f'), 非法返回 -1
 function c_hex_digit(int ch) -> int {

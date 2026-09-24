@@ -1,5 +1,5 @@
 // Code CIN 官方标准库: 画布绘图助手 (gui)
-// 用法: import "gui.cin"
+// 用法: import "lib/gui.cin"
 // 依赖内建: canvas / set_color / fill_rect / fill_circle / draw_line / draw_text / save_png / show_canvas
 
 // 打包 RGB 颜色 (0xRRGGBB)

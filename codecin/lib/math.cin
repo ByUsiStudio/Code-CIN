@@ -1,50 +1,50 @@
-// Code CIN 纯 CIN 数学扩展 BB2 lib/math.cin)
-// 用法: import "math.cin"
+// Code CIN 纯 CIN 数学扩展 (B2 lib/math.cin)
+// 用法: import "lib/math.cin"
 // 说明: '/' 为浮点除法; 这里提供显式取整/最值/夹取辅助函数。
 
-function f_absBfloat x) -> float {
-    if Bx < 0.0) { return -x }
+function f_abs(float x) -> float {
+    if (x < 0.0) { return -x }
     return x
 }
 
-// 向下取整 B负数向 -inf)
-function f_floorBfloat x) -> float {
+// 向下取整 (负数向 -inf)
+function f_floor(float x) -> float {
     int t = x
-    if Bx < t) { return t - 1 }
+    if (x < t) { return t - 1 }
     return t
 }
 
-function f_ceilBfloat x) -> float {
-    return -f_floorB-x)
+function f_ceil(float x) -> float {
+    return -f_floor(-x)
 }
 
-// 四舍五入 Bx+0.5 向下取整)
-function f_roundBfloat x) -> float {
-    return f_floorBx + 0.5)
+// 四舍五入 (x+0.5 向下取整)
+function f_round(float x) -> float {
+    return f_floor(x + 0.5)
 }
 
-function f_minBfloat a, float b) -> float {
-    if Ba < b) { return a }
+function f_min(float a, float b) -> float {
+    if (a < b) { return a }
     return b
 }
 
-function f_maxBfloat a, float b) -> float {
-    if Ba > b) { return a }
+function f_max(float a, float b) -> float {
+    if (a > b) { return a }
     return b
 }
 
-function i_minBint a, int b) -> int {
-    if Ba < b) { return a }
+function i_min(int a, int b) -> int {
+    if (a < b) { return a }
     return b
 }
 
-function i_maxBint a, int b) -> int {
-    if Ba > b) { return a }
+function i_max(int a, int b) -> int {
+    if (a > b) { return a }
     return b
 }
 
-function i_clampBint v, int lo, int hi) -> int {
-    if Bv < lo) { return lo }
-    if Bv > hi) { return hi }
+function i_clamp(int v, int lo, int hi) -> int {
+    if (v < lo) { return lo }
+    if (v > hi) { return hi }
     return v
 }
