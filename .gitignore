@@ -44,3 +44,6 @@ __pycache__/
 aotout/
 .aotbuild-*
 /aotcheck/
+
+# ====================== Log ======================
+*.log
