@@ -3,11 +3,16 @@
 
 每次增删指令后运行:
     python script/gen_isa_docs.py          # 重写 docs/ISA.md 与 docs/reference/isa.md
-    python script/gen_isa_docs.py --check  # 校验两份文档与 isa.py 一致 (CI 使用)
+    python script/gen_isa_docs.py --check  # 校验两份文档与 isa.py 一致
 
 输出两份内容同源、仅标题与站点尾部信息不同的文档:
-    docs/ISA.md            仓库文档 (README / CI / 测试引用)
+    docs/ISA.md            仓库文档 (独立文档仓库 Code-CIN-Docs 根目录的 ISA.md)
     docs/reference/isa.md  官方文档站页面 (VitePress frontmatter + 相关页面链接)
+
+注意: 产物目录 `docs/` 已不在本仓库内 —— 文档站迁到独立仓库 Code-CIN-Docs
+之后本仓库不再有 docs/ 子模块, 因此本脚本要在 Code-CIN-Docs 的检出目录里
+运行 (或把生成结果拷过去)。本仓库的 CI 不再执行 `--check`, ISA 文档一致性
+由文档仓库自己保证; 这里保留脚本是因为文档仓库仍用它生成上面两份文档。
 
 分组 (数值区间) 与 codecin/isa.py Opcode 定义严格一致:
     Base 0-27 | ARM64 28-67 | FP 68-77 | Vector 78-83 | RISC-V 84-110 | SYS 111

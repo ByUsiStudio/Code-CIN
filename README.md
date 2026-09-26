@@ -18,15 +18,17 @@ Code CIN 是一门简洁的类 C 高级语言及其跨平台运行时（VM）。
 
 ## 文档
 
-**官方文档站**位于 `docs/` (VitePress + vitepress-plugin-tabs), 它同时是独立仓库
-[Code-CIN-Docs](https://github.com/ByUsiStudio/Code-CIN-Docs), 以 **git submodule**
-方式内嵌于本仓库; 线上站点即由该子仓库构建:
+**官方文档站**位于独立仓库
+[Code-CIN-Docs](https://github.com/ByUsiStudio/Code-CIN-Docs) (VitePress +
+vitepress-plugin-tabs); 线上站点即由该仓库构建。本仓库不再内嵌 `docs/`
+(子模块已移除), 需要本地预览时请**单独克隆该仓库**:
 
 ```bash
-git submodule update --init --recursive    # 克隆后拉取文档子仓库
-cd docs && npm install
+git clone https://github.com/ByUsiStudio/Code-CIN-Docs.git
+cd Code-CIN-Docs
+npm install
 npm run docs:dev                           # 本地预览 (http://localhost:5173)
-npm run docs:build                         # 构建静态站点到 docs/.vitepress/dist
+npm run docs:build                         # 构建静态站点到 .vitepress/dist
 ```
 
 站点内容划分: `guide/` (安装/快速开始/命令行/执行路径/架构/示例/FAQ)、`language/` (CIN 语言)、
@@ -34,17 +36,17 @@ npm run docs:build                         # 构建静态站点到 docs/.vitepre
 `tools/` (调试器/远程调试/日志/性能/内存缓存)、`reference/` (ISA 编码表/寄存器与内存/Python API/更新日志)、
 `dev/` (项目结构/构建/测试/打包/扩展/贡献)。
 
-仓库内还保留以下**开发用文档** (位于 docs 子仓库, 不进站点, 供源码树内直接查阅):
+仓库的开发用文档**全部在独立仓库** [Code-CIN-Docs](https://github.com/ByUsiStudio/Code-CIN-Docs)
+(不进站点, 供源码树内直接查阅):
 
 | 文档 | 说明 |
 |------|------|
-| [指令集参考 (ISA)](https://github.com/ByUsiStudio/Code-CIN-Docs/blob/main/ISA.md) | 由 `codecin/isa.py` 自动生成的逐条指令表 (唯一真源; 站点版为 `docs/reference/isa.md`) |
+| [指令集参考 (ISA)](https://github.com/ByUsiStudio/Code-CIN-Docs/blob/main/ISA.md) | 由 `codecin/isa.py` 自动生成的逐条指令表 (唯一真源; 站点版为 `reference/isa.md`) |
 | [开发者编译文档 (BUILDING)](https://github.com/ByUsiStudio/Code-CIN-Docs/blob/main/BUILDING.md) | 环境搭建、Go 原生库编译、构建产物、打包、日志系统、扩展指南 |
 | [CIN 编程指南 (CIN_GUIDE)](https://github.com/ByUsiStudio/Code-CIN-Docs/blob/main/CIN_GUIDE.md) | CIN 高级语言完整语法：类型/函数/struct/数组/字符串/内建函数 |
 | [远程调试协议 (REMOTE_DEBUG)](https://github.com/ByUsiStudio/Code-CIN-Docs/blob/main/REMOTE_DEBUG.md) | `--debug-server` 换行文本协议：命令/响应/状态机/示例会话 |
 
-> 本地克隆后这些文件位于 `docs/` 子仓库内 (例如 `docs/ISA.md`), 需先
-> `git submodule update --init --recursive`。
+> 这些文件不在本仓库内: 需要时单独 `git clone` 上述文档仓库即可。
 
 ---
 
@@ -232,7 +234,8 @@ pie title Code CIN 指令集组成
 ```
 
 > 指令总数与分组由 `python script/gen_isa_docs.py` 依据 `codecin/isa.py` 自动生成/校验;
-> 完整的逐条指令表见 [docs/ISA.md](docs/ISA.md)。ARM64 的 WFE/WFI/SEV 无事件模型, 语义等同 NOP。
+> 完整的逐条指令表见 [ISA.md](https://github.com/ByUsiStudio/Code-CIN-Docs/blob/main/ISA.md)
+> (文档站已在独立仓库)。ARM64 的 WFE/WFI/SEV 无事件模型, 语义等同 NOP。
 
 ### 指令分类
 
@@ -433,7 +436,6 @@ codecin --version
 
 ```bash
 python -m pytest                            # 指令黄金 / 三路径一致性 / 断点回归 / 内存保护 / CLI
-python script/gen_isa_docs.py --check       # docs/ISA.md 与指令集同步
 python script/gen_native_isa.py --check     # Go 原生常量与指令集同步
 ruff check codecin cpu.py script tests
 ```
@@ -441,7 +443,8 @@ ruff check codecin cpu.py script tests
 仓库内置 GitHub Actions CI (`.github/workflows/ci.yml`): 多 Python 版本测试、ruff、Go 构建校验,
 一个 `integration` 作业会**真实编译原生库**后跑全量测试 (带覆盖率门槛),
 以及一个 `dist` 作业断言 wheel/sdist 里确实带有内置标准库。
-完整逐条指令表由 `script/gen_isa_docs.py` 从 `codecin/isa.py` 生成至 [docs/ISA.md](docs/ISA.md)。
+完整逐条指令表由 `script/gen_isa_docs.py` 从 `codecin/isa.py` 生成到文档仓库
+([ISA.md](https://github.com/ByUsiStudio/Code-CIN-Docs/blob/main/ISA.md))。
 
 ### 执行路径
 
