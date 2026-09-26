@@ -23,16 +23,12 @@ jobs:
       #   * 手动触发  -> 检出默认分支 (此时 tag 通常还不存在, 发布步骤会创建它)
       # 直接写 ref: ${{ github.event.inputs.tag }} 会让手动触发去 fetch 一个还不
       # 存在的 ref, actions/checkout 会直接失败。
-      - uses: actions/checkout@v4
+      # 注意: 本仓库无子模块 (文档站已迁至独立仓库 Code-CIN-Docs), 不要加 submodules。
+      - uses: actions/checkout@v6
         with:
-          # docs/ 是官方文档站子仓库 (Code-CIN-Docs)
-          submodules: recursive
-        with:
-          # docs/ 是官方文档站子仓库 (Code-CIN-Docs)
-          submodules: recursive
           ref: ${{ github.event_name == 'push' && github.ref || '' }}
           fetch-depth: 0
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.11"
       - name: tag 必须等于包版本, CHANGELOG 必须已记录, 且已有 tag 必须指向本次构建的提交
@@ -110,13 +106,11 @@ jobs:
             asset: codecin_native-windows-x64.dll
             ldflags: ''
     steps:
-      - uses: actions/checkout@v4
-        with:
-          # docs/ 是官方文档站子仓库 (Code-CIN-Docs)
-          submodules: recursive
+      # 本仓库无子模块 (文档站已迁至独立仓库 Code-CIN-Docs): 不要加 submodules: recursive。
+      - uses: actions/checkout@v6
         with:
           ref: ${{ github.event_name == 'push' && github.ref || '' }}
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: codecin/native/go.mod
           cache: true
@@ -154,7 +148,7 @@ jobs:
       - name: 清理 c-shared 头文件
         shell: bash
         run: rm -f codecin/*.h
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: native-${{ matrix.slug }}
           path: codecin/${{ matrix.asset }}
@@ -166,16 +160,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
-        with:
-          # docs/ 是官方文档站子仓库 (Code-CIN-Docs)
-          submodules: recursive
+      # 本仓库无子模块 (文档站已迁至独立仓库 Code-CIN-Docs): 不要加 submodules: recursive。
+      - uses: actions/checkout@v6
         with:
           ref: ${{ github.event_name == 'push' && github.ref || '' }}
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.11"
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: codecin/native/go.mod
           cache: true
@@ -214,7 +206,7 @@ jobs:
           cd /tmp
           printf 'import "str.cin"\nfunction main() -> int { println(strlen(s_repeat("ab", 3))) return 0 }\n' > libsmoke.cin
           /tmp/venv/bin/codecin libsmoke.cin --no-native
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: python-dist
           path: dist/*
@@ -225,13 +217,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
-        with:
-          # docs/ 是官方文档站子仓库 (Code-CIN-Docs)
-          submodules: recursive
+      # 本仓库无子模块 (文档站已迁至独立仓库 Code-CIN-Docs): 不要加 submodules: recursive。
+      - uses: actions/checkout@v6
         with:
           ref: ${{ github.event_name == 'push' && github.ref || '' }}
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           path: artifacts
       - name: 汇总资产
@@ -241,7 +231,7 @@ jobs:
             -o -name '*.dll' -o -name '*.whl' -o -name '*.tar.gz' \) \
             -exec cp {} release-assets/ \;
           ls -l release-assets
-      - uses: softprops/action-gh-release@v2
+      - uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ github.event.inputs.tag || github.ref_name }}
           files: release-assets/*

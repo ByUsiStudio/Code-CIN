@@ -2,9 +2,11 @@ package compiler
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"testing"
 
+	"codecin-native/engine"
 	"codecin-native/ir"
 )
 
@@ -160,5 +162,109 @@ func TestCompileIsDeterministic(t *testing.T) {
 	b := compileOK(t, src)
 	if a != b {
 		t.Fatal("同一输入的编译产物不稳定")
+	}
+}
+
+// runCompiled 编译 CIN 源码并在 Go VM 中执行, 返回 x0 (main 的返回值)。
+func runCompiled(t *testing.T, src string) uint64 {
+	t.Helper()
+	prog, err := Compile(src, "t.cin", false)
+	if err != nil {
+		t.Fatalf("编译失败: %v", err)
+	}
+	bc, err := engine.EncodeProgram(*prog, 0)
+	if err != nil {
+		t.Fatalf("编码失败: %v", err)
+	}
+	mem := make([]byte, 64*1024)
+	for _, dw := range prog.DataWrites {
+		copy(mem[dw.Addr:], dw.Data)
+	}
+	res := engine.Run(bc, mem, 0, int64(len(mem)-8), int64(len(mem)/2),
+		nil, 100_000_000)
+	if res == nil {
+		t.Fatal("Run 返回 nil")
+	}
+	if res.ErrMsg != "" {
+		t.Fatalf("运行期错误: %s", res.ErrMsg)
+	}
+	if res.Status != engine.StatusOK {
+		t.Fatalf("非正常结束: status=%d", res.Status)
+	}
+	return res.Regs[0]
+}
+
+// TestFloatSubscriptIsTruncatedToInt 锁定子集 issue #1 的 Go 侧修复。
+//
+// `/` 恒为浮点除法, 所以 `a[(lo + hi) / 2]` 的下标是 float。修复前 genIndex
+// 把这个 float 的 IEEE-754 位模式直接当作字节偏移 (于是 249.5 变成
+// 0x0379_8000_0000_0000), 标准 Hoare 快排第一次取枢轴就越界崩溃。
+func TestFloatSubscriptIsTruncatedToInt(t *testing.T) {
+	src := `
+int G_C[500]
+
+function qrec(int lo, int hi) -> void {
+    if (lo >= hi) { return }
+    int p = G_C[(lo + hi) / 2]
+    int i = lo
+    int j = hi
+    while (i <= j) {
+        while (i <= j && G_C[i] < p) { i = i + 1 }
+        while (i <= j && G_C[j] > p) { j = j - 1 }
+        if (i <= j) {
+            int t = G_C[i]
+            G_C[i] = G_C[j]
+            G_C[j] = t
+            i = i + 1
+            j = j - 1
+        }
+    }
+    qrec(lo, j)
+    qrec(i, hi)
+}
+
+function main() -> int {
+    for (int i = 0; i < 500; i++) {
+        G_C[i] = (i * 7919 + 13) % 10007
+    }
+    qrec(0, 499)
+    for (int i = 0; i < 499; i++) {
+        if (G_C[i] > G_C[i + 1]) { return 1000000000 + i }
+    }
+    return G_C[0] * 10007 + G_C[499]
+}`
+
+	vals := make([]int, 500)
+	for i := range vals {
+		vals[i] = (i*7919 + 13) % 10007
+	}
+	sort.Ints(vals)
+	want := uint64(vals[0]*10007 + vals[len(vals)-1])
+	if got := runCompiled(t, src); got != want {
+		t.Fatalf("快排结果 x0 = %d, 期望 %d (未排序或越界)", got, want)
+	}
+}
+
+func TestFloatSubscriptTruncatesTowardZero(t *testing.T) {
+	// float 下标与 `int x = 1.9` 一致: 向零截断; -0.5 -> 0。
+	src := `
+function main() -> int {
+    int a[4]
+    a[0] = 7
+    a[1] = 20
+    a[2] = 30
+    a[3] = 40
+    float f = 1.9
+    int r = a[f]
+    float g = 3.0
+    a[g - 0.5] = 99
+    float neg = -0.5
+    string s = "ABC"
+    int ch = s[1.9]
+    return r + a[2] + a[neg] + ch
+}`
+	// 20 + 99 + 7 + 'B'(66) = 192
+	if got := runCompiled(t, src); got != 192 {
+		t.Fatalf("x0 = %d, 期望 192", got)
 	}
 }

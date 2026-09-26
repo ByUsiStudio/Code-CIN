@@ -1,4 +1,8 @@
-"""ISA 完整性: Opcode 枚举、分组计数、dispatch 注册与文档生成一致性。"""
+"""ISA 完整性: Opcode 枚举、分组计数、dispatch 注册, 与仓库内生成物一致性。
+
+注: ISA 指令表文档 (`docs/ISA.md` / `docs/reference/isa.md`) 随文档站迁至
+独立仓库 Code-CIN-Docs, 不在这里校验 (生成脚本 script/gen_isa_docs.py 仍保留)。
+"""
 
 import os
 import subprocess
@@ -53,14 +57,6 @@ def test_wfe_wfi_sev_are_nop_aliases():
     cpu = CPU(Config(interactive_mode=False, log_level='ERROR', use_native=False))
     for name in ('WFE', 'WFI', 'SEV'):
         assert cpu._dispatch[name] == cpu._op_nop
-
-
-def test_gen_isa_docs_up_to_date():
-    """docs/ISA.md 必须与 isa.py 同步 (建议 9)。"""
-    r = subprocess.run([sys.executable, os.path.join(ROOT, 'script', 'gen_isa_docs.py'),
-                        '--check'], capture_output=True, text=True,
-                       cwd=ROOT)
-    assert r.returncode == 0, f"docs/ISA.md 过期: {r.stdout} {r.stderr}"
 
 
 def test_gen_native_isa_up_to_date():
