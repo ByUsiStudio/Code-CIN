@@ -1,5 +1,5 @@
 ---
-description: 把 Code CIN 当作 Python 库使用: 包导出、Config 全部字段、CPU 构造与运行、异常层次、原生/JIT/AOT/CROM/反汇编/统计入口。
+description: "把 Code CIN 当作 Python 库使用: 包导出、Config 全部字段、CPU 构造与运行、异常层次、原生/JIT/AOT/CROM/反汇编/统计入口。"
 ---
 
 # Python 嵌入 API

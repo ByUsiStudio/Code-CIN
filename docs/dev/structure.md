@@ -1,5 +1,5 @@
 ---
-description: Code CIN 仓库结构: Python 包各模块职责、Go 原生库各包、tests/script/examples/misc 目录、三语言输入与三执行路径、常量单一真源与"改一处要同步哪些文件"。
+description: "Code CIN 仓库结构: Python 包各模块职责、Go 原生库各包、tests/script/examples/misc 目录、三语言输入与三执行路径、常量单一真源与\"改一处要同步哪些文件\"。"
 ---
 
 # 项目结构

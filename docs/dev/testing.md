@@ -1,5 +1,5 @@
 ---
-description: Code CIN 的测试与 CI: 安装开发依赖、pytest、ruff、两个文档/常量一致性检查、三路径验收、tests/ 逐文件覆盖点、CI 作业与本地复现命令。
+description: "Code CIN 的测试与 CI: 安装开发依赖、pytest、ruff、两个文档/常量一致性检查、三路径验收、tests/ 逐文件覆盖点、CI 作业与本地复现命令。"
 ---
 
 # 测试与 CI

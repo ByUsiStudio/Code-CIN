@@ -1,5 +1,5 @@
 ---
-description: Code CIN 的寄存器与内存模型: X0–X31/XZR、V0–V31 向量寄存器、SP/PC/NZCV、别名、内存布局与默认值、栈帧与调用约定、小端字节序、内存保护与 MMU 分页。
+description: "Code CIN 的寄存器与内存模型: X0–X31/XZR、V0–V31 向量寄存器、SP/PC/NZCV、别名、内存布局与默认值、栈帧与调用约定、小端字节序、内存保护与 MMU 分页。"
 ---
 
 # 寄存器与内存模型

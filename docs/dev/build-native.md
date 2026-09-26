@@ -1,5 +1,5 @@
 ---
-description: 编译 Code CIN 的 Go 原生库: Go 1.26+ 与 cgo 环境要求、三平台构建命令、产物路径、静态链接策略与 CODECIN_STATIC、//go:build 约定、跨平台自检与常量生成脚本。
+description: "编译 Code CIN 的 Go 原生库: Go 1.26+ 与 cgo 环境要求、三平台构建命令、产物路径、静态链接策略与 CODECIN_STATIC、//go:build 约定、跨平台自检与常量生成脚本。"
 ---
 
 # 编译 Go 原生库
