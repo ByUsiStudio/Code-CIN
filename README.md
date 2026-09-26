@@ -399,7 +399,8 @@ flowchart TD
 **安装（pip）**
 
 ```bash
-pip install codecin          # 内置标准库 (codecin/lib/*.cin) 随包分发
+pip install codecin          # 安装 (内置标准库 codecin/lib/*.cin 随包分发)
+pip install -U codecin       # 升级到最新版 (不要锁定版本号)
 codecin --version
 ```
 
