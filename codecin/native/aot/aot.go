@@ -1,15 +1,3 @@
-// Package aot 提供 AOT 构建: 把 CIN 程序编译成**独立静态可执行文件**。
-//
-// 产物不依赖 Python、不依赖 Go 工具链、不依赖任何动态库:
-// 字节码与初始内存镜像被嵌入二进制, 由内置的 Go VM 执行
-// (构建时 CGO_ENABLED=0, 因此 Windows / Linux / macOS 均为静态链接)。
-//
-// 构建流程 (Build):
-//  1. 在 codecin-native 模块内创建临时包目录 .aotbuild-<rand>/
-//     (Go 工具链会忽略以 '.' 开头的目录, 因此不影响 go build ./...);
-//  2. 写入 main.go (由共享模板 stub_main.go.txt 提供) 与两个资源文件;
-//  3. CGO_ENABLED=0 + GOOS/GOARCH 交叉编译出目标平台可执行文件;
-//  4. 删除临时目录。
 package aot
 
 import (
@@ -21,9 +9,6 @@ import (
 	"codecin-native/engine"
 )
 
-// StubSource 是生成的 main.go 模板, 与 Python 侧 codecin/aot.py 共用同一份
-// 文件 (codecin/native/aot/stub_main.go.txt), 避免两处模板漂移。
-//
 //go:embed stub_main.go.txt
 var stubSource string
 

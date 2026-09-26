@@ -12,8 +12,6 @@ import (
 	"codecin-native/ir"
 )
 
-// ---------------- 代码生成 ----------------
-
 // hostBuiltin 宿主能力内建 (表驱动): 名称 -> (SYS 号, 参数个数, 返回类型)。
 type hostBuiltin struct {
 	sysID int64
@@ -964,7 +962,8 @@ func (c *compiler) genIndex(baseNode, idxNode *Node, lvalue bool) *Type {
 			return nil
 		}
 		c.emit("MOV", c.reg(3), c.reg(0))
-		c.genValue(idxNode)
+		idxT := c.genValue(idxNode)
+		c.convert(idxT, scalarT(kInt)) // 下标是 int 上下文
 		c.emit("ADD", c.reg(0), c.reg(3))
 		c.emit("LB", c.reg(0), ir.Mem(0, 0))
 		c.emit("ANDI", c.reg(0), c.reg(0), c.imm(0xFF))
@@ -977,8 +976,11 @@ func (c *compiler) genIndex(baseNode, idxNode *Node, lvalue bool) *Type {
 	elemT := baseT.Elem
 
 	c.emit("MOV", c.reg(3), c.reg(0))
-	c.genValue(idxNode)
-
+	idxT := c.genValue(idxNode)
+	// 下标是 int 上下文 (与赋值/传参/返回一致): float 隐式截断为 int。
+	// 缺这一步时 float 的 IEEE-754 位模式会被当作字节偏移直接乘 8,
+	// 产生 0x0379_8000_0000_0000 之类的高位垃圾地址 (issue #1)。
+	c.convert(idxT, scalarT(kInt))
 	if c.bounds && isFixedArray(baseT) {
 		size := baseT.Size
 		lGe := c.newLabel("bndok")

@@ -1908,7 +1908,8 @@ class CodeGen:
                 raise CompilerError(
                     "Cannot assign to string element (strings are immutable)")
             self.emit('MOV', self.reg(3), self.reg(0))   # x3 = 字符串基址
-            self.gen_value(idx_node)                    # x0 = index
+            idx_t = self.gen_value(idx_node)            # x0 = index
+            self._convert(idx_t, 'int')                 # 下标是 int 上下文
             self.emit('ADD', self.reg(0), self.reg(3))  # x0 = base + i (字节偏移)
             self.emit('LB', self.reg(0), ('mem', 0, 0))  # 读 1 字节 (符号扩展)
             self.emit('ANDI', self.reg(0), self.reg(0), self.imm(0xFF))  # 0..255
@@ -1920,7 +1921,11 @@ class CodeGen:
 
         # x0 = base pointer; 计算 elem 地址
         self.emit('MOV', self.reg(3), self.reg(0))  # x3 = base
-        self.gen_value(idx_node)                    # x0 = index
+        idx_t = self.gen_value(idx_node)            # x0 = index
+        # 下标是 int 上下文 (与赋值/传参/返回一致): float 隐式截断为 int。
+        # 缺这一步时 float 的 IEEE-754 位模式会被当作字节偏移直接乘 8,
+        # 产生 0x0379_8000_0000_0000 之类的高位垃圾地址 (issue #1)。
+        self._convert(idx_t, 'int')
 
         # A1 --bounds-check: 定长数组索引 0 <= i < size
         if self._bounds and _is_fixed_array(base_t):
