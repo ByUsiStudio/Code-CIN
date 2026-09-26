@@ -34,14 +34,17 @@ npm run docs:build                         # 构建静态站点到 docs/.vitepre
 `tools/` (调试器/远程调试/日志/性能/内存缓存)、`reference/` (ISA 编码表/寄存器与内存/Python API/更新日志)、
 `dev/` (项目结构/构建/测试/打包/扩展/贡献)。
 
-仓库内还保留以下**开发用文档** (不进站点, 供源码树内直接查阅):
+仓库内还保留以下**开发用文档** (位于 docs 子仓库, 不进站点, 供源码树内直接查阅):
 
 | 文档 | 说明 |
 |------|------|
-| [指令集参考 (ISA)](docs/ISA.md) | 由 `codecin/isa.py` 自动生成的逐条指令表 (唯一真源; 站点版为 `docs/reference/isa.md`) |
-| [开发者编译文档 (BUILDING)](docs/BUILDING.md) | 环境搭建、Go 原生库编译、构建产物、打包、日志系统、扩展指南 |
-| [CIN 编程指南 (CIN_GUIDE)](docs/CIN_GUIDE.md) | CIN 高级语言完整语法：类型/函数/struct/数组/字符串/内建函数 |
-| [远程调试协议 (REMOTE_DEBUG)](docs/REMOTE_DEBUG.md) | `--debug-server` 换行文本协议：命令/响应/状态机/示例会话 |
+| [指令集参考 (ISA)](https://github.com/ByUsiStudio/Code-CIN-Docs/blob/main/ISA.md) | 由 `codecin/isa.py` 自动生成的逐条指令表 (唯一真源; 站点版为 `docs/reference/isa.md`) |
+| [开发者编译文档 (BUILDING)](https://github.com/ByUsiStudio/Code-CIN-Docs/blob/main/BUILDING.md) | 环境搭建、Go 原生库编译、构建产物、打包、日志系统、扩展指南 |
+| [CIN 编程指南 (CIN_GUIDE)](https://github.com/ByUsiStudio/Code-CIN-Docs/blob/main/CIN_GUIDE.md) | CIN 高级语言完整语法：类型/函数/struct/数组/字符串/内建函数 |
+| [远程调试协议 (REMOTE_DEBUG)](https://github.com/ByUsiStudio/Code-CIN-Docs/blob/main/REMOTE_DEBUG.md) | `--debug-server` 换行文本协议：命令/响应/状态机/示例会话 |
+
+> 本地克隆后这些文件位于 `docs/` 子仓库内 (例如 `docs/ISA.md`), 需先
+> `git submodule update --init --recursive`。
 
 ---
 

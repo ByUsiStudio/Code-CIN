@@ -13,6 +13,11 @@ recursive-include docs *.md
 prune docs/node_modules
 prune docs/.vitepress
 prune docs/.pnpm-store
+# 注: Go 构建缓存 (AOT 构建器在只读 HOME 下的回退目录) 不属于源码。
+prune codecin/native/.gocache
+# 兜底: 任何本地编译出的预编译库都不得进入 sdist —— 即使 egg-info/SOURCES.txt
+# 里残留了历史条目 (setuptools 会保留已存在文件的旧清单), 这里也强制排除。
+global-exclude *.dll *.so *.dylib
 recursive-include misc *
 recursive-include examples *.cin *.asm *.pl
 recursive-include script *.py
