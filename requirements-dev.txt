@@ -3,3 +3,7 @@
 pytest>=7
 pytest-cov>=5
 ruff>=0.5
+# tests/test_workflows.py 用 yaml 做 GitHub Actions 工作流静态校验;
+# 缺了它该模块会被 pytest.importorskip 整块跳过 —— 工作流里的语法/重复键
+# 错误就只有在 GitHub 上才会暴露 (release.yml 曾因此被判 Invalid workflow file)。
+PyYAML>=6

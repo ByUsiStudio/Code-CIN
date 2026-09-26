@@ -5,10 +5,15 @@ GitHub Actions 的**表达式函数集里没有 `replace`**, 整个工作流因�
 `Invalid workflow file` —— 而且只有在 GitHub 上才会暴露。
 
 本测试在本地拦住这一类错误:
-  * 所有工作流 YAML 必须可解析;
+  * 所有工作流 YAML 必须可解析, 且**同层不得出现重复键**
+    (PyYAML 默认静默后者覆盖前者, GitHub 则直接判 Invalid workflow file ——
+    release.yml 的 checkout 步骤曾出现两个 `with:`, 正是这类错误);
   * `${{ ... }}` 里调用的函数必须在 GitHub 支持的函数集内;
   * `matrix.<key>` 引用的键必须在同一 job 的 matrix 中声明;
   * 每个 job 有 runs-on 与 steps, 每个 step 有 uses 或 run。
+
+注: 依赖 `yaml`。PyYAML 不在 requirements-dev.txt 里时整个模块会被
+importorskip 跳过, 这些门禁就等于不存在。
 """
 
 import os
@@ -36,6 +41,32 @@ MATRIX_REF_RE = re.compile(r'\bmatrix\.([A-Za-z_][A-Za-z0-9_-]*)')
 QUOTED_RE = re.compile(r"'(?:[^']|'')*'")
 
 
+class _StrictLoader(yaml.SafeLoader):
+    """SafeLoader + 重复键报错。
+
+    PyYAML 默认遇到重复键"后者覆盖前者", 而 GitHub Actions 会直接判
+    `Invalid workflow file`。这样本地就能拦住 release.yml 曾经那种
+    "同一个 step 里写两个 with:" 的错误。
+    """
+
+
+def _construct_mapping_no_duplicates(loader, node, deep=False):
+    mapping = {}
+    for key_node, value_node in node.value:
+        key = loader.construct_object(key_node, deep=deep)
+        if key in mapping:
+            raise yaml.constructor.ConstructorError(
+                'while constructing a mapping', node.start_mark,
+                f'found duplicate key {key!r}', key_node.start_mark)
+        mapping[key] = loader.construct_object(value_node, deep=deep)
+    return mapping
+
+
+_StrictLoader.add_constructor(
+    yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG,
+    _construct_mapping_no_duplicates)
+
+
 def _workflow_files():
     if not os.path.isdir(WORKFLOW_DIR):
         return []
@@ -45,7 +76,7 @@ def _workflow_files():
 
 def _load(name):
     with open(os.path.join(WORKFLOW_DIR, name), encoding='utf-8') as f:
-        return yaml.safe_load(f)
+        return yaml.load(f, Loader=_StrictLoader)
 
 
 def _strings(obj):
@@ -78,7 +109,10 @@ assert FILES, '未找到任何工作流文件'
 
 @pytest.mark.parametrize('name', FILES)
 def test_workflow_parses(name):
-    doc = _load(name)
+    try:
+        doc = _load(name)
+    except yaml.YAMLError as e:
+        pytest.fail(f'{name}: YAML 不合法 (GitHub 会判 Invalid workflow file): {e}')
     assert isinstance(doc, dict) and 'jobs' in doc, f'{name}: 缺少 jobs'
 
 

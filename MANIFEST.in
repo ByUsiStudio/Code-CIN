@@ -7,12 +7,8 @@ recursive-include codecin/lib *.cin
 recursive-include codecin/native *.go *.txt go.mod go.sum build.sh build.ps1
 # 注: 不 include 预编译原生库 (*.dll/*.so/*.dylib) —— 它们在用户安装时由
 # setup.py 现场编译, 见 pyproject.toml 的 package-data 说明。
-recursive-include docs *.md
-# 注: docs/ 同时是官方文档站 (独立仓库, git submodule), 站点依赖与构建产物
-# 绝不能进 sdist —— node_modules 里含有大量 *.md, 会被上面的 recursive-include 误收。
-prune docs/node_modules
-prune docs/.vitepress
-prune docs/.pnpm-store
+# 注: 文档站已迁至独立仓库 Code-CIN-Docs, 本仓库不再有 docs/ —— 这里不收
+# docs 内容, 以免本地残留的文档检出 (node_modules 里有大量 *.md) 被误打进 sdist。
 # 注: Go 构建缓存 (AOT 构建器在只读 HOME 下的回退目录) 不属于源码。
 prune codecin/native/.gocache
 # 兜底: 任何本地编译出的预编译库都不得进入 sdist —— 即使 egg-info/SOURCES.txt
