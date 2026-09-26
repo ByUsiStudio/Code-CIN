@@ -645,9 +645,15 @@ func (c *compiler) genInit2dLiteral(name string, t *Type, lit *Node) {
 		c.emit("ADDI", c.reg(0), c.reg(0), c.imm(int64(i*8)))
 		c.emit("SD", c.reg(5), ir.Mem(0, 0))
 		for j, elem := range row {
+			// x4 (outer) 与 x5 (当前行) 要跨元素表达式求值存活, 而元素里
+			// 可能有函数调用/嵌套下标 (会覆盖 x1..x6), 因此先存栈。
+			c.emit("PUSH", c.reg(4))
+			c.emit("PUSH", c.reg(5))
 			vt := c.genValue(elem)
 			c.convert(vt, scalarT(kInt))
-			c.emit("MOV", c.reg(2), c.reg(0))
+			c.emit("MOV", c.reg(2), c.reg(0)) // x2 = value
+			c.emit("POP", c.reg(5))
+			c.emit("POP", c.reg(4))
 			c.emit("MOV", c.reg(0), c.reg(5))
 			if j != 0 {
 				c.emit("ADDI", c.reg(0), c.reg(0), c.imm(int64(j*8)))
@@ -961,9 +967,12 @@ func (c *compiler) genIndex(baseNode, idxNode *Node, lvalue bool) *Type {
 			c.failf("Cannot assign to string index")
 			return nil
 		}
-		c.emit("MOV", c.reg(3), c.reg(0))
+		// 基址必须存栈: 下标表达式里可能有嵌套下标/函数调用, 它们会覆盖
+		// x1..x6。s[B[i]] 曾因此把字符串基址弄丢, 读出错误内存。
+		c.emit("PUSH", c.reg(0))
 		idxT := c.genValue(idxNode)
 		c.convert(idxT, scalarT(kInt)) // 下标是 int 上下文
+		c.emit("POP", c.reg(3))
 		c.emit("ADD", c.reg(0), c.reg(3))
 		c.emit("LB", c.reg(0), ir.Mem(0, 0))
 		c.emit("ANDI", c.reg(0), c.reg(0), c.imm(0xFF))
@@ -975,7 +984,11 @@ func (c *compiler) genIndex(baseNode, idxNode *Node, lvalue bool) *Type {
 	}
 	elemT := baseT.Elem
 
-	c.emit("MOV", c.reg(3), c.reg(0))
+	// 基址必须存栈, 不能用寄存器"暂存": 下标表达式里可能有嵌套下标或函数
+	// 调用, 它们会覆盖 x1..x6。此前 base 放在 x3, 于是 A[B[i]] 的内层下标
+	// 把 x3 改成 B 的基址, 外层 ADD 用 B 的基址当 A 的 —— 读错地址, 写的
+	// 时候直接写坏别的内存 (静默, 不报错)。
+	c.emit("PUSH", c.reg(0))
 	idxT := c.genValue(idxNode)
 	// 下标是 int 上下文 (与赋值/传参/返回一致): float 隐式截断为 int。
 	// 缺这一步时 float 的 IEEE-754 位模式会被当作字节偏移直接乘 8,
@@ -998,6 +1011,7 @@ func (c *compiler) genIndex(baseNode, idxNode *Node, lvalue bool) *Type {
 	scale := typeSlots(elemT) * 8
 	c.emit("MOV", c.reg(1), c.imm(int64(scale)))
 	c.emit("MUL", c.reg(0), c.reg(1))
+	c.emit("POP", c.reg(3)) // x3 = base (存栈时压入的)
 	c.emit("ADD", c.reg(0), c.reg(3))
 
 	if lvalue {
@@ -1028,8 +1042,10 @@ func (c *compiler) genAssign(target, valueNode *Node) *Type {
 	vt := c.genValue(valueNode)
 	tt := c.exprType(target)
 	c.convert(vt, tt)
-	c.emit("MOV", c.reg(2), c.reg(0))
+	// 左值地址求值可能覆盖 x1..x6 (例如 A[f(i)] = v), 值必须存栈。
+	c.emit("PUSH", c.reg(0))
 	c.genLvalueAddr(target)
+	c.emit("POP", c.reg(2))
 	c.emit("SD", c.reg(2), ir.Mem(0, 0))
 	return tt
 }

@@ -268,3 +268,101 @@ function main() -> int {
 		t.Fatalf("x0 = %d, 期望 192", got)
 	}
 }
+
+// TestNestedSubscriptUsesCorrectBase 覆盖"临时值必须溢出到栈"这一类缺陷。
+//
+// 编译器没有寄存器分配器, 约定是任何跨另一个子表达式存活的临时值都要存栈
+// (子表达式会随意覆盖 x1..x6)。genIndex 曾把数组/字符串基址暂存在 x3, 于是
+// A[B[i]] 的内层下标把 x3 改成 B 的基址, 外层就用 &B[0] 当 A 的地址 ——
+// 读错值、写坏内存, 且不报任何错。genAssign / genInit2dLiteral 有同一问题。
+func TestNestedSubscriptUsesCorrectBase(t *testing.T) {
+	cases := []struct {
+		name string
+		src  string
+		want uint64
+	}{
+		{"nested_read", `
+int A[8]
+int B[8]
+function main() -> int {
+    for (int i = 0; i < 8; i++) { B[i] = 7 - i }
+    A[0] = 100
+    A[7] = 700
+    return A[B[7]]
+}`, 100},
+		{"nested_write", `
+int A[8]
+int B[8]
+function main() -> int {
+    B[0] = 3
+    A[3] = 0
+    A[B[0]] = 77
+    return A[3]
+}`, 77},
+		{"call_in_lvalue_index", `
+int A[8]
+function idx(int n) -> int { int t = n * 2
+return t }
+function main() -> int {
+    A[6] = 0
+    A[idx(3)] = 42
+    return A[6]
+}`, 42},
+		{"nested_string_index", `
+int B[4]
+function main() -> int {
+    string s = "ABC"
+    B[0] = 1
+    return s[B[0]]
+}`, 66},
+		{"three_levels", `
+int A[8]
+int B[8]
+int C[8]
+function main() -> int {
+    C[0] = 2
+    B[2] = 5
+    A[5] = 91
+    return A[B[C[0]]]
+}`, 91},
+		{"nested_in_2d_row", `
+int B[4]
+function main() -> int {
+    int m[3][4]
+    B[0] = 2
+    m[2][3] = 55
+    return m[B[0]][3]
+}`, 55},
+		{"compound_through_nested", `
+int A[8]
+int B[8]
+function main() -> int {
+    B[0] = 4
+    A[4] = 10
+    A[B[0]] += 5
+    return A[4]
+}`, 15},
+		{"float_nested_index", `
+int A[8]
+int B[8]
+function main() -> int {
+    B[0] = 6
+    A[3] = 44
+    return A[B[0] / 2]
+}`, 44},
+		{"ptrarray_literal_with_calls", `
+function g(int n) -> int { int t = n * 10
+return t }
+function main() -> int {
+    int[][] m = {{g(1), g(2)}, {g(3), g(4)}}
+    return m[0][0] * 1000 + m[0][1] * 100 + m[1][0] * 10 + m[1][1]
+}`, 12340},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := runCompiled(t, c.src); got != c.want {
+				t.Fatalf("x0 = %d, 期望 %d (嵌套下标算错基址)", got, c.want)
+			}
+		})
+	}
+}

@@ -1664,9 +1664,15 @@ class CodeGen:
             self.emit('ADDI', self.reg(0), self.reg(0), self.imm(i * 8))
             self.emit('SD', self.reg(5), ('mem', 0, 0))
             for j, elem in enumerate(row):
+                # x4 (outer) 与 x5 (当前行) 要跨元素表达式求值存活, 而元素里
+                # 可能有函数调用/嵌套下标 (会覆盖 x1..x6), 因此先存栈。
+                self.emit('PUSH', self.reg(4))
+                self.emit('PUSH', self.reg(5))
                 vt = self.gen_value(elem)
                 self._convert(vt, 'int')
-                self.emit('MOV', self.reg(2), self.reg(0))
+                self.emit('MOV', self.reg(2), self.reg(0))   # x2 = value
+                self.emit('POP', self.reg(5))                # 恢复当前行
+                self.emit('POP', self.reg(4))                # 恢复 outer
                 self.emit('MOV', self.reg(0), self.reg(5))
                 if j:
                     self.emit('ADDI', self.reg(0), self.reg(0), self.imm(j * 8))
@@ -1907,9 +1913,12 @@ class CodeGen:
             if lvalue:
                 raise CompilerError(
                     "Cannot assign to string element (strings are immutable)")
-            self.emit('MOV', self.reg(3), self.reg(0))   # x3 = 字符串基址
+            # 基址必须存栈: 下标表达式里可能有嵌套下标/函数调用, 它们会覆盖
+            # x1..x6。s[B[i]] 曾因此把字符串基址弄丢, 读出错误内存。
+            self.emit('PUSH', self.reg(0))               # 保存字符串基址
             idx_t = self.gen_value(idx_node)            # x0 = index
             self._convert(idx_t, 'int')                 # 下标是 int 上下文
+            self.emit('POP', self.reg(3))                # x3 = 字符串基址
             self.emit('ADD', self.reg(0), self.reg(3))  # x0 = base + i (字节偏移)
             self.emit('LB', self.reg(0), ('mem', 0, 0))  # 读 1 字节 (符号扩展)
             self.emit('ANDI', self.reg(0), self.reg(0), self.imm(0xFF))  # 0..255
@@ -1919,8 +1928,12 @@ class CodeGen:
         else:
             raise CompilerError(f"Indexing non-array type: {base_t}")
 
-        # x0 = base pointer; 计算 elem 地址
-        self.emit('MOV', self.reg(3), self.reg(0))  # x3 = base
+        # x0 = base pointer; 计算 elem 地址。
+        # 基址必须存栈, 不能用寄存器"暂存": 下标表达式里可能有嵌套下标或函数
+        # 调用, 它们会覆盖 x1..x6。此前 base 放在 x3, 于是 A[B[i]] 的内层下标
+        # 把 x3 改成 B 的基址, 外层 ADD 用 B 的基址当 A 的 —— 读错地址, 写的
+        # 时候直接写坏别的内存 (静默, 不报错)。
+        self.emit('PUSH', self.reg(0))              # 保存 base
         idx_t = self.gen_value(idx_node)            # x0 = index
         # 下标是 int 上下文 (与赋值/传参/返回一致): float 隐式截断为 int。
         # 缺这一步时 float 的 IEEE-754 位模式会被当作字节偏移直接乘 8,
@@ -1944,6 +1957,7 @@ class CodeGen:
         scale = _type_slots(elem_t) * 8
         self.emit('MOV', self.reg(1), self.imm(scale))
         self.emit('MUL', self.reg(0), self.reg(1))  # x0 = index * scale
+        self.emit('POP', self.reg(3))               # x3 = base (存栈时压入的)
         self.emit('ADD', self.reg(0), self.reg(3))  # x0 = elem 地址
 
         if lvalue:
@@ -1976,8 +1990,10 @@ class CodeGen:
         # 目标类型
         tt = self._expr_type(target)
         self._convert(vt, tt)
-        self.emit('MOV', self.reg(2), self.reg(0))  # value
+        # 左值地址求值可能覆盖 x1..x6 (例如 A[f(i)] = v), 值必须存栈。
+        self.emit('PUSH', self.reg(0))              # 保存 value
         self._gen_lvalue_addr(target)               # x0 = addr
+        self.emit('POP', self.reg(2))               # x2 = value
         self.emit('SD', self.reg(2), ('mem', 0, 0))
         return tt
 

@@ -4,4 +4,4 @@
 package engine
 
 // BuildVersion 是 Code CIN 的版本号 (被 codecin_version() 与日志使用)。
-const BuildVersion = "5.5.0"
+const BuildVersion = "5.5.3"

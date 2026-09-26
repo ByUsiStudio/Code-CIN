@@ -5,6 +5,60 @@
 
 ---
 
+## [5.5.3] - 2026-09-26
+
+以「消除静默算错地址」为主线的一次修复发布：两个会**读错/写错内存且不报错**的
+代码生成缺陷，配套文档站独立与 CI 适配。
+
+### 修复 (Fixed)
+
+#### 嵌套下标算错基址（静默读写错误内存）
+- **`A[B[i]]` 一类的嵌套下标把外层基址弄丢**。编译器约定是"任何跨子表达式存活
+  的临时值都存栈"，但 `_gen_index` 把数组/字符串基址暂存在 `x3` 才去求下标；
+  内层下标自己也要用 `x3` 存基址，于是外层 `ADD` 用的是**内层数组的基址**：
+  `A[B[i]]` 被算成 `&B[0]`，读取静默得到错值、赋值静默写到别的变量内存上
+  （不越界、不报错）。实测 11 个用例里 10 个算错。
+  现在基址改为入栈（`PUSH`/`POP`），Python 与 Go 两个编译器同步修复。
+- **同类缺陷一并修掉**：`_gen_assign` 把待写入的值放在 `x2` 之后才求左值地址
+  （`A[f(i)] = v` 会存错值）；`gen_init_2d_literal` 把行指针数组 `x4`、当前行
+  `x5` 跨元素表达式存活（`int[][] m = {{g(1), g(2)}, ...}` 元素含函数调用时写错行）。
+  两处均改为求值前入栈。
+
+#### 浮点下标被当成字节偏移
+- **`G_C[(lo + hi) / 2]` 抛 `address 379800000000000 out of bounds`**
+  （issue #1）。`/` 恒为浮点除法，所以下标类型是 float，而 `_gen_index` 是唯一
+  漏掉"int 上下文隐式截断"的地方：float 的 IEEE-754 位模式被直接当作字节偏移
+  乘 8（249.5 的位模式 × 8 = `0x0379_8000_0000_0000`，正是报告里那个恒定高位
+  `0x3798`）。标准 Hoare 快排因此完全无法运行。现在数组与字符串下标都会先按
+  与 `int x = 1.9` 一致的规则向零截断，且截断发生在边界检查之前。
+
+### 变更 (Changed)
+
+- **文档站迁至独立仓库** [Code-CIN-Docs](https://github.com/ByUsiStudio/Code-CIN-Docs)：
+  本仓库不再内嵌 `docs/` 子模块（`.gitmodules` 不再使用），README 相应改为单独克隆；
+  ISA 指令表文档一致性由文档仓库自己保证（`script/gen_isa_docs.py` 保留为生成器）。
+- **CI 适配 Node 20 下线**（GitHub 于 2026-09-23 移除 Node 20 运行时）：工作流里
+  全部动作升级到 Node 24 版本 —— `checkout@v6`、`setup-python@v7`、`setup-go@v7`、
+  `upload-artifact@v7`、`download-artifact@v7`、`softprops/action-gh-release@v3`。
+- **修复 `release.yml` 的非法工作流**：4 个 checkout 步骤各写了两个 `with:` 键，
+  GitHub 会判 `Invalid workflow file`（发布流程此前根本跑不起来）。同时移除所有
+  `submodules: recursive` 与已失效的文档一致性检查步骤。
+- **`requirements-dev.txt` 补 `PyYAML`**：`tests/test_workflows.py` 用
+  `pytest.importorskip('yaml')`，缺依赖时整块门禁被静默跳过 —— 上面那个重复键
+  错误就是这样漏过 CI 的。该文件现在还会检测**同层重复键**（PyYAML 默认静默
+  后者覆盖前者）。
+- **`.gitignore`/leak-check 排除表**补 `.gotmp`、`.gocache`、`pytest-cache-*`
+  （都是记录在案的临时/构建目录）；`MANIFEST.in` 去掉已不存在的 `docs/` 条目。
+
+### 测试 (Tests)
+- 新增 `tests/test_nested_subscript_codegen.py`：17 个嵌套下标用例 × 解释器/JIT/
+  原生三条路径，另有"写 `A[B[i]]` 不得触碰 `B` 的内存"用例；回退修复后 52 条中
+  46 条失败。
+- `codecin/native/compiler/compile_test.go` 新增同类 Go 侧用例（编译后直接在
+  Go VM 中执行）。
+
+---
+
 ## [5.5.0] - 2026-09-24
 
 以「Python 只做 CLI、Go 是唯一实现」为主线的架构收敛，配套标准库打包修复与 AOT 依赖加固。
