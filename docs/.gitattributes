@@ -1,0 +1,19 @@
+# 换行策略: 仓库统一 LF (与主仓库 Code-CIN 保持一致), 避免 Windows
+# (core.autocrlf=true) 下出现无意义的整文件 diff 与 VitePress/YAML 解析差异。
+* text=auto eol=lf
+
+*.md     text eol=lf
+*.mts    text eol=lf
+*.ts     text eol=lf
+*.js     text eol=lf
+*.css    text eol=lf
+*.json   text eol=lf
+*.yml    text eol=lf
+*.yaml   text eol=lf
+*.svg    text eol=lf
+
+# 锁文件与依赖目录不参与 diff/打包
+package-lock.json  -diff linguist-generated
+node_modules/      export-ignore
+.vitepress/cache/  export-ignore
+.vitepress/dist/   export-ignore

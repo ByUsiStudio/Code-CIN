@@ -1,0 +1,42 @@
+/**
+ * Code CIN 文档站自定义样式 (轻量: 只做品牌色与长表格的可读性微调)
+ */
+
+:root {
+  --vp-c-brand-1: #2563eb;
+  --vp-c-brand-2: #3b82f6;
+  --vp-c-brand-3: #60a5fa;
+  --vp-c-brand-soft: rgba(59, 130, 246, 0.14);
+}
+
+.dark {
+  --vp-c-brand-1: #60a5fa;
+  --vp-c-brand-2: #3b82f6;
+  --vp-c-brand-3: #2563eb;
+}
+
+/* 首页: 命令块更醒目 */
+.vp-doc div[class*='language-'] pre {
+  scrollbar-width: thin;
+}
+
+/* 长参考表 (指令表 / 标准库函数表) 紧凑一些 */
+.vp-doc table {
+  display: table;
+  width: 100%;
+}
+
+.vp-doc table td,
+.vp-doc table th {
+  vertical-align: top;
+}
+
+/* 标签页容器在文档里的间距 */
+.vp-doc .plugin-tabs {
+  margin: 16px 0;
+}
+
+/* 首页 hero 标语换行更自然 */
+.VPHero .text {
+  max-width: 720px;
+}

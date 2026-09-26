@@ -25,6 +25,11 @@ jobs:
       # 存在的 ref, actions/checkout 会直接失败。
       - uses: actions/checkout@v4
         with:
+          # docs/ 是官方文档站子仓库 (Code-CIN-Docs)
+          submodules: recursive
+        with:
+          # docs/ 是官方文档站子仓库 (Code-CIN-Docs)
+          submodules: recursive
           ref: ${{ github.event_name == 'push' && github.ref || '' }}
           fetch-depth: 0
       - uses: actions/setup-python@v5
@@ -107,6 +112,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          # docs/ 是官方文档站子仓库 (Code-CIN-Docs)
+          submodules: recursive
+        with:
           ref: ${{ github.event_name == 'push' && github.ref || '' }}
       - uses: actions/setup-go@v5
         with:
@@ -159,6 +167,9 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
+        with:
+          # docs/ 是官方文档站子仓库 (Code-CIN-Docs)
+          submodules: recursive
         with:
           ref: ${{ github.event_name == 'push' && github.ref || '' }}
       - uses: actions/setup-python@v5
@@ -215,6 +226,9 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+        with:
+          # docs/ 是官方文档站子仓库 (Code-CIN-Docs)
+          submodules: recursive
         with:
           ref: ${{ github.event_name == 'push' && github.ref || '' }}
       - uses: actions/download-artifact@v4

@@ -2,8 +2,12 @@
 """生成 ISA 指令表文档 (单一事实来源: codecin/isa.py)。
 
 每次增删指令后运行:
-    python script/gen_isa_docs.py          # 重写 docs/ISA.md
-    python script/gen_isa_docs.py --check  # 校验与当前文档一致 (CI 使用)
+    python script/gen_isa_docs.py          # 重写 docs/ISA.md 与 docs/reference/isa.md
+    python script/gen_isa_docs.py --check  # 校验两份文档与 isa.py 一致 (CI 使用)
+
+输出两份内容同源、仅标题与站点尾部信息不同的文档:
+    docs/ISA.md            仓库文档 (README / CI / 测试引用)
+    docs/reference/isa.md  官方文档站页面 (VitePress frontmatter + 相关页面链接)
 
 分组 (数值区间) 与 codecin/isa.py Opcode 定义严格一致:
     Base 0-27 | ARM64 28-67 | FP 68-77 | Vector 78-83 | RISC-V 84-110 | SYS 111
@@ -19,6 +23,25 @@ sys.path.insert(0, ROOT)
 from codecin.isa import Opcode  # noqa: E402
 
 DOC_PATH = os.path.join(ROOT, 'docs', 'ISA.md')
+SITE_DOC_PATH = os.path.join(ROOT, 'docs', 'reference', 'isa.md')
+
+#: 仓库文档标题 (保持不变, 避免破坏既有引用)
+REPO_TITLE = 'Code CIN 指令集参考 (自动生成)'
+#: 站点页面标题
+SITE_TITLE = '指令集编码表'
+SITE_FRONTMATTER = (
+    '---\n'
+    'description: "Code CIN 指令集编码表 (共 112 条): Base / ARM64 / FP / Vector / '
+    'RISC-V / SYS 分组的助记符与编码, 由 codecin/isa.py 自动生成。"\n'
+    '---\n\n'
+)
+SITE_FOOTER = (
+    '\n## 相关页面\n\n'
+    '- [指令语义参考](/asm/instructions)\n'
+    '- [汇编语法参考](/asm/syntax)\n'
+    '- [寄存器与内存模型](/reference/registers-memory)\n'
+    '- [架构总览](/guide/architecture)\n'
+)
 
 # (标题, 起始值含, 结束值不含, 说明)
 GROUPS = [
@@ -36,9 +59,9 @@ def group_members(start: int, stop: int):
     return [m for m in Opcode if start <= m.value < stop]
 
 
-def build_doc() -> str:
+def build_doc(title: str = REPO_TITLE) -> str:
     lines = []
-    lines.append('# Code CIN 指令集参考 (自动生成)\n')
+    lines.append(f'# {title}\n')
     lines.append('> 本文档由 `python script/gen_isa_docs.py` 从 `codecin/isa.py` 自动生成, '
                  '请勿手工编辑。\n')
     lines.append('## 总览\n')
@@ -76,29 +99,49 @@ def build_doc() -> str:
     return '\n'.join(lines)
 
 
+def build_site_doc() -> str:
+    """文档站页面: frontmatter + 同一份指令表 + 相关页面链接。"""
+    return SITE_FRONTMATTER + build_doc(SITE_TITLE) + SITE_FOOTER
+
+
 def main() -> int:
-    ap = argparse.ArgumentParser(description='生成/校验 docs/ISA.md')
+    ap = argparse.ArgumentParser(
+        description='生成/校验 docs/ISA.md 与 docs/reference/isa.md')
     ap.add_argument('--check', action='store_true',
                     help='仅校验现有文档与生成结果一致')
     args = ap.parse_args()
 
-    content = build_doc()
-    if args.check:
-        if os.path.exists(DOC_PATH):
-            with open(DOC_PATH, encoding='utf-8') as f:
-                existing = f.read()
-            if existing == content:
-                print('ISA doc up to date.')
-                return 0
-            print('ISA doc OUT OF DATE: run `python script/gen_isa_docs.py`')
-            return 1
-        print('ISA doc missing: run `python script/gen_isa_docs.py`')
-        return 1
+    targets = [
+        (DOC_PATH, build_doc()),
+        (SITE_DOC_PATH, build_site_doc()),
+    ]
 
-    os.makedirs(os.path.dirname(DOC_PATH), exist_ok=True)
-    with open(DOC_PATH, 'w', encoding='utf-8') as f:
-        f.write(content)
-    print(f'Written {DOC_PATH} ({len(Opcode)} opcodes)')
+    if args.check:
+        stale = []
+        missing = []
+        for path, content in targets:
+            if not os.path.exists(path):
+                missing.append(path)
+                continue
+            with open(path, encoding='utf-8') as f:
+                if f.read() != content:
+                    stale.append(path)
+        if stale or missing:
+            for path in missing:
+                print(f'ISA doc missing: {path} '
+                      f'(run `python script/gen_isa_docs.py`)')
+            for path in stale:
+                print(f'ISA doc OUT OF DATE: {path} '
+                      f'(run `python script/gen_isa_docs.py`)')
+            return 1
+        print('ISA docs up to date.')
+        return 0
+
+    for path, content in targets:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, 'w', encoding='utf-8') as f:
+            f.write(content)
+        print(f'Written {path} ({len(Opcode)} opcodes)')
     return 0
 
 

@@ -18,9 +18,27 @@ Code CIN 是一门简洁的类 C 高级语言及其跨平台运行时（VM）。
 
 ## 文档
 
+**官方文档站**位于 `docs/` (VitePress + vitepress-plugin-tabs), 它同时是独立仓库
+[Code-CIN-Docs](https://github.com/ByUsiStudio/Code-CIN-Docs), 以 **git submodule**
+方式内嵌于本仓库; 线上站点即由该子仓库构建:
+
+```bash
+git submodule update --init --recursive    # 克隆后拉取文档子仓库
+cd docs && npm install
+npm run docs:dev                           # 本地预览 (http://localhost:5173)
+npm run docs:build                         # 构建静态站点到 docs/.vitepress/dist
+```
+
+站点内容划分: `guide/` (安装/快速开始/命令行/执行路径/架构/示例/FAQ)、`language/` (CIN 语言)、
+`asm/` (汇编与 ISA)、`stdlib/` (内置标准库参考)、`runtime/` (原生/JIT/格式/AOT)、
+`tools/` (调试器/远程调试/日志/性能/内存缓存)、`reference/` (ISA 编码表/寄存器与内存/Python API/更新日志)、
+`dev/` (项目结构/构建/测试/打包/扩展/贡献)。
+
+仓库内还保留以下**开发用文档** (不进站点, 供源码树内直接查阅):
+
 | 文档 | 说明 |
 |------|------|
-| [指令集参考 (ISA)](docs/ISA.md) | 由 `codecin/isa.py` 自动生成的逐条指令表 (唯一真源) |
+| [指令集参考 (ISA)](docs/ISA.md) | 由 `codecin/isa.py` 自动生成的逐条指令表 (唯一真源; 站点版为 `docs/reference/isa.md`) |
 | [开发者编译文档 (BUILDING)](docs/BUILDING.md) | 环境搭建、Go 原生库编译、构建产物、打包、日志系统、扩展指南 |
 | [CIN 编程指南 (CIN_GUIDE)](docs/CIN_GUIDE.md) | CIN 高级语言完整语法：类型/函数/struct/数组/字符串/内建函数 |
 | [远程调试协议 (REMOTE_DEBUG)](docs/REMOTE_DEBUG.md) | `--debug-server` 换行文本协议：命令/响应/状态机/示例会话 |
@@ -799,66 +817,80 @@ function main() {
 
 ### 斐波那契 (PL)
 
-```
-.text
-    set x0, 10          // n = 10
-    call fibonacci
-    out x0
-    halt
-
-fibonacci:
-    cmp x0, 1
-    jle base_case
-    push x0
-    sub x0, 1
-    call fibonacci
-    pop x1
-    push x0
-    add x0, x1
-    ret
-
-base_case:
-    set x0, 1
-    ret
-```
-
-### 快速排序 (ASM)
-
-```
-; 快速排序实现
+```asm
 .text
 main:
-    ldr x0, =array
-    ldr x1, =size
-    bl quicksort
-    halt
+    set x0, 10          ; n = 10
+    call fib
+    sys #22             ; ITOA: x0 -> 十进制字符串
+    sys #24             ; PRINT_STR
+    output #10
+    stop
 
-quicksort:
-    cmp x0, x1
-    bge done
-    
-    ; Partition
-    ldr x2, [x0]        ; pivot
-    mov x3, x0
-    mov x4, x1
-    
-partition:
-    cmp x3, x4
-    bge swap_pivot
-    
-    ldr x5, [x3]
-    cmp x5, x2
-    ble swap_left
-    
-    ; ... 更多代码
-    
-done:
-    ret
+fib:                    ; 入口 x0 = n, 返回 x0 = fib(n)
+    compare x0, 1
+    jump_greater recurse
+    set x0, 1
+    return
+
+recurse:
+    push x0
+    decrement x0
+    call fib
+    pop x1
+    push x0
+    set x0, x1
+    decrement x0
+    decrement x0
+    call fib
+    pop x1
+    add x0, x1
+    return
+```
+
+> 注意: 本 ISA **没有 `jle` / `jge`** 这类指令, 比较请用 `CMP` + `JG`/`JL`/`JE`
+> (PL 风格: `compare` + `jump_greater`/`jump_less`/`jump_equal`), 或 ARM64 的 `B.<cond>`。
+> 上面这段实测输出 `89`; 完整语法与逐条语义见文档站 (仓库内路径 `docs/asm/`)。
+
+### 循环求和 + 字符串打印 (ASM, 见 `test_asm.asm`)
+
+```asm
+.text
+main:
+    MOV x0, #msg
+    SYS #24              ; PRINT_STR
+
+    MOV x1, #0           ; sum
+    MOV x2, #1           ; i
+loop:
+    ADD x1, x2
+    INC x2
+    CMP x2, #11
+    B.NE loop
+
+    MOV x0, x1
+    SYS #22              ; ITOA -> x0 = 缓冲
+    SYS #24              ; PRINT_STR
+    OUT #10              ; 换行
+
+    MOV x3, #nums
+    SD x1, [x3]          ; 存回数据段
+    LD x4, [x3]
+    ADDI x4, x4, #100
+    MOV x0, x4
+    SYS #22
+    SYS #24
+    OUT #10
+
+    HALT
 
 .data
-array: .word 5, 3, 8, 1, 9, 2, 7, 4, 6
-size: .word 9
+msg: ASCIZ "Sum 1..10 = "
+nums: DQ 0
 ```
+
+> 实测输出: `Sum 1..10 = 55` 与 `155` (退出码 0)。更多汇编示例 (递归、数组遍历、
+> 立即数与表达式、条件后缀) 见文档站 `docs/asm/` 与 `docs/guide/examples.md`。
 
 ---
 

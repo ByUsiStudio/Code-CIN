@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128" role="img" aria-label="Code CIN">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#2563eb"/>
+      <stop offset="100%" stop-color="#22d3ee"/>
+    </linearGradient>
+  </defs>
+  <rect x="6" y="6" width="116" height="116" rx="20" fill="url(#g)"/>
+  <rect x="26" y="26" width="76" height="76" rx="12" fill="#0b1220" opacity="0.85"/>
+  <g stroke="#93c5fd" stroke-width="4" stroke-linecap="round">
+    <path d="M18 44h8M18 64h8M18 84h8M102 44h8M102 64h8M102 84h8"/>
+    <path d="M44 18v8M64 18v8M84 18v8M44 102v8M64 102v8M84 102v8"/>
+  </g>
+  <text x="64" y="78" font-family="ui-monospace, SFMono-Regular, Menlo, Consolas, monospace"
+        font-size="34" font-weight="700" fill="#e0f2fe" text-anchor="middle">CIN</text>
+</svg>

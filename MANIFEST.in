@@ -8,6 +8,11 @@ recursive-include codecin/native *.go *.txt go.mod go.sum build.sh build.ps1
 # 注: 不 include 预编译原生库 (*.dll/*.so/*.dylib) —— 它们在用户安装时由
 # setup.py 现场编译, 见 pyproject.toml 的 package-data 说明。
 recursive-include docs *.md
+# 注: docs/ 同时是官方文档站 (独立仓库, git submodule), 站点依赖与构建产物
+# 绝不能进 sdist —— node_modules 里含有大量 *.md, 会被上面的 recursive-include 误收。
+prune docs/node_modules
+prune docs/.vitepress
+prune docs/.pnpm-store
 recursive-include misc *
 recursive-include examples *.cin *.asm *.pl
 recursive-include script *.py
