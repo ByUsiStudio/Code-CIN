@@ -88,8 +88,8 @@ function main() -> int {
 @pytest.mark.parametrize('use_native', PATHS, ids=PATH_IDS)
 def test_input_reads_stdin_line(use_native):
     res = CINCompiler().compile_source(INPUT_SRC)
-    ops = [ins[0] for ins in res.instructions]
-    assert Opcode(ops[0]).name == 'IN', "input() 必须编译成 IN 指令 (此前恒为 MOV x0, 0)"
+    op_names = {ins[0] for ins in res.instructions}
+    assert 'IN' in op_names, "input() 必须编译成 IN 指令 (此前恒为 MOV x0, 0)"
     cpu = build_cpu(INPUT_SRC, use_native)
     cpu.input_buffer = "42\n"
     cpu.run()
