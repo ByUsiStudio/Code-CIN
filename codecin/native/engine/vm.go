@@ -1127,6 +1127,84 @@ func (vm *vmState) doSyscall(id uint64) string {
 		vm.setReg(0, vm.termuxDialog(vm.readCString(x0)))
 	case sysTERMUXSMS:
 		vm.setReg(0, vm.termuxSmsSend(vm.readCString(x0), vm.readCString(x1)))
+	// 路径与文件系统扩展
+	case sysPATHJOIN:
+		vm.setReg(0, vm.pathJoin(vm.readCString(x0), vm.readCString(x1)))
+	case sysPATHBASENAME:
+		vm.setReg(0, vm.pathBasename(vm.readCString(x0)))
+	case sysPATHDIRNAME:
+		vm.setReg(0, vm.pathDirname(vm.readCString(x0)))
+	case sysPATHABS:
+		vm.setReg(0, vm.pathAbs(vm.readCString(x0)))
+	case sysFILECOPY:
+		vm.setReg(0, vm.fileCopy(vm.readCString(x0), vm.readCString(x1)))
+	case sysFILEMOVE:
+		vm.setReg(0, vm.fileMove(vm.readCString(x0), vm.readCString(x1)))
+	case sysDIRREMOVE:
+		vm.setReg(0, vm.dirRemove(vm.readCString(x0)))
+	case sysISDIR:
+		vm.setReg(0, vm.isDir(vm.readCString(x0)))
+	case sysFILEMTIME:
+		vm.setReg(0, vm.fileMtime(vm.readCString(x0)))
+	case sysTEMPDIR:
+		vm.setReg(0, vm.tempDir())
+	case sysCHDIR:
+		vm.setReg(0, vm.chdir(vm.readCString(x0)))
+	// 时间与系统信息
+	case sysTIMEMS:
+		vm.setReg(0, vm.timeMs())
+	case sysSLEEPMS:
+		vm.setReg(0, vm.sleepMs(x0))
+	case sysCPUCOUNT:
+		vm.setReg(0, vm.cpuCount())
+	case sysARCHNAME:
+		vm.setReg(0, vm.archName())
+	case sysMEMINFO:
+		vm.setReg(0, vm.memInfo())
+	case sysISANDROID:
+		vm.setReg(0, vm.isAndroid())
+	// 网络
+	case sysHTTPGET:
+		vm.setReg(0, vm.httpGet(vm.readCString(x0)))
+	case sysHTTPPOST:
+		vm.setReg(0, vm.httpPost(vm.readCString(x0), vm.readCString(x1)))
+	case sysDOWNLOAD:
+		vm.setReg(0, vm.download(vm.readCString(x0), vm.readCString(x1)))
+	// 编码与哈希
+	case sysSHA256:
+		vm.setReg(0, vm.sha256Hex(vm.readCString(x0)))
+	case sysBASE64ENC:
+		vm.setReg(0, vm.base64Encode(vm.readCString(x0)))
+	case sysBASE64DEC:
+		vm.setReg(0, vm.base64Decode(vm.readCString(x0)))
+	// 桌面集成
+	case sysCLIPGET:
+		vm.setReg(0, vm.clipboardGet())
+	case sysCLIPSET:
+		vm.setReg(0, vm.clipboardSet(vm.readCString(x0)))
+	case sysNOTIFY:
+		vm.setReg(0, vm.notify(vm.readCString(x0), vm.readCString(x1)))
+	case sysOPENURL:
+		vm.setReg(0, vm.openURL(vm.readCString(x0)))
+	// Android / Termux 扩展
+	case sysANDROIDINTENT:
+		vm.setReg(0, vm.androidIntent(vm.readCString(x0), vm.readCString(x1)))
+	case sysTERMUXCALL:
+		vm.setReg(0, vm.termuxCall(vm.readCString(x0)))
+	case sysTERMUXSHARE:
+		vm.setReg(0, vm.termuxShare(vm.readCString(x0)))
+	case sysTERMUXTORCH:
+		vm.setReg(0, vm.termuxTorch(x0))
+	case sysTERMUXVOLUME:
+		vm.setReg(0, vm.termuxVolume(vm.readCString(x0), x1))
+	case sysTERMUXBRIGHT:
+		vm.setReg(0, vm.termuxBrightness(x0))
+	case sysTERMUXCAMERA:
+		vm.setReg(0, vm.termuxCameraPhoto(vm.readCString(x0)))
+	case sysTERMUXFINGER:
+		vm.setReg(0, vm.termuxFingerprint())
+	case sysTERMUXSENSOR:
+		vm.setReg(0, vm.termuxSensor(vm.readCString(x0)))
 	default:
 		return "Unknown SYS call id"
 	}

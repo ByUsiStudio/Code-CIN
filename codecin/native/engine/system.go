@@ -1,12 +1,15 @@
 package engine
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"os/user"
+	"path/filepath"
 	"runtime"
 	"sort"
 	"strings"
+	"time"
 )
 
 // 系统原生交互: 文件/目录/进程/环境变量/系统信息 (跨平台 Windows/Linux/macOS)。
@@ -187,4 +190,127 @@ func (vm *vmState) homeDir() uint64 {
 		return vm.hs(h)
 	}
 	return vm.hs(os.Getenv("USERPROFILE"))
+}
+
+// ---------------- 路径 (跨平台: Windows 反斜杠 / Linux+Android 正斜杠) ----------------
+
+func (vm *vmState) pathJoin(dir, name string) uint64 {
+	return vm.hs(filepath.Join(dir, name))
+}
+
+func (vm *vmState) pathBasename(p string) uint64 {
+	return vm.hs(filepath.Base(p))
+}
+
+func (vm *vmState) pathDirname(p string) uint64 {
+	return vm.hs(filepath.Dir(p))
+}
+
+func (vm *vmState) pathAbs(p string) uint64 {
+	abs, err := filepath.Abs(p)
+	if err != nil {
+		return vm.empty()
+	}
+	return vm.hs(abs)
+}
+
+// ---------------- 文件系统扩展 ----------------
+
+func (vm *vmState) fileCopy(src, dst string) uint64 {
+	data, err := os.ReadFile(src)
+	if err != nil {
+		return mask64
+	}
+	if err := os.WriteFile(dst, data, 0o644); err != nil {
+		return mask64
+	}
+	return 0
+}
+
+func (vm *vmState) fileMove(src, dst string) uint64 {
+	if err := os.Rename(src, dst); err != nil {
+		return mask64
+	}
+	return 0
+}
+
+func (vm *vmState) dirRemove(path string) uint64 {
+	if err := os.RemoveAll(path); err != nil {
+		return mask64
+	}
+	return 0
+}
+
+func (vm *vmState) isDir(path string) uint64 {
+	fi, err := os.Stat(path)
+	if err != nil || !fi.IsDir() {
+		return 0
+	}
+	return 1
+}
+
+func (vm *vmState) fileMtime(path string) uint64 {
+	fi, err := os.Stat(path)
+	if err != nil {
+		return mask64
+	}
+	return uint64(fi.ModTime().Unix()) & mask64
+}
+
+func (vm *vmState) tempDir() uint64 {
+	return vm.hs(os.TempDir())
+}
+
+func (vm *vmState) chdir(path string) uint64 {
+	if err := os.Chdir(path); err != nil {
+		return mask64
+	}
+	return 0
+}
+
+// ---------------- 时间与系统信息 ----------------
+
+func (vm *vmState) timeMs() uint64 {
+	return uint64(time.Now().UnixMilli()) & mask64
+}
+
+// maxSleepMs 限制单次睡眠上限 (10 分钟), 避免脚本误用导致挂死。
+const maxSleepMs = 600_000
+
+func (vm *vmState) sleepMs(ms uint64) uint64 {
+	if ms > maxSleepMs {
+		ms = maxSleepMs
+	}
+	time.Sleep(time.Duration(ms) * time.Millisecond)
+	return 0
+}
+
+func (vm *vmState) cpuCount() uint64 {
+	return uint64(runtime.NumCPU())
+}
+
+func (vm *vmState) archName() uint64 {
+	return vm.hs(runtime.GOARCH)
+}
+
+func (vm *vmState) memInfo() uint64 {
+	total, free, ok := SystemMemoryKB()
+	if !ok {
+		return vm.hs(`{"total_kb":0,"free_kb":0}`)
+	}
+	return vm.hs(fmt.Sprintf(`{"total_kb":%d,"free_kb":%d}`, total, free))
+}
+
+// isAndroid 判定当前进程是否运行在 Android (原生 GOOS=android 或 Termux 环境)。
+func (vm *vmState) isAndroid() uint64 {
+	if runtime.GOOS == "android" {
+		return 1
+	}
+	if TermuxAvailable() {
+		return 1
+	}
+	if _, err := os.Stat("/system/build.prop"); err == nil {
+		return 1
+	}
+	return 0
 }

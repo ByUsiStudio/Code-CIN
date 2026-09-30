@@ -65,6 +65,48 @@ var hostBuiltins = map[string]hostBuiltin{
 	"termux_wifi_info":     {SysTERMUXWIFI, 0, kString},
 	"termux_dialog":        {SysTERMUXDIALOG, 1, kString},
 	"termux_sms_send":      {SysTERMUXSMS, 2, kInt},
+	// 路径与文件系统扩展 (跨平台)
+	"path_join":     {SysPATHJOIN, 2, kString},
+	"path_basename": {SysPATHBASENAME, 1, kString},
+	"path_dirname":  {SysPATHDIRNAME, 1, kString},
+	"path_abs":      {SysPATHABS, 1, kString},
+	"file_copy":     {SysFILECOPY, 2, kInt},
+	"file_move":     {SysFILEMOVE, 2, kInt},
+	"dir_remove":    {SysDIRREMOVE, 1, kInt},
+	"is_dir":        {SysISDIR, 1, kInt},
+	"file_mtime":    {SysFILEMTIME, 1, kInt},
+	"temp_dir":      {SysTEMPDIR, 0, kString},
+	"chdir":         {SysCHDIR, 1, kInt},
+	// 时间与系统信息
+	"time_ms":    {SysTIMEMS, 0, kInt},
+	"sleep_ms":   {SysSLEEPMS, 1, kInt},
+	"cpu_count":  {SysCPUCOUNT, 0, kInt},
+	"arch_name":  {SysARCHNAME, 0, kString},
+	"mem_info":   {SysMEMINFO, 0, kString},
+	"is_android": {SysISANDROID, 0, kInt},
+	// 网络 (HTTP/HTTPS)
+	"http_get":  {SysHTTPGET, 1, kString},
+	"http_post": {SysHTTPPOST, 2, kString},
+	"download":  {SysDOWNLOAD, 2, kInt},
+	// 编码与哈希
+	"sha256":        {SysSHA256, 1, kString},
+	"base64_encode": {SysBASE64ENC, 1, kString},
+	"base64_decode": {SysBASE64DEC, 1, kString},
+	// 桌面集成 (剪贴板 / 通知 / 打开 URL)
+	"clipboard_get": {SysCLIPGET, 0, kString},
+	"clipboard_set": {SysCLIPSET, 1, kInt},
+	"notify":        {SysNOTIFY, 2, kInt},
+	"open_url":      {SysOPENURL, 1, kInt},
+	// Android / Termux 扩展
+	"android_intent":      {SysANDROIDINTENT, 2, kInt},
+	"termux_call":         {SysTERMUXCALL, 1, kInt},
+	"termux_share":        {SysTERMUXSHARE, 1, kInt},
+	"termux_torch":        {SysTERMUXTORCH, 1, kInt},
+	"termux_volume":       {SysTERMUXVOLUME, 2, kInt},
+	"termux_brightness":   {SysTERMUXBRIGHT, 1, kInt},
+	"termux_camera_photo": {SysTERMUXCAMERA, 1, kInt},
+	"termux_fingerprint":  {SysTERMUXFINGER, 0, kString},
+	"termux_sensor":       {SysTERMUXSENSOR, 1, kString},
 }
 
 func (c *compiler) emit(op string, args ...ir.Operand) {

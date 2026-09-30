@@ -111,3 +111,70 @@ func (vm *vmState) termuxSmsSend(number, text string) uint64 {
 	_, code := termuxRun("termux-sms-send", "-n", number, text)
 	return code
 }
+
+// ---------------- Android / Termux 扩展 ----------------
+
+func (vm *vmState) termuxCall(number string) uint64 {
+	_, code := termuxRun("termux-telephony-call", number)
+	return code
+}
+
+func (vm *vmState) termuxShare(file string) uint64 {
+	_, code := termuxRun("termux-share", "-a", "send", file)
+	return code
+}
+
+func (vm *vmState) termuxTorch(on uint64) uint64 {
+	arg := "off"
+	if on != 0 {
+		arg = "on"
+	}
+	_, code := termuxRun("termux-torch", arg)
+	return code
+}
+
+func (vm *vmState) termuxVolume(stream string, volume uint64) uint64 {
+	_, code := termuxRun("termux-volume", stream,
+		strconv.FormatUint(volume, 10))
+	return code
+}
+
+func (vm *vmState) termuxBrightness(level uint64) uint64 {
+	_, code := termuxRun("termux-brightness", strconv.FormatUint(level, 10))
+	return code
+}
+
+func (vm *vmState) termuxCameraPhoto(path string) uint64 {
+	_, code := termuxRun("termux-camera-photo", "-c", "0", path)
+	return code
+}
+
+func (vm *vmState) termuxFingerprint() uint64 {
+	out, code := termuxRun("termux-fingerprint")
+	if code != 0 {
+		return vm.empty()
+	}
+	return vm.hs(strings.TrimSpace(out))
+}
+
+func (vm *vmState) termuxSensor(name string) uint64 {
+	out, code := termuxRun("termux-sensor", "-s", name, "-n", "1")
+	if code != 0 {
+		return vm.empty()
+	}
+	return vm.hs(strings.TrimSpace(out))
+}
+
+// androidIntent 通过 am start 发起系统 Intent (Android; Termux 下用 termux-am)。
+func (vm *vmState) androidIntent(action, uri string) uint64 {
+	for _, tool := range []string{"am", "termux-am"} {
+		args := []string{"start", "-a", action}
+		if uri != "" {
+			args = append(args, "-d", uri)
+		}
+		if _, code := runCapture("", tool, args...); code == 0 {
+			return 0
+		}
+	}
+	return mask64
+}

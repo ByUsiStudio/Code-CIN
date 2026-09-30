@@ -23,7 +23,7 @@ import os
 import re
 import struct
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from .console import Console
 from .errors import CompilerError
@@ -67,6 +67,12 @@ def _type_slots(t) -> int:
         elem, size = t[1], t[2]
         return size * _type_slots(elem)
     return 1  # 标量/struct指针/ptrarray 均为 1 槽
+
+
+def _trunc_div(a: int, b: int) -> int:
+    """向零截断的整数除法 (与字节码 DIV 语义一致)。"""
+    q = abs(a) // abs(b)
+    return q if (a < 0) == (b < 0) else -q
 
 
 # ==================== 词法分析 ====================
@@ -279,9 +285,43 @@ def tokenize(source: str,
             while i < n and source[i] != '"':
                 if source[i] == '\\' and i + 1 < n:
                     esc = source[i + 1]
-                    buf.append({'n': '\n', 't': '\t', 'r': '\r',
-                                '"': '"', '\\': '\\', '0': '\0'}.get(esc, esc))
                     i += 2
+                    if esc in _STR_ESCAPES:
+                        buf.append(_STR_ESCAPES[esc])
+                    elif esc == 'x':
+                        # \xH 或 \xHH (1-2 位十六进制) —— 原始字节 (C 语义)。
+                        # >= 0x80 的字节用代理转义码位承载, 由 _data_string 原样
+                        # 写回, 从而与 Go 侧 "逐字节追加" 完全一致。
+                        digits = ''
+                        while len(digits) < 2 and i < n and \
+                                source[i] in _HEX_DIGITS:
+                            digits += source[i]
+                            i += 1
+                        if not digits:
+                            raise CompilerError(
+                                f"\\x escape needs at least one hex digit at "
+                                f"{at_loc(line)}")
+                        code = int(digits, 16)
+                        buf.append(chr(code) if code < 0x80
+                                   else chr(0xDC00 + code))
+                    elif esc in ('u', 'U'):
+                        # \uHHHH (4 位) / \UHHHHHHHH (8 位) Unicode 码点
+                        width = 4 if esc == 'u' else 8
+                        digits = source[i:i + width]
+                        if len(digits) < width or any(
+                                ch not in _HEX_DIGITS for ch in digits):
+                            raise CompilerError(
+                                f"\\{esc} escape needs exactly {width} hex "
+                                f"digits at {at_loc(line)}")
+                        code = int(digits, 16)
+                        if code > 0x10FFFF:
+                            raise CompilerError(
+                                f"\\{esc} escape out of Unicode range at "
+                                f"{at_loc(line)}")
+                        buf.append(chr(code))
+                        i += width
+                    else:
+                        buf.append(esc)
                 else:
                     if source[i] == '\n':
                         line += 1
@@ -330,6 +370,9 @@ def tokenize(source: str,
                 while i < n and (source[i].isdigit() or source[i] == '.'
                                  or source[i] == '_'):
                     if source[i] == '.':
+                        # 小数点最多一个; '..' 是 case 范围运算符, 不属于数字
+                        if is_float or (i + 1 < n and source[i + 1] == '.'):
+                            break
                         is_float = True
                     i += 1
                 if i < n and source[i] in 'eE':
@@ -366,6 +409,10 @@ def tokenize(source: str,
             tokens.append(Token('IDENT', word, line))
         elif c == '-' and i + 1 < n and source[i + 1] == '>':
             tokens.append(Token('ARROW', '->', line))
+            i += 2
+        elif c == '.' and i + 1 < n and source[i + 1] == '.':
+            # case 范围: case 1..5:
+            tokens.append(Token('DOTDOT', '..', line))
             i += 2
         elif c == "'":                       # 字符字面量: 'a' '\n' '\'' ...
             start_line = line
@@ -442,7 +489,7 @@ def tokenize(source: str,
     close_kw = {'RPAREN', 'RBRACKET'}
     continue_ops = {'PLUS', 'MINUS', 'STAR', 'SLASH', 'PERCENT', 'ASSIGN',
                     'LT', 'GT', 'LE', 'GE', 'EQ', 'NEQ', 'AND', 'OR', 'COMMA',
-                    'ARROW', 'DOT', 'PLUSEQ', 'MINUSEQ', 'STAREQ', 'SLASHEQ',
+                    'ARROW', 'DOT', 'DOTDOT', 'PLUSEQ', 'MINUSEQ', 'STAREQ', 'SLASHEQ',
                     'PERCENTEQ', 'INC', 'DEC',
                     'AMP', 'PIPE', 'CARET', 'TILDE', 'SHL', 'SHR',
                     'ANDEQ', 'OREQ', 'XOREQ', 'SHLEQ', 'SHREQ'}
@@ -624,6 +671,10 @@ class Parser:
     def __init__(self, tokens: List[Token]):
         self.toks = tokens
         self.pos = 0
+        # 枚举: 成员名 -> 值 (编译期常量), 类型名集合 (等价 int)
+        self.enums: Dict[str, int] = {}
+        self.enum_types: Set[str] = set()
+        self._range_id = 0
 
     def peek(self, k: int = 0) -> Token:
         return self.toks[min(self.pos + k, len(self.toks) - 1)]
@@ -664,6 +715,9 @@ class Parser:
             nxt = self.peek()
             if nxt.kind == 'IDENT' and nxt.value in ('char', 'short', 'int', 'long'):
                 self.next()
+            vtype = 'int'
+        elif base in self.enum_types:
+            # 枚举类型名等价于 int (成员是编译期整数常量)
             vtype = 'int'
         elif base in ('int', 'float', 'bool', 'string', 'void', 'char', 'short',
                       'long'):
@@ -709,13 +763,103 @@ class Parser:
         while self.peek().kind != 'EOF':
             if self.peek().kind == 'IDENT' and self.peek().value == 'struct':
                 self._parse_struct(structs)
+            elif self.peek().kind == 'IDENT' and self.peek().value == 'enum':
+                self._parse_enum()
             elif self.peek().kind == 'IDENT' and self.peek().value == 'function':
                 f = self._parse_function()
                 functions[f.name] = f
             else:
                 self._parse_global(globals_)
             self.skip_nl()
-        return structs, globals_, functions
+        return structs, globals_, functions, self.enums
+
+    # ---------------- 枚举 ----------------
+
+    def _parse_enum(self) -> None:
+        """enum Name { A, B = 3, C } —— 成员为编译期整数常量 (自动递增)。"""
+        tok = self.next()  # enum
+        name = self.expect('IDENT').value
+        if name in _KEYWORDS or name in self.enum_types:
+            raise CompilerError(f"Invalid enum name: {name} at {self._loc(tok)}")
+        self.expect('LBRACE')
+        self.skip_nl()
+        value = 0
+        count = 0
+        while self.peek().kind not in ('RBRACE', 'EOF'):
+            self.skip_nl()
+            if self.peek().kind == 'RBRACE':
+                break
+            mtok = self.peek()
+            mname = self.expect('IDENT').value
+            if mname in self.enums:
+                raise CompilerError(f"Duplicate enum member: {mname} at "
+                                    f"{self._loc(mtok)}")
+            if self.accept('ASSIGN'):
+                value = self._eval_enum_const(self.parse_expr(), mname)
+            if not (-(1 << 63) <= value <= (1 << 63) - 1):
+                raise CompilerError(
+                    f"Enum member {mname} out of 64-bit range at "
+                    f"{self._loc(mtok)}")
+            self.enums[mname] = value
+            value += 1
+            count += 1
+            if not self.accept('COMMA'):
+                break
+            self.skip_nl()
+        if count == 0:
+            raise CompilerError(f"Empty enum {name} at {self._loc(tok)}")
+        self.expect('RBRACE')
+        self.accept('SEMI')
+        self.enum_types.add(name)
+
+    def _eval_enum_const(self, node, mname: str) -> int:
+        """枚举成员初始值: 整数常量表达式 (可引用已定义的枚举成员)。"""
+        kind = node[0]
+        if kind == 'num' and not node[2]:
+            return int(node[1])
+        if kind == 'var':
+            if node[1] in self.enums:
+                return self.enums[node[1]]
+            raise CompilerError(
+                f"Enum member {mname} initializer must be an integer constant "
+                f"(unknown name: {node[1]}) at {self._loc()}")
+        if kind == 'neg':
+            return -self._eval_enum_const(node[1], mname)
+        if kind == 'bitnot':
+            return ~self._eval_enum_const(node[1], mname)
+        if kind == 'binop':
+            op = node[1]
+            if op not in ('+', '-', '*', '/', '%', '<<', '>>', '&', '|', '^'):
+                raise CompilerError(
+                    f"Enum member {mname} initializer must be an integer "
+                    f"constant expression at {self._loc()}")
+            a = self._eval_enum_const(node[2], mname)
+            b = self._eval_enum_const(node[3], mname)
+            if op in ('/', '%') and b == 0:
+                raise CompilerError(
+                    f"Enum member {mname} initializer divides by zero")
+            if op == '+':
+                return a + b
+            if op == '-':
+                return a - b
+            if op == '*':
+                return a * b
+            if op == '/':
+                return _trunc_div(a, b)
+            if op == '%':
+                return a - _trunc_div(a, b) * b
+            if op == '<<':
+                return a << b
+            if op == '>>':
+                return a >> b
+            if op == '&':
+                return a & b
+            if op == '|':
+                return a | b
+            return a ^ b
+        raise CompilerError(
+            f"Enum member {mname} initializer must be an integer constant "
+            f"expression at {self._loc()}")
 
     def _parse_struct(self, structs: Dict[str, StructDef]) -> None:
         self.next()  # struct
@@ -767,7 +911,11 @@ class Parser:
     def _parse_global(self, globals_: List[GlobalVar]) -> None:
         vtype = self.parse_type()
         while True:
+            name_tok = self.peek()
             name = self.expect('IDENT').value
+            if name in self.enums or name in _KEYWORDS:
+                raise CompilerError(f"Name '{name}' is already used as an enum "
+                                    f"member or keyword at {self._loc(name_tok)}")
             dims = self.parse_dims()
             t = vtype
             for d in reversed(dims):
@@ -898,9 +1046,9 @@ class Parser:
                 if cur is not None:
                     branches.append(cur)
                 self.next()
-                const = self.parse_expr()
+                alts = self._parse_case_alts()
                 self.expect('COLON')
-                cur = ('case', const, [])
+                cur = ('case', alts, [])
             elif t.kind == 'IDENT' and t.value == 'default':
                 if cur is not None:
                     branches.append(cur)
@@ -920,6 +1068,20 @@ class Parser:
         if not branches:
             raise CompilerError(f"Empty switch at {self._loc()}")
         return ('switch', cond, branches)
+
+    def _parse_case_alts(self) -> list:
+        """case 值列表: 单值 / 范围 1..5 / 多值 1, 2, 7..9 (逗号分隔)。"""
+        alts: list = []
+        while True:
+            low = self.parse_expr()
+            if self.accept('DOTDOT'):
+                high = self.parse_expr()
+                alts.append(('range', low, high))
+            else:
+                alts.append(('val', low))
+            if not self.accept('COMMA'):
+                break
+        return alts
 
     def parse_assert(self):
         tok = self.peek()
@@ -948,13 +1110,16 @@ class Parser:
     def parse_for(self):
         self.next()  # for
         self.expect('LPAREN')
+        if self._is_range_for():
+            return self._parse_range_for()
         # init
         init = None
         if self.peek().kind != 'SEMI':
             if self._is_decl_start():
                 init = self.parse_decl(no_semi=True)
             else:
-                init = ('expr', self.parse_expr())
+                # 允许赋值表达式作初始化子句: for (i = 0; ...)
+                init = ('expr', self.parse_assign())
         self.expect('SEMI')
         cond = None
         if self.peek().kind != 'SEMI':
@@ -966,6 +1131,36 @@ class Parser:
         self.expect('RPAREN')
         body = self.parse_stmt()
         return ('for', init, cond, update, body)
+
+    def _is_range_for(self) -> bool:
+        """判定 for (T v : arr) 形式 (LPAREN 已消费)。"""
+        if self.peek().kind != 'IDENT':
+            return False
+        v = self.peek().value
+        if v == 'unsigned':
+            return (self.peek(1).kind == 'IDENT'
+                    and self.peek(1).value in ('char', 'short', 'int', 'long')
+                    and self.peek(2).kind == 'IDENT'
+                    and self.peek(3).kind == 'COLON')
+        if v in BASE_TYPE_WORDS:
+            return self.peek(1).kind == 'IDENT' and self.peek(2).kind == 'COLON'
+        if v in _KEYWORDS:
+            return False
+        return self.peek(1).kind == 'IDENT' and self.peek(2).kind == 'COLON'
+
+    def _parse_range_for(self):
+        """for (T v : arr) —— 遍历定长数组元素 (元素类型为标量/struct)。"""
+        elem_type = self.parse_type()
+        vname = self.expect('IDENT').value
+        if vname in self.enums:
+            raise CompilerError(f"Invalid range-for variable: {vname} at "
+                                f"{self._loc()}")
+        self.expect('COLON')
+        arr = self.parse_expr()
+        self.expect('RPAREN')
+        body = self.parse_stmt()
+        self._range_id += 1
+        return ('rangefor', vname, elem_type, arr, body, self._range_id)
 
     def parse_decl(self, no_semi: bool = False):
         vtype = self.parse_type()
@@ -1207,16 +1402,18 @@ class CINCompiler:
             _remap_tokens(tokens, origin)
         dbg(f"CIN tokenize: {len(tokens)} tokens")
         parser = Parser(tokens)
-        structs, globals_, functions = parser.parse_program()
+        structs, globals_, functions, enums = parser.parse_program()
         dbg(f"CIN parse: {len(structs)} structs, {len(globals_)} globals, "
             f"{len(functions)} functions "
             f"({', '.join(list(functions)[:8])}"
             f"{', ...' if len(functions) > 8 else ''})")
+        if enums:
+            dbg(f"CIN enums: {len(enums)} members")
         for name, fn in functions.items():
             dbg(f"CIN function {name}: {len(fn.params)} params")
 
         gen = CodeGen(structs, functions, filename=filename,
-                      bounds_check=bounds_check)
+                      bounds_check=bounds_check, enums=enums)
         gen.layout_globals(globals_)
         for name, (typ, addr, block) in gen.globals.items():
             dbg(f"CIN global '{name}': type={typ} addr=0x{addr:x} block={block}")
@@ -1232,9 +1429,11 @@ class CINCompiler:
 class CodeGen:
     def __init__(self, structs: Dict[str, StructDef],
                  functions: Dict[str, FuncDef], filename: str = '<cin>',
-                 bounds_check: bool = False):
+                 bounds_check: bool = False,
+                 enums: Optional[Dict[str, int]] = None):
         self.structs = structs
         self.functions = functions
+        self.enums: Dict[str, int] = dict(enums or {})
         self.res = CompileResult()
         self._filename = filename
         self._bounds = bounds_check
@@ -1288,7 +1487,8 @@ class CodeGen:
     def _data_string(self, text: str) -> int:
         if text in self.heap_strings:
             return self.heap_strings[text]
-        data = text.encode('utf-8') + b'\x00'
+        # surrogateescape: \xNN (0x80-0xFF) 以代理码位承载, 原样写回单字节
+        data = text.encode('utf-8', 'surrogateescape') + b'\x00'
         addr = self._alloc_data(len(data), align=1)
         self.res.data_writes.append((addr, data))
         self.res.data_labels[f'str_{addr:x}'] = addr
@@ -1328,6 +1528,9 @@ class CodeGen:
             return 'int', node[1] & 0xFFFFFFFFFFFFFFFF
         if kind == 'bool':
             return 'bool', 1 if node[1] else 0
+        if kind == 'var' and node[1] in self.enums:
+            # 枚举成员: 编译期整数常量 (可用于全局初始化与 case 标签)
+            return 'int', self.enums[node[1]] & 0xFFFFFFFFFFFFFFFF
         if kind == 'str':
             return 'string', self._data_string(node[1])
         if kind == 'neg' and node[1][0] == 'num':
@@ -1341,6 +1544,19 @@ class CodeGen:
                 raise CompilerError(f"Bitwise NOT requires integer, got: {ctype}")
             return 'int', (~raw) & 0xFFFFFFFFFFFFFFFF
         raise CompilerError(f"Non-constant global initializer: {kind}")
+
+    def _const_int(self, node) -> int:
+        """case 常量: 整数常量表达式 (支持枚举成员), 返回有符号 64 位值。"""
+        try:
+            ctype, raw = self._const_value(node)
+        except CompilerError:
+            raise CompilerError(
+                "case value must be an integer constant") from None
+        if ctype not in ('int', 'bool'):
+            raise CompilerError(
+                f"case value must be an integer constant, got: {ctype}")
+        raw &= 0xFFFFFFFFFFFFFFFF
+        return raw - (1 << 64) if raw >= (1 << 63) else raw
 
     def emit_globals_init(self, globals_: List[GlobalVar]) -> None:
         for gv in globals_:
@@ -1414,6 +1630,17 @@ class CodeGen:
                                 seen.add(name)
                                 found.append((name, t, _type_slots(t)))
                     walk([s[4]])
+                elif kind == 'rangefor':
+                    _vname, _etype, _arr, _rbody, hid = (s[1], s[2], s[3],
+                                                         s[4], s[5])
+                    for nm, ty in ((_vname, _etype),
+                                   (f'$rf{hid}p', 'int'),
+                                   (f'$rf{hid}e', 'int')):
+                        if nm in seen:
+                            continue
+                        seen.add(nm)
+                        found.append((nm, ty, _type_slots(ty)))
+                    walk([_rbody])
         walk(body)
         return found
 
@@ -1516,6 +1743,8 @@ class CodeGen:
             self.gen_while(s[1], s[2])
         elif kind == 'for':
             self.gen_for(s[1], s[2], s[3], s[4])
+        elif kind == 'rangefor':
+            self.gen_rangefor(s[1], s[2], s[3], s[4], s[5])
         elif kind == 'dowhile':
             self.gen_dowhile(s[1], s[2])
         elif kind == 'switch':
@@ -1583,6 +1812,68 @@ class CodeGen:
         self.continue_labels.pop()
         self.label(l_end)
 
+    def gen_rangefor(self, vname, elem_type, arrexpr, body, hid) -> None:
+        """for (T v : arr) —— 遍历定长数组 (元素为 1 槽: 标量/struct/指针)。
+
+        展开为指针游走: p = &arr[0]; e = p + N*8;
+        while (p < e) { v = *p; body; p += 8 }
+        """
+        if _is_fixed_array(elem_type) or _is_ptr_array(elem_type):
+            raise CompilerError(
+                "range-for element type must be a scalar or struct, got: "
+                f"{elem_type}")
+        at = self._expr_type(arrexpr)
+        if not _is_fixed_array(at):
+            raise CompilerError(
+                f"range-for requires a fixed-size array (element type of the "
+                f"iterated expression: {at})")
+        elem_t, count = at[1], at[2]
+        if _is_fixed_array(elem_t):
+            raise CompilerError(
+                "range-for over multi-dimensional arrays is not supported; "
+                "use an index loop")
+        pname = f'$rf{hid}p'
+        ename = f'$rf{hid}e'
+        l_loop = self.new_label('rfloop')
+        l_inc = self.new_label('rfinc')
+        l_end = self.new_label('rfend')
+
+        # p = &arr[0] (定长数组取值即块地址)
+        self.gen_value(arrexpr)
+        self._store_x0_local(pname)
+        # e = p + count*8
+        self._gen_var_value(pname)
+        self.emit('ADDI', self.reg(0), self.reg(0), self.imm(count * 8))
+        self._store_x0_local(ename)
+
+        self.label(l_loop)
+        # p >= e 时退出 (gen_cond_jump_false 在条件为假时跳转)
+        self.gen_cond_jump_false(('binop', '<', ('var', pname), ('var', ename)),
+                                 l_end)
+        # v = *p
+        self._gen_var_value(pname)
+        self.emit('LD', self.reg(0), ('mem', 0, 0))
+        self._convert(elem_t, elem_type)
+        self._store_x0_local(vname)
+        self.break_labels.append(l_end)
+        self.continue_labels.append(l_inc)
+        self.gen_stmt(body)
+        self.break_labels.pop()
+        self.continue_labels.pop()
+        # p += 8
+        self.label(l_inc)
+        self._gen_var_value(pname)
+        self.emit('ADDI', self.reg(0), self.reg(0), self.imm(8))
+        self._store_x0_local(pname)
+        self.emit('JMP', self.lab(l_loop))
+        self.label(l_end)
+
+    def _store_x0_local(self, name: str) -> None:
+        """把 x0 存入局部变量槽 (不破坏 x0 之外的约定)。"""
+        self.emit('MOV', self.reg(2), self.reg(0))
+        self._addr_var(name)
+        self.emit('SD', self.reg(2), ('mem', 0, 0))
+
     def gen_dowhile(self, body, cond) -> None:
         l_body = self.new_label('dbody')
         l_cond = self.new_label('dcond')
@@ -1617,32 +1908,48 @@ class CodeGen:
         self.gen_value(cond)
         self.emit('PUSH', self.reg(0))                 # [SP] = selector
 
-        labels: List[Tuple[Optional[int], str]] = []
+        labels: List[Tuple[Optional[list], str]] = []
         default_lbl: Optional[str] = None
-        for _kind, const, _stmts in branches:
-            if const is None:
+        for _kind, alts, _stmts in branches:
+            if alts is None:
                 lbl = self.new_label('swdef')
                 default_lbl = lbl
                 labels.append((None, lbl))
                 continue
-            try:
-                ctype, raw = self._const_value(const)
-            except CompilerError:
-                raise CompilerError(
-                    "case value must be an integer constant") from None
-            if ctype not in ('int', 'bool'):
-                raise CompilerError(
-                    f"case value must be an integer constant, got: {ctype}")
-            labels.append((raw & 0xFFFFFFFFFFFFFFFF, self.new_label('swcase')))
+            compiled: List[Tuple[str, int, int]] = []
+            for alt in alts:
+                if alt[0] == 'range':
+                    low = self._const_int(alt[1])
+                    high = self._const_int(alt[2])
+                    if low > high:
+                        raise CompilerError(
+                            f"Empty case range: {low}..{high}")
+                    compiled.append(('range', low, high))
+                else:
+                    compiled.append(('val', self._const_int(alt[1]), 0))
+            labels.append((compiled, self.new_label('swcase')))
 
-        # 分派比较链
-        for raw, lbl in labels:
-            if raw is None:
+        # 分派比较链 (多值/范围展开为多个比较, 顺序不影响语义)
+        for compiled, lbl in labels:
+            if compiled is None:
                 continue
-            self.emit('LD', self.reg(0), ('mem', 32, 0))
-            self.emit('MOV', self.reg(1), self.imm(raw))
-            self.emit('CMP', self.reg(0), self.reg(1))
-            self.emit('B', self.lab(lbl), ('cond', 'EQ'))
+            for item in compiled:
+                if item[0] == 'val':
+                    self.emit('LD', self.reg(0), ('mem', 32, 0))
+                    self.emit('MOV', self.reg(1), self.imm(item[1]))
+                    self.emit('CMP', self.reg(0), self.reg(1))
+                    self.emit('B', self.lab(lbl), ('cond', 'EQ'))
+                else:
+                    l_skip = self.new_label('swrng')
+                    self.emit('LD', self.reg(0), ('mem', 32, 0))
+                    self.emit('MOV', self.reg(1), self.imm(item[1]))
+                    self.emit('CMP', self.reg(0), self.reg(1))
+                    self.emit('B', self.lab(l_skip), ('cond', 'LT'))
+                    self.emit('LD', self.reg(0), ('mem', 32, 0))
+                    self.emit('MOV', self.reg(1), self.imm(item[2]))
+                    self.emit('CMP', self.reg(0), self.reg(1))
+                    self.emit('B', self.lab(lbl), ('cond', 'LE'))
+                    self.label(l_skip)
         self.emit('JMP', self.lab(default_lbl if default_lbl is not None
                                   else l_end))
 
@@ -1889,6 +2196,10 @@ class CodeGen:
         raise CompilerError(f"Cannot generate code for expression: {kind}")
 
     def _gen_var_value(self, name: str) -> Any:
+        if name in self.enums:
+            # 枚举成员: 编译期整数常量
+            self.emit('MOV', self.reg(0), self.imm(self.enums[name]))
+            return 'int'
         t = self._var_type(name)
         if t is None:
             raise CompilerError(f"Undefined variable: {name}")
@@ -1909,6 +2220,10 @@ class CodeGen:
         """求值左值地址到 x0。"""
         kind = node[0]
         if kind == 'var':
+            if node[1] in self.enums:
+                raise CompilerError(
+                    f"Cannot assign to enum member: {node[1]} (constants are "
+                    f"read-only)")
             self._addr_var(node[1])
             return
         if kind == 'member':
@@ -2050,6 +2365,8 @@ class CodeGen:
     def _expr_type(self, node):
         kind = node[0]
         if kind == 'var':
+            if node[1] in self.enums:
+                return 'int'
             return self._var_type(node[1])
         if kind == 'member':
             obj_t = self._expr_type(node[1])
@@ -2443,10 +2760,10 @@ class CodeGen:
                 f"{name}() expects at least {min_args} argument(s), "
                 f"got {len(args)}")
         if name in ('println', 'print'):
-            # 单参数 (拼接由表达式完成)
-            if args:
-                self.gen_print(args[0], newline=(name == 'println'))
-            else:
+            # 多参数: 依次字符串化输出 (无分隔符); 无参时 println 输出空行
+            for a in args:
+                self.gen_print(a, newline=False)
+            if name == 'println' or not args:
                 self.emit('OUT', self.imm(10))
             return 'void'
 
