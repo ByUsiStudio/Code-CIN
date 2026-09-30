@@ -1,0 +1,254 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "Code CIN",
+  "scopeName": "source.cin",
+  "fileTypes": [
+    "cin"
+  ],
+  "patterns": [
+    {
+      "include": "#comments"
+    },
+    {
+      "include": "#strings"
+    },
+    {
+      "include": "#char_literal"
+    },
+    {
+      "include": "#import"
+    },
+    {
+      "include": "#type_declaration"
+    },
+    {
+      "include": "#keywords"
+    },
+    {
+      "include": "#storage"
+    },
+    {
+      "include": "#constants"
+    },
+    {
+      "include": "#inline_cpu"
+    },
+    {
+      "include": "#numbers"
+    },
+    {
+      "include": "#builtin_functions"
+    },
+    {
+      "include": "#function_calls"
+    },
+    {
+      "include": "#operators"
+    },
+    {
+      "include": "#punctuation"
+    }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.block.cin",
+          "begin": "/\\*",
+          "beginCaptures": {
+            "0": {
+              "name": "punctuation.definition.comment.cin"
+            }
+          },
+          "end": "\\*/",
+          "endCaptures": {
+            "0": {
+              "name": "punctuation.definition.comment.cin"
+            }
+          }
+        },
+        {
+          "begin": "//",
+          "beginCaptures": {
+            "0": {
+              "name": "punctuation.definition.comment.cin"
+            }
+          },
+          "end": "$",
+          "name": "comment.line.double-slash.cin"
+        }
+      ]
+    },
+    "strings": {
+      "patterns": [
+        {
+          "name": "string.quoted.double.cin",
+          "begin": "\"",
+          "beginCaptures": {
+            "0": {
+              "name": "punctuation.definition.string.begin.cin"
+            }
+          },
+          "end": "\"",
+          "endCaptures": {
+            "0": {
+              "name": "punctuation.definition.string.end.cin"
+            }
+          },
+          "patterns": [
+            {
+              "include": "#string_escapes"
+            }
+          ]
+        }
+      ]
+    },
+    "string_escapes": {
+      "patterns": [
+        {
+          "name": "constant.character.escape.cin",
+          "match": "\\\\(?:[ntr0\"\\\\abfv]|x[0-9a-fA-F]{1,2}|u[0-9a-fA-F]{4}|U[0-9a-fA-F]{8})"
+        }
+      ]
+    },
+    "char_literal": {
+      "patterns": [
+        {
+          "name": "string.quoted.single.cin",
+          "match": "'(?:[^'\\\\]|\\\\.)'",
+          "captures": {
+            "0": {
+              "name": "string.quoted.single.cin"
+            }
+          }
+        }
+      ]
+    },
+    "import": {
+      "patterns": [
+        {
+          "match": "\\b(import)\\b\\s*(\"[^\"]*\")?",
+          "captures": {
+            "1": {
+              "name": "keyword.control.import.cin"
+            },
+            "2": {
+              "name": "string.quoted.double.import.cin"
+            }
+          }
+        }
+      ]
+    },
+    "type_declaration": {
+      "patterns": [
+        {
+          "match": "\\b(struct|enum)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+          "captures": {
+            "1": {
+              "name": "storage.type.cin"
+            },
+            "2": {
+              "name": "entity.name.type.cin"
+            }
+          }
+        }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.cin",
+          "match": "\\b(if|else|while|for|do|switch|case|default|break|continue|return)\\b"
+        },
+        {
+          "name": "storage.type.function.cin",
+          "match": "\\b(function)\\b"
+        }
+      ]
+    },
+    "storage": {
+      "patterns": [
+        {
+          "name": "storage.type.cin",
+          "match": "\\b(int|float|bool|string|void|char|short|long|unsigned|struct|enum)\\b"
+        }
+      ]
+    },
+    "constants": {
+      "patterns": [
+        {
+          "name": "constant.language.cin",
+          "match": "\\b(true|false)\\b"
+        }
+      ]
+    },
+    "inline_cpu": {
+      "patterns": [
+        {
+          "match": "^\\s*(set|add|subtract|multiply|divide|increment|decrement)\\b",
+          "captures": {
+            "1": {
+              "name": "keyword.other.instruction.cin"
+            }
+          }
+        }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        {
+          "name": "constant.numeric.float.cin",
+          "match": "\\b\\d[\\d_]*\\.[\\d_]*\\d([eE][+-]?\\d[\\d_]*)?[fF]?\\b|\\b\\d[\\d_]*[eE][+-]?\\d[\\d_]*[fF]?\\b|\\b\\d[\\d_]*[fF]\\b|(?<![\\w.])\\.[\\d_]*\\d\\b"
+        },
+        {
+          "name": "constant.numeric.hex.cin",
+          "match": "\\b0[xX][0-9a-fA-F_]+[uUlL]*\\b"
+        },
+        {
+          "name": "constant.numeric.binary.cin",
+          "match": "\\b0[bB][01_]+[uUlL]*\\b"
+        },
+        {
+          "name": "constant.numeric.octal.cin",
+          "match": "\\b0[oO][0-7_]+[uUlL]*\\b"
+        },
+        {
+          "name": "constant.numeric.integer.cin",
+          "match": "\\b\\d[\\d_]*[uUlL]*\\b"
+        }
+      ]
+    },
+    "builtin_functions": {
+      "patterns": [
+        {
+          "name": "support.function.cin",
+          "match": "\\b(?:print|println|input|abs|sqrt|pow|sin|cos|tan|floor|ceil|round|min|max|idiv|rand|srand|time|strlen|strcmp|strcpy|substr|indexof|upper|lower|trim|ltrim|rtrim|atoi|int_to_str|itoa|float_to_str|ftoa|bool_to_str|canvas|set_color|fill_rect|fill_circle|draw_line|draw_text|save_png|show_canvas|audio_play|audio_stop|audio_volume|audio_wait|file_read|file_write|file_append|file_exists|file_delete|file_size|mkdir|dir_list|path_join|path_basename|path_dirname|path_abs|file_copy|file_move|dir_remove|is_dir|file_mtime|temp_dir|chdir|exec|exec_output|getenv|setenv|os_name|hostname|username|cwd|home_dir|time_ms|sleep_ms|cpu_count|arch_name|mem_info|is_android|http_get|http_post|download|sha256|base64_encode|base64_decode|clipboard_get|clipboard_set|notify|open_url|termux_available|termux_notify|termux_toast|termux_clipboard_get|termux_clipboard_set|termux_battery|termux_vibrate|termux_tts|termux_location|termux_wifi_info|termux_dialog|termux_sms_send|android_intent|termux_call|termux_share|termux_torch|termux_volume|termux_brightness|termux_camera_photo|termux_fingerprint|termux_sensor|key_hit|get_key|key_flush|key_wait)\\b(?=\\s*\\()"
+        }
+      ]
+    },
+    "function_calls": {
+      "patterns": [
+        {
+          "name": "entity.name.function.cin",
+          "match": "\\b[A-Za-z_][A-Za-z0-9_]*(?=\\s*\\()"
+        }
+      ]
+    },
+    "operators": {
+      "patterns": [
+        {
+          "name": "keyword.operator.cin",
+          "match": "--|\\+\\+|<<=|>>=|->|\\.\\.|==|!=|<=|>=|&&|\\|\\||\\+=|-=|\\*=|/=|%=|&=|\\|=|\\^=|<<|>>|[+\\-*/%<>!&|^~?:=]"
+        }
+      ]
+    },
+    "punctuation": {
+      "patterns": [
+        {
+          "name": "punctuation.separator.cin",
+          "match": "[,;]"
+        }
+      ]
+    }
+  }
+}

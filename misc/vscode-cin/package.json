@@ -1,0 +1,52 @@
+{
+  "name": "codecin-cin",
+  "displayName": "Code CIN Language Support",
+  "description": "Code CIN (UCPU) language support: syntax highlighting, bracket matching, snippets for .cin files",
+  "version": "1.0.0",
+  "publisher": "ucpu",
+  "license": "SEE LICENSE IN LICENSE",
+  "categories": [
+    "Programming Languages"
+  ],
+  "keywords": [
+    "cin",
+    "codecin",
+    "ucpu",
+    "bytecode"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/byusistudio/code-cin"
+  },
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "contributes": {
+    "languages": [
+      {
+        "id": "cin",
+        "aliases": [
+          "Code CIN",
+          "cin"
+        ],
+        "extensions": [
+          ".cin"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "cin",
+        "scopeName": "source.cin",
+        "path": "./syntaxes/cin.tmLanguage.json"
+      }
+    ],
+    "snippets": [
+      {
+        "language": "cin",
+        "path": "./snippets/cin.json"
+      }
+    ]
+  }
+}

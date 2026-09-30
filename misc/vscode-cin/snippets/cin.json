@@ -1,0 +1,113 @@
+{
+  "main 函数骨架": {
+    "prefix": "main",
+    "body": [
+      "function main() -> int {",
+      "\t$0",
+      "\treturn 0",
+      "}"
+    ],
+    "description": "main 函数骨架"
+  },
+  "函数定义": {
+    "prefix": "function",
+    "body": [
+      "function ${1:name}(${2:int x}) -> ${3|int,void,float,bool,string|} {",
+      "\t$0",
+      "\treturn ${4:0}",
+      "}"
+    ],
+    "description": "函数定义，带参数与返回类型"
+  },
+  "if 语句": {
+    "prefix": "if",
+    "body": [
+      "if (${1:cond}) {",
+      "\t$0",
+      "}"
+    ],
+    "description": "if 语句"
+  },
+  "if-else 语句": {
+    "prefix": "ifelse",
+    "body": [
+      "if (${1:cond}) {",
+      "\t$2",
+      "} else {",
+      "\t$3",
+      "}"
+    ],
+    "description": "if-else 语句"
+  },
+  "for 循环（三段式）": {
+    "prefix": "for",
+    "body": [
+      "for (int ${1:i} = 0; ${1:i} < ${2:n}; ${1:i}++) {",
+      "\t$0",
+      "}"
+    ],
+    "description": "三段式 for 循环"
+  },
+  "范围 for（遍历数组）": {
+    "prefix": "foreach",
+    "body": [
+      "for (${1|int,float,bool,string|} ${2:v} : ${3:arr}) {",
+      "\t$0",
+      "}"
+    ],
+    "description": "范围 for，遍历定长数组"
+  },
+  "while 循环": {
+    "prefix": "while",
+    "body": [
+      "while (${1:cond}) {",
+      "\t$0",
+      "}"
+    ],
+    "description": "while 循环"
+  },
+  "switch-case": {
+    "prefix": "switch",
+    "body": [
+      "switch (${1:x}) {",
+      "case ${2:1}:",
+      "\t$3",
+      "\tbreak",
+      "default:",
+      "\t$4",
+      "\tbreak",
+      "}"
+    ],
+    "description": "switch-case 结构，含 default"
+  },
+  "struct 定义": {
+    "prefix": "struct",
+    "body": [
+      "struct ${1:Name} {",
+      "\t${2:int x}",
+      "}"
+    ],
+    "description": "struct 类型定义"
+  },
+  "enum 定义": {
+    "prefix": "enum",
+    "body": [
+      "enum ${1:Name} { ${2:A}, ${3:B} }"
+    ],
+    "description": "enum 枚举定义，成员自动从 0 递增"
+  },
+  "import 导入模块": {
+    "prefix": "import",
+    "body": [
+      "import \"${1:math.cin}\""
+    ],
+    "description": "导入标准库或相对路径模块"
+  },
+  "println 输出": {
+    "prefix": "println",
+    "body": [
+      "println(${1:\"text\"})"
+    ],
+    "description": "println 输出并换行"
+  }
+}
