@@ -75,7 +75,7 @@ _KEYWORDS = {
     'struct', 'function', 'return', 'if', 'else', 'while', 'for', 'do',
     'switch', 'case', 'default', 'break', 'continue', 'true', 'false',
     'int', 'float', 'bool', 'string', 'void', 'char', 'short', 'long',
-    'unsigned',
+    'unsigned', 'enum',
     'set', 'add', 'subtract', 'multiply', 'divide', 'increment', 'decrement',
 }
 
@@ -105,6 +105,14 @@ _COMPOUND_TO_BASE = {
     '+=': '+', '-=': '-', '*=': '*', '/=': '/', '%=': '%',
     '&=': '&', '|=': '|', '^=': '^', '<<=': '<<', '>>=': '>>',
 }
+
+# 字符串/字符字面量的单字符转义 (含控制字符)
+_STR_ESCAPES = {
+    'n': '\n', 't': '\t', 'r': '\r', '0': '\0', 'a': '\a', 'b': '\b',
+    'f': '\f', 'v': '\v', '"': '"', "'": "'", '\\': '\\',
+}
+
+_HEX_DIGITS = '0123456789abcdefABCDEF'
 
 # 宿主能力内建 (表驱动): 名称 -> (SYS 功能号, 参数个数, 返回类型)。
 # 全部由 Go 原生引擎实现; 解释器 (--no-native) 下会给出明确错误。
@@ -154,6 +162,48 @@ HOST_BUILTINS = {
     'termux_wifi_info': (Syscall.TERMUXWIFI, 0, 'string'),
     'termux_dialog': (Syscall.TERMUXDIALOG, 1, 'string'),
     'termux_sms_send': (Syscall.TERMUXSMS, 2, 'int'),
+    # 路径与文件系统扩展 (跨平台)
+    'path_join': (Syscall.PATHJOIN, 2, 'string'),
+    'path_basename': (Syscall.PATHBASENAME, 1, 'string'),
+    'path_dirname': (Syscall.PATHDIRNAME, 1, 'string'),
+    'path_abs': (Syscall.PATHABS, 1, 'string'),
+    'file_copy': (Syscall.FILECOPY, 2, 'int'),
+    'file_move': (Syscall.FILEMOVE, 2, 'int'),
+    'dir_remove': (Syscall.DIRREMOVE, 1, 'int'),
+    'is_dir': (Syscall.ISDIR, 1, 'int'),
+    'file_mtime': (Syscall.FILEMTIME, 1, 'int'),
+    'temp_dir': (Syscall.TEMPDIR, 0, 'string'),
+    'chdir': (Syscall.CHDIR, 1, 'int'),
+    # 时间与系统信息
+    'time_ms': (Syscall.TIMEMS, 0, 'int'),
+    'sleep_ms': (Syscall.SLEEPMS, 1, 'int'),
+    'cpu_count': (Syscall.CPUCOUNT, 0, 'int'),
+    'arch_name': (Syscall.ARCHNAME, 0, 'string'),
+    'mem_info': (Syscall.MEMINFO, 0, 'string'),
+    'is_android': (Syscall.ISANDROID, 0, 'int'),
+    # 网络 (HTTP/HTTPS)
+    'http_get': (Syscall.HTTPGET, 1, 'string'),
+    'http_post': (Syscall.HTTPPOST, 2, 'string'),
+    'download': (Syscall.DOWNLOAD, 2, 'int'),
+    # 编码与哈希
+    'sha256': (Syscall.SHA256, 1, 'string'),
+    'base64_encode': (Syscall.BASE64ENC, 1, 'string'),
+    'base64_decode': (Syscall.BASE64DEC, 1, 'string'),
+    # 桌面集成 (剪贴板 / 通知 / 打开 URL)
+    'clipboard_get': (Syscall.CLIPGET, 0, 'string'),
+    'clipboard_set': (Syscall.CLIPSET, 1, 'int'),
+    'notify': (Syscall.NOTIFY, 2, 'int'),
+    'open_url': (Syscall.OPENURL, 1, 'int'),
+    # Android / Termux 扩展
+    'android_intent': (Syscall.ANDROIDINTENT, 2, 'int'),
+    'termux_call': (Syscall.TERMUXCALL, 1, 'int'),
+    'termux_share': (Syscall.TERMUXSHARE, 1, 'int'),
+    'termux_torch': (Syscall.TERMUXTORCH, 1, 'int'),
+    'termux_volume': (Syscall.TERMUXVOLUME, 2, 'int'),
+    'termux_brightness': (Syscall.TERMUXBRIGHT, 1, 'int'),
+    'termux_camera_photo': (Syscall.TERMUXCAMERA, 1, 'int'),
+    'termux_fingerprint': (Syscall.TERMUXFINGER, 0, 'string'),
+    'termux_sensor': (Syscall.TERMUXSENSOR, 1, 'string'),
 }
 
 # 内建函数最少参数个数 (按各分支实际索引的最大下标 + 1 得出)。

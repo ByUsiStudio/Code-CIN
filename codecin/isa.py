@@ -205,6 +205,48 @@ class Syscall(IntEnum):
     TERMUXWIFI = 77      # termux_wifi_info() -> JSON (新堆字符串)
     TERMUXDIALOG = 78    # termux_dialog(x0=标题) -> JSON (新堆字符串)
     TERMUXSMS = 79       # termux_sms_send(x0=号码, x1=内容) -> 0 / -1
+    # ---- 宿主能力: 路径与文件系统扩展 (Windows / Linux / Android 通用) ----
+    PATHJOIN = 80        # path_join(x0=目录, x1=名字) -> 拼接路径 (平台分隔符)
+    PATHBASENAME = 81    # path_basename(x0=路径) -> 末段名
+    PATHDIRNAME = 82     # path_dirname(x0=路径) -> 去掉末段后的目录
+    PATHABS = 83         # path_abs(x0=路径) -> 绝对路径 (不要求存在)
+    FILECOPY = 84        # file_copy(x0=源, x1=目标) -> 0 成功 / -1 失败
+    FILEMOVE = 85        # file_move(x0=源, x1=目标) -> 0 成功 / -1 失败 (可重命名)
+    DIRREMOVE = 86       # dir_remove(x0=路径) -> 0 成功 / -1 失败 (递归删除)
+    ISDIR = 87           # is_dir(x0=路径) -> 1 是目录 / 0 否
+    FILEMTIME = 88       # file_mtime(x0=路径) -> 修改时间 (Unix 秒) / -1
+    TEMPDIR = 89         # temp_dir() -> 系统临时目录 (新堆字符串)
+    CHDIR = 90           # chdir(x0=路径) -> 0 成功 / -1 失败
+    # ---- 宿主能力: 时间与系统信息 ----
+    TIMEMS = 91          # time_ms() -> Unix 时间戳 (毫秒)
+    SLEEPMS = 92         # sleep_ms(x0=毫秒) -> 0 (阻塞睡眠)
+    CPUCOUNT = 93        # cpu_count() -> 逻辑 CPU 数
+    ARCHNAME = 94        # arch_name() -> "amd64" / "arm64" / "386" / "arm" ...
+    MEMINFO = 95         # mem_info() -> JSON {"total_kb":..,"free_kb":..} (未知为 0)
+    ISANDROID = 96       # is_android() -> 1 Android(含 Termux) / 0
+    # ---- 宿主能力: 网络 (HTTP/HTTPS, Go 标准库实现) ----
+    HTTPGET = 97         # http_get(x0=url) -> 响应体 (新堆字符串; 失败为空串)
+    HTTPPOST = 98        # http_post(x0=url, x1=请求体) -> 响应体 (失败为空串)
+    DOWNLOAD = 99        # download(x0=url, x1=保存路径) -> 0 成功 / -1 失败
+    # ---- 宿主能力: 编码与哈希 ----
+    SHA256 = 100         # sha256(x0=文本) -> 十六进制摘要 (新堆字符串)
+    BASE64ENC = 101      # base64_encode(x0=文本) -> Base64 文本
+    BASE64DEC = 102      # base64_decode(x0=Base64 文本) -> 原文 (失败为空串)
+    # ---- 宿主能力: 桌面集成 (按平台分发: Windows / Linux / Android / macOS) ----
+    CLIPGET = 103        # clipboard_get() -> 剪贴板文本 (新堆字符串)
+    CLIPSET = 104        # clipboard_set(x0=文本) -> 0 成功 / -1 失败
+    NOTIFY = 105         # notify(x0=标题, x1=内容) -> 0 成功 / -1 失败 (系统通知)
+    OPENURL = 106        # open_url(x0=url) -> 0 成功 / -1 失败 (默认浏览器/查看器)
+    # ---- 宿主能力: Android / Termux 扩展 ----
+    ANDROIDINTENT = 107  # android_intent(x0=action, x1=uri) -> 0 / -1 (am start)
+    TERMUXCALL = 108     # termux_call(x0=号码) -> 0 / -1 (拨号)
+    TERMUXSHARE = 109    # termux_share(x0=文件路径) -> 0 / -1 (系统分享)
+    TERMUXTORCH = 110    # termux_torch(x0=1 开灯 / 0 关灯) -> 0 / -1
+    TERMUXVOLUME = 111   # termux_volume(x0=流名称, x1=音量) -> 0 / -1
+    TERMUXBRIGHT = 112   # termux_brightness(x0=0..255) -> 0 / -1
+    TERMUXCAMERA = 113   # termux_camera_photo(x0=保存路径) -> 0 / -1 (后置摄像头)
+    TERMUXFINGER = 114   # termux_fingerprint() -> JSON (指纹认证结果)
+    TERMUXSENSOR = 115   # termux_sensor(x0=传感器名) -> JSON (单次读数)
 
 
 class Cond:
