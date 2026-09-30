@@ -2,6 +2,7 @@ package compiler
 
 import (
 	"fmt"
+	"math/big"
 	"strconv"
 )
 
@@ -11,6 +12,12 @@ type parser struct {
 	toks     []Token
 	pos      int
 	filename string
+	// enums 枚举成员名 -> 编译期整数值 (可被后续成员引用)。
+	enums map[string]int64
+	// enumTypes 已声明的枚举类型名 (裸类型名等价于 int)。
+	enumTypes map[string]bool
+	// rangeID 范围 for 的隐藏局部名序号 ($rf<id>p / $rf<id>e)。
+	rangeID int
 }
 
 func (p *parser) peek() Token {
@@ -53,7 +60,11 @@ func (p *parser) skipNL() {
 }
 
 func (p *parser) loc() string {
-	t := p.peek()
+	return p.locTok(p.peek())
+}
+
+// locTok 返回指定 token 的 'file:line' 定位 (等价于 Python 侧 _loc(tok))。
+func (p *parser) locTok(t Token) string {
 	if t.filename != "" {
 		return fmt.Sprintf("%s:%d", t.filename, t.line)
 	}
@@ -95,6 +106,9 @@ func (p *parser) parseType() (*Type, error) {
 				p.next()
 			}
 		}
+		ty = scalarT(kInt)
+	case p.enumTypes[base]:
+		// 枚举类型名等价于 int (成员是编译期整数常量)
 		ty = scalarT(kInt)
 	case base == "int" || base == "float" || base == "bool" || base == "string" || base == "void":
 		ty = scalarT(typeKindFromName(base))
@@ -141,7 +155,7 @@ func (p *parser) parseDims() ([]int, error) {
 
 // ---------------- 程序 ----------------
 
-func (p *parser) parseProgram() (map[string]*StructDef, []*GlobalVar, map[string]*FuncDef, []string, error) {
+func (p *parser) parseProgram() (map[string]*StructDef, []*GlobalVar, map[string]*FuncDef, []string, map[string]int64, error) {
 	structs := map[string]*StructDef{}
 	var globals []*GlobalVar
 	functions := map[string]*FuncDef{}
@@ -151,25 +165,186 @@ func (p *parser) parseProgram() (map[string]*StructDef, []*GlobalVar, map[string
 	for p.peek().kind != "EOF" {
 		if p.peek().kind == "IDENT" && p.peek().sval == "struct" {
 			if err := p.parseStruct(structs); err != nil {
-				return nil, nil, nil, nil, err
+				return nil, nil, nil, nil, nil, err
+			}
+		} else if p.peek().kind == "IDENT" && p.peek().sval == "enum" {
+			if err := p.parseEnum(); err != nil {
+				return nil, nil, nil, nil, nil, err
 			}
 		} else if p.peek().kind == "IDENT" && p.peek().sval == "function" {
 			f, err := p.parseFunction()
 			if err != nil {
-				return nil, nil, nil, nil, err
+				return nil, nil, nil, nil, nil, err
 			}
 			functions[f.name] = f
 			funcOrder = append(funcOrder, f.name)
 		} else {
 			gs, err := p.parseGlobal()
 			if err != nil {
-				return nil, nil, nil, nil, err
+				return nil, nil, nil, nil, nil, err
 			}
 			globals = append(globals, gs...)
 		}
 		p.skipNL()
 	}
-	return structs, globals, functions, funcOrder, nil
+	return structs, globals, functions, funcOrder, p.enums, nil
+}
+
+// ---------------- 枚举 ----------------
+
+// parseEnum 解析 `enum Name { A, B = 3, C }` —— 成员为编译期整数常量 (自动递增)。
+func (p *parser) parseEnum() error {
+	tok := p.next() // enum
+	nameT, err := p.expect("IDENT")
+	if err != nil {
+		return err
+	}
+	name := nameT.sval
+	if keywords[name] || p.enumTypes[name] {
+		return fmt.Errorf("Invalid enum name: %s at %s", name, p.locTok(tok))
+	}
+	if _, err := p.expect("LBRACE"); err != nil {
+		return err
+	}
+	p.skipNL()
+	// 与 Python 一致: 用任意精度整数累加, 越界在写入成员表前判定。
+	value := big.NewInt(0)
+	count := 0
+	for p.peek().kind != "RBRACE" && p.peek().kind != "EOF" {
+		p.skipNL()
+		if p.peek().kind == "RBRACE" {
+			break
+		}
+		mtok := p.peek()
+		mnameT, err := p.expect("IDENT")
+		if err != nil {
+			return err
+		}
+		mname := mnameT.sval
+		if _, dup := p.enums[mname]; dup {
+			return fmt.Errorf("Duplicate enum member: %s at %s", mname, p.locTok(mtok))
+		}
+		if p.accept("ASSIGN") {
+			node, err := p.parseExpr()
+			if err != nil {
+				return err
+			}
+			value, err = p.evalEnumConst(node, mname)
+			if err != nil {
+				return err
+			}
+		}
+		if !value.IsInt64() {
+			return fmt.Errorf("Enum member %s out of 64-bit range at %s",
+				mname, p.locTok(mtok))
+		}
+		p.enums[mname] = value.Int64()
+		value = new(big.Int).Add(value, big.NewInt(1))
+		count++
+		if !p.accept("COMMA") {
+			break
+		}
+		p.skipNL()
+	}
+	if count == 0 {
+		return fmt.Errorf("Empty enum %s at %s", name, p.locTok(tok))
+	}
+	if _, err := p.expect("RBRACE"); err != nil {
+		return err
+	}
+	p.accept("SEMI")
+	p.enumTypes[name] = true
+	return nil
+}
+
+// evalEnumConst 求值枚举成员初始值: 整数常量表达式 (可引用已定义的枚举成员)。
+// 使用 big.Int 以匹配 Python 侧任意精度算术 (溢出只在最后统一判定)。
+func (p *parser) evalEnumConst(n *Node, mname string) (*big.Int, error) {
+	switch n.Kind {
+	case "num":
+		if !n.IsFloat {
+			return big.NewInt(n.Ival), nil
+		}
+	case "var":
+		if v, ok := p.enums[n.Name]; ok {
+			return big.NewInt(v), nil
+		}
+		return nil, fmt.Errorf("Enum member %s initializer must be an integer "+
+			"constant (unknown name: %s) at %s", mname, n.Name, p.loc())
+	case "neg":
+		v, err := p.evalEnumConst(n.A, mname)
+		if err != nil {
+			return nil, err
+		}
+		return new(big.Int).Neg(v), nil
+	case "bitnot":
+		v, err := p.evalEnumConst(n.A, mname)
+		if err != nil {
+			return nil, err
+		}
+		return new(big.Int).Not(v), nil
+	case "binop":
+		switch n.Op {
+		case "+", "-", "*", "/", "%", "<<", ">>", "&", "|", "^":
+		default:
+			return nil, fmt.Errorf("Enum member %s initializer must be an "+
+				"integer constant expression at %s", mname, p.loc())
+		}
+		a, err := p.evalEnumConst(n.A, mname)
+		if err != nil {
+			return nil, err
+		}
+		b, err := p.evalEnumConst(n.B, mname)
+		if err != nil {
+			return nil, err
+		}
+		if (n.Op == "/" || n.Op == "%") && b.Sign() == 0 {
+			return nil, fmt.Errorf("Enum member %s initializer divides by zero", mname)
+		}
+		switch n.Op {
+		case "+":
+			return new(big.Int).Add(a, b), nil
+		case "-":
+			return new(big.Int).Sub(a, b), nil
+		case "*":
+			return new(big.Int).Mul(a, b), nil
+		case "/":
+			// Quo 向零截断, 与 DIV 指令/Python _trunc_div 一致
+			return new(big.Int).Quo(a, b), nil
+		case "%":
+			// Rem 取被除数符号, 与 Python a - _trunc_div(a,b)*b 一致
+			return new(big.Int).Rem(a, b), nil
+		case "&":
+			return new(big.Int).And(a, b), nil
+		case "|":
+			return new(big.Int).Or(a, b), nil
+		case "^":
+			return new(big.Int).Xor(a, b), nil
+		case "<<":
+			if !b.IsInt64() || b.Int64() < 0 || b.Int64() > 4096 {
+				// 左操作数非零时结果必然超出 64 位 (避免构造超大中间值)
+				if a.Sign() == 0 {
+					return big.NewInt(0), nil
+				}
+				return new(big.Int).Lsh(big.NewInt(1), 63), nil
+			}
+			return new(big.Int).Lsh(a, uint(b.Int64())), nil
+		case ">>":
+			if !b.IsInt64() || b.Int64() < 0 {
+				return nil, fmt.Errorf("Enum member %s initializer must be an "+
+					"integer constant expression at %s", mname, p.loc())
+			}
+			if b.Int64() > 4096 {
+				if a.Sign() < 0 {
+					return big.NewInt(-1), nil
+				}
+				return big.NewInt(0), nil
+			}
+			return new(big.Int).Rsh(a, uint(b.Int64())), nil
+		}
+	}
+	return nil, fmt.Errorf("Enum member %s initializer must be an integer "+
+		"constant expression at %s", mname, p.loc())
 }
 
 func (p *parser) parseStruct(structs map[string]*StructDef) error {
@@ -290,6 +465,10 @@ func (p *parser) parseGlobal() ([]*GlobalVar, error) {
 		name, err := p.expect("IDENT")
 		if err != nil {
 			return nil, err
+		}
+		if _, isEnum := p.enums[name.sval]; isEnum || keywords[name.sval] {
+			return nil, fmt.Errorf("Name '%s' is already used as an enum member "+
+				"or keyword at %s", name.sval, p.locTok(name))
 		}
 		dims, err := p.parseDims()
 		if err != nil {
@@ -524,14 +703,14 @@ func (p *parser) parseSwitch() (*Node, error) {
 				branches = append(branches, cur)
 			}
 			p.next()
-			constExpr, err := p.parseExpr()
+			alts, err := p.parseCaseAlts()
 			if err != nil {
 				return nil, err
 			}
 			if _, err := p.expect("COLON"); err != nil {
 				return nil, err
 			}
-			cur = &Node{Kind: "case", A: constExpr}
+			cur = &Node{Kind: "case", Alts: alts}
 		} else if t.kind == "IDENT" && t.sval == "default" {
 			if cur != nil {
 				branches = append(branches, cur)
@@ -563,6 +742,30 @@ func (p *parser) parseSwitch() (*Node, error) {
 		return nil, fmt.Errorf("Empty switch at %s", p.loc())
 	}
 	return &Node{Kind: "switch", A: cond, List: branches}, nil
+}
+
+// parseCaseAlts 解析 case 值列表: 单值 / 范围 1..5 / 多值 1, 2, 7..9 (逗号分隔)。
+func (p *parser) parseCaseAlts() ([]*Node, error) {
+	var alts []*Node
+	for {
+		low, err := p.parseExpr()
+		if err != nil {
+			return nil, err
+		}
+		if p.accept("DOTDOT") {
+			high, err := p.parseExpr()
+			if err != nil {
+				return nil, err
+			}
+			alts = append(alts, &Node{Kind: "caserange", A: low, B: high})
+		} else {
+			alts = append(alts, &Node{Kind: "caseval", A: low})
+		}
+		if !p.accept("COMMA") {
+			break
+		}
+	}
+	return alts, nil
 }
 
 func (p *parser) parseAssert() (*Node, error) {
@@ -617,12 +820,16 @@ func (p *parser) parseFor() (*Node, error) {
 	if _, err := p.expect("LPAREN"); err != nil {
 		return nil, err
 	}
+	if p.isRangeFor() {
+		return p.parseRangeFor()
+	}
 	var init *Node
 	if p.peek().kind != "SEMI" {
 		if p.isDeclStart() {
 			init, _ = p.parseDecl(true)
 		} else {
-			e, err := p.parseExpr()
+			// 允许赋值表达式作初始化子句: for (i = 0; ...)
+			e, err := p.parseAssign()
 			if err != nil {
 				return nil, err
 			}
@@ -659,6 +866,60 @@ func (p *parser) parseFor() (*Node, error) {
 		return nil, err
 	}
 	return &Node{Kind: "for", A: init, B: cond, C: update, D: body}, nil
+}
+
+// isRangeFor 判定 for (T v : arr) 形式 (LPAREN 已消费)。
+func (p *parser) isRangeFor() bool {
+	t := p.peek()
+	if t.kind != "IDENT" {
+		return false
+	}
+	v := t.sval
+	if v == "unsigned" {
+		n1, n2, n3 := p.peekN(1), p.peekN(2), p.peekN(3)
+		return n1.kind == "IDENT" &&
+			(n1.sval == "char" || n1.sval == "short" || n1.sval == "int" || n1.sval == "long") &&
+			n2.kind == "IDENT" && n3.kind == "COLON"
+	}
+	if baseTypeWords[v] {
+		return p.peekN(1).kind == "IDENT" && p.peekN(2).kind == "COLON"
+	}
+	if keywords[v] {
+		return false
+	}
+	return p.peekN(1).kind == "IDENT" && p.peekN(2).kind == "COLON"
+}
+
+// parseRangeFor 解析 for (T v : arr) —— 遍历定长数组元素 (元素类型为标量/struct)。
+func (p *parser) parseRangeFor() (*Node, error) {
+	elemType, err := p.parseType()
+	if err != nil {
+		return nil, err
+	}
+	vname, err := p.expect("IDENT")
+	if err != nil {
+		return nil, err
+	}
+	if _, isEnum := p.enums[vname.sval]; isEnum {
+		return nil, fmt.Errorf("Invalid range-for variable: %s at %s", vname.sval, p.loc())
+	}
+	if _, err := p.expect("COLON"); err != nil {
+		return nil, err
+	}
+	arr, err := p.parseExpr()
+	if err != nil {
+		return nil, err
+	}
+	if _, err := p.expect("RPAREN"); err != nil {
+		return nil, err
+	}
+	body, err := p.parseStmt()
+	if err != nil {
+		return nil, err
+	}
+	p.rangeID++
+	return &Node{Kind: "rangefor", Name: vname.sval, Type: elemType,
+		A: arr, D: body, RangeID: p.rangeID}, nil
 }
 
 func (p *parser) parseDecl(noSemi bool) (*Node, error) {

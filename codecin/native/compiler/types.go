@@ -80,8 +80,8 @@ func typeName(t *Type) string {
 // Node 是 AST 节点 (等价于 Python 侧的位置元组)。
 type Node struct {
 	Kind string // num/bool/str/var/call/binop/not/bitnot/neg/preinc/predec/postinc/postdec/cond/member/index
-	//        block/return/if/while/for/dowhile/switch/break/continue/decl/cpu/assert/expr
-	//        declitem/case/arraylit
+	//        block/return/if/while/for/rangefor/dowhile/switch/break/continue/decl/cpu/assert/expr
+	//        declitem/case/caseval/caserange/arraylit
 	Num        float64
 	Ival       int64
 	IsFloat    bool
@@ -99,6 +99,13 @@ type Node struct {
 	Is2D     bool
 	// cpu 语句操作数 (kind, value) 对。
 	Operands [][2]string
+	// Alts 仅用于 Kind=="case": case 备选列表, 每项为 caseval (A=常量表达式)
+	// 或 caserange (A=low, B=high); Alts==nil 表示 default 分支。
+	// case 的语句体仍放在 List 中。
+	Alts []*Node
+	// RangeID 仅用于 Kind=="rangefor": 隐藏局部名 $rf<id>p / $rf<id>e 的 id
+	// (自增序号, 与 Python 侧 _range_id 一致 -> 保证两编译器槽位布局相同)。
+	RangeID int
 }
 
 // DeclItem 一条变量声明 (name, type, init, arrayLit)。
@@ -109,12 +116,6 @@ type DeclItem struct {
 	ArrayLit *Node
 }
 
-// SwitchBranch 一个 switch 分支 ('case', constExpr|nil, stmts)。
-type SwitchBranch struct {
-	Const *Node // nil = default
-	Stmts []*Node
-}
-
 // ---------------- 编译上下文 ----------------
 
 // compiler 持有整个编译过程的可变状态。
@@ -123,6 +124,8 @@ type compiler struct {
 	structs   map[string]*StructDef
 	functions map[string]*FuncDef
 	globals   []*GlobalVar
+	// enums 枚举成员 -> 编译期整数常量 (来自 parser, 由 Compile 注入)。
+	enums map[string]int64
 
 	// 代码生成状态
 	res      *ir.Program
@@ -204,6 +207,7 @@ func newCompiler(filename string, bounds bool) *compiler {
 			Labels:     map[string]int{},
 			DataLabels: map[string]int{},
 		},
+		enums:      map[string]int64{},
 		heapStr:    map[string]int{},
 		filename:   filename,
 		bounds:     bounds,

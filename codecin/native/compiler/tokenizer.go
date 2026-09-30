@@ -25,6 +25,7 @@ var keywords = map[string]bool{
 	"default": true, "break": true, "continue": true, "true": true, "false": true,
 	"int": true, "float": true, "bool": true, "string": true, "void": true,
 	"char": true, "short": true, "long": true, "unsigned": true,
+	"enum": true,
 	"set": true, "add": true, "subtract": true, "multiply": true, "divide": true,
 	"increment": true, "decrement": true,
 }
@@ -49,8 +50,15 @@ var singleOps = map[byte]string{
 	'~': "TILDE",
 }
 
+// strEscapes 单字符转义 (含控制字符), 与 Python 侧 _STR_ESCAPES 一一对应。
 var strEscapes = map[byte]byte{
-	'n': '\n', 't': '\t', 'r': '\r', '"': '"', '\\': '\\', '0': 0,
+	'n': '\n', 't': '\t', 'r': '\r', '0': 0, 'a': 7, 'b': 8,
+	'f': 12, 'v': 11, '"': '"', '\'': '\'', '\\': '\\',
+}
+
+// isHexDigit 判定十六进制数字 ([0-9a-fA-F])。
+func isHexDigit(c byte) bool {
+	return c >= '0' && c <= '9' || c >= 'a' && c <= 'f' || c >= 'A' && c <= 'F'
 }
 
 // tokenize 把 CIN 源码切分为 token 流 (含续行处理与 BOM 容忍)。
@@ -92,12 +100,53 @@ func tokenize(source, filename string) ([]Token, error) {
 			for i < n && source[i] != '"' {
 				if source[i] == '\\' && i+1 < n {
 					esc := source[i+1]
+					i += 2
 					if b, ok := strEscapes[esc]; ok {
 						buf.WriteByte(b)
+					} else if esc == 'x' {
+						// \xH 或 \xHH (1-2 位十六进制) —— 追加原始单字节 (C 语义)。
+						// Python 侧 >= 0x80 的字节用代理转义码位承载, 由
+						// _data_string 原样写回, 因此与这里的逐字节追加一致。
+						digits := make([]byte, 0, 2)
+						for len(digits) < 2 && i < n && isHexDigit(source[i]) {
+							digits = append(digits, source[i])
+							i++
+						}
+						if len(digits) == 0 {
+							return nil, fmt.Errorf(
+								"\\x escape needs at least one hex digit at line %d", line)
+						}
+						code, _ := strconv.ParseUint(string(digits), 16, 32)
+						buf.WriteByte(byte(code))
+					} else if esc == 'u' || esc == 'U' {
+						// \uHHHH (4 位) / \UHHHHHHHH (8 位) Unicode 码点 -> UTF-8 字节
+						width := 4
+						if esc == 'U' {
+							width = 8
+						}
+						if i+width > n {
+							return nil, fmt.Errorf(
+								"\\%c escape needs exactly %d hex digits at line %d",
+								esc, width, line)
+						}
+						digits := source[i : i+width]
+						for k := 0; k < width; k++ {
+							if !isHexDigit(digits[k]) {
+								return nil, fmt.Errorf(
+									"\\%c escape needs exactly %d hex digits at line %d",
+									esc, width, line)
+							}
+						}
+						code, _ := strconv.ParseUint(digits, 16, 64)
+						if code > 0x10FFFF {
+							return nil, fmt.Errorf(
+								"\\%c escape out of Unicode range at line %d", esc, line)
+						}
+						buf.WriteString(string(rune(code)))
+						i += width
 					} else {
 						buf.WriteByte(esc)
 					}
-					i += 2
 				} else {
 					if source[i] == '\n' {
 						line++
@@ -160,6 +209,10 @@ func tokenize(source, filename string) ([]Token, error) {
 			} else {
 				for i < n && (source[i] >= '0' && source[i] <= '9' || source[i] == '.' || source[i] == '_') {
 					if source[i] == '.' {
+						// 小数点最多一个; '..' 是 case 范围运算符, 不属于数字
+						if isFloat || (i+1 < n && source[i+1] == '.') {
+							break
+						}
 						isFloat = true
 					}
 					i++
@@ -280,6 +333,10 @@ func tokenize(source, filename string) ([]Token, error) {
 			} else if c == '|' && i+1 < n && source[i+1] == '|' {
 				tokens = append(tokens, Token{kind: "OR", sval: "||", line: line})
 				i += 2
+			} else if c == '.' && i+1 < n && source[i+1] == '.' {
+				// case 范围: case 1..5: (必须在 singleOps 的 '.' 之前判定)
+				tokens = append(tokens, Token{kind: "DOTDOT", sval: "..", line: line})
+				i += 2
 			} else if k, ok := singleOps[c]; ok {
 				tokens = append(tokens, Token{kind: k, sval: string(c), line: line})
 				i++
@@ -298,6 +355,7 @@ func tokenize(source, filename string) ([]Token, error) {
 		"PLUS": true, "MINUS": true, "STAR": true, "SLASH": true, "PERCENT": true,
 		"ASSIGN": true, "LT": true, "GT": true, "LE": true, "GE": true, "EQ": true,
 		"NEQ": true, "AND": true, "OR": true, "COMMA": true, "ARROW": true, "DOT": true,
+		"DOTDOT": true,
 		"PLUSEQ": true, "MINUSEQ": true, "STAREQ": true, "SLASHEQ": true,
 		"PERCENTEQ": true, "INC": true, "DEC": true, "AMP": true, "PIPE": true,
 		"CARET": true, "TILDE": true, "SHL": true, "SHR": true, "ANDEQ": true,
