@@ -35,18 +35,20 @@ const (
 )
 
 var (
-	keyMu     sync.Mutex
-	keyReady  bool     // 后端是否已启用 (真实终端)
-	keyQueue  []uint64 // 已解码待读键码
-	keyEsc    int      // 转义序列状态 (仅 Unix 后端): 0 普通 / 1 见过 ESC / 2 CSI(ESC[) / 3 SS3(ESC O)
-	keyEscNum []byte   // CSI 参数字节
+	keyMu        sync.Mutex
+	keyReady     bool     // 后端是否已启用 (真实终端)
+	keyQueue     []uint64 // 已解码待读键码
+	keyEsc       int      // 转义序列状态 (仅 Unix 后端): 0 普通 / 1 见过 ESC / 2 CSI(ESC[) / 3 SS3(ESC O)
+	keyEscNum    []byte   // CSI 参数字节
+	keyPending   []uint64 // 一次喂入产出多个键码的缓冲 (如 ESC 后随普通键)
+	keyForcedOff bool     // 测试钩子: 禁止启用平台后端 (不触碰真实控制台)
 )
 
 // keyEnsure 惰性启用键盘监听; 可重复调用 (恢复后再次调用会重新启用)。
 func keyEnsure() {
 	keyMu.Lock()
 	defer keyMu.Unlock()
-	if !keyReady {
+	if !keyReady && !keyForcedOff {
 		keyReady = keyEnablePlatform()
 	}
 }
@@ -62,7 +64,12 @@ func keyboardRestore() {
 }
 
 // keyDrainLocked 从后端读键码填充队列 (须持 keyMu), 返回是否读到。
+// 后端未启用 (非终端) 时直接跳过: keyNext 不得触碰 stdin, 否则
+// 管道/重定向下非阻塞假设不成立, read 可能永久阻塞。
 func keyDrainLocked() bool {
+	if !keyReady {
+		return false
+	}
 	produced := false
 	for {
 		code, ok := keyNext()
@@ -111,6 +118,7 @@ func (vm *vmState) keyFlush() uint64 {
 	keyMu.Lock()
 	defer keyMu.Unlock()
 	keyQueue = keyQueue[:0]
+	keyPending = keyPending[:0]
 	keyEsc = 0
 	keyEscNum = keyEscNum[:0]
 	return 0
@@ -126,7 +134,14 @@ var csiFinalMap = map[byte]uint64{
 
 // keyFeed 喂一个原始字节, 返回 (键码, 是否构成完整键码)。
 // 需要更多字节/未知序列返回 (0, false)。
+// 单次喂入可能对应两个键码 (如先按 ESC 再按普通键), 溢出部分缓存在
+// keyPending, 由下一次调用优先产出。
 func keyFeed(b byte) (uint64, bool) {
+	if len(keyPending) > 0 {
+		code := keyPending[0]
+		keyPending = keyPending[1:]
+		return code, true
+	}
 	switch keyEsc {
 	case 1: // 见过 ESC
 		switch b {
@@ -136,13 +151,14 @@ func keyFeed(b byte) (uint64, bool) {
 		case 'O':
 			keyEsc = 3
 		default:
-			// 单独按下的 ESC: 立即产出; 当前字节按普通字节重新解码
+			// 单独按下的 ESC: 立即产出; 当前字节重新解码
 			keyEsc = 0
 			if b == 0x1B {
 				keyEsc = 1
 				return 0x1B, true
 			}
-			return uint64(b), true
+			keyPending = append(keyPending, uint64(b))
+			return 0x1B, true
 		}
 		return 0, false
 	case 2: // CSI: ESC [ <参数字节们> <最终字节>

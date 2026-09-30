@@ -41,6 +41,12 @@ func keyRestorePlatform() {
 // keyNext 非阻塞读 stdin 并经转义序列状态机解码。
 func keyNext() (uint64, bool) {
 	for {
+		// 先吐 keyFeed 溢出的待产出键码 (如 ESC 后随普通键)
+		if len(keyPending) > 0 {
+			code := keyPending[0]
+			keyPending = keyPending[1:]
+			return code, true
+		}
 		var b [1]byte
 		n, err := syscall.Read(0, b[:])
 		if err != nil || n == 0 {
