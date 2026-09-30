@@ -253,9 +253,10 @@ func opcodeSupported(op uint8) bool {
 }
 
 // syscallSupported: 原生 VM 已实现的 SYS 功能号。
-// 现已在 Go 侧实现全部宿主调用 (0..sysTERMUXSMS), 供独立 Go CLI 使用。
+// 现已在 Go 侧实现全部宿主调用 (0..sysTERMUXSENSOR), 供原生路径与前向兼容使用;
+// 新增 SYS 号必须同步 here, 否则原生 VM 会以 unsupported 回退到解释器。
 func syscallSupported(id uint64) bool {
-	return id <= sysTERMUXSMS
+	return id <= sysTERMUXSENSOR
 }
 
 // ---------------- 操作数/寄存器/内存 ----------------
