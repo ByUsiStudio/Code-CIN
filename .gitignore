@@ -60,3 +60,6 @@ aotout/
 /.dsh_probe.tmp
 /t_*.py
 /.trae/
+
+# ====================== VSCode ======================
+/misc/vscode-cin/*.vsix
