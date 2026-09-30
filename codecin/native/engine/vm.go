@@ -189,6 +189,9 @@ func Run(bc []byte, mem []byte, entry, sp, heapBase int64, inData []byte,
 		inData:  inData,
 	}
 
+	// 键盘监听可能切换终端 raw mode, 任何出口都必须恢复 (幂等)
+	defer keyboardRestore()
+
 	finish := func(status int, errMsg string) *Result {
 		// 输出超限一并报错: 不能把"被截断的输出"当成正常结果
 		if vm.outOver && status != StatusError {
@@ -256,10 +259,10 @@ func opcodeSupported(op uint8) bool {
 }
 
 // syscallSupported: 原生 VM 已实现的 SYS 功能号。
-// 现已在 Go 侧实现全部宿主调用 (0..sysTERMUXSENSOR), 供原生路径与前向兼容使用;
+// 现已在 Go 侧实现全部宿主调用 (0..sysKEYFLUSH), 供原生路径与前向兼容使用;
 // 新增 SYS 号必须同步 here, 否则原生 VM 会以 unsupported 回退到解释器。
 func syscallSupported(id uint64) bool {
-	return id <= sysTERMUXSENSOR
+	return id <= sysKEYFLUSH
 }
 
 // ---------------- 操作数/寄存器/内存 ----------------
@@ -1217,6 +1220,13 @@ func (vm *vmState) doSyscall(id uint64) string {
 		vm.setReg(0, vm.termuxFingerprint())
 	case sysTERMUXSENSOR:
 		vm.setReg(0, vm.termuxSensor(vm.readCString(x0)))
+	// 键盘输入监听 (非阻塞轮询)
+	case sysKEYHIT:
+		vm.setReg(0, vm.keyHit())
+	case sysKEYGET:
+		vm.setReg(0, vm.keyGet())
+	case sysKEYFLUSH:
+		vm.setReg(0, vm.keyFlush())
 	default:
 		return "Unknown SYS call id"
 	}

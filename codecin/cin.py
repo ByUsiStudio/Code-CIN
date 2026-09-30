@@ -210,6 +210,10 @@ HOST_BUILTINS = {
     'termux_camera_photo': (Syscall.TERMUXCAMERA, 1, 'int'),
     'termux_fingerprint': (Syscall.TERMUXFINGER, 0, 'string'),
     'termux_sensor': (Syscall.TERMUXSENSOR, 1, 'string'),
+    # 键盘输入监听 (非阻塞轮询)
+    'key_hit': (Syscall.KEYHIT, 0, 'int'),
+    'get_key': (Syscall.KEYGET, 0, 'int'),
+    'key_flush': (Syscall.KEYFLUSH, 0, 'int'),
 }
 
 # 内建函数最少参数个数 (按各分支实际索引的最大下标 + 1 得出)。

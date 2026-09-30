@@ -247,6 +247,10 @@ class Syscall(IntEnum):
     TERMUXCAMERA = 113   # termux_camera_photo(x0=保存路径) -> 0 / -1 (后置摄像头)
     TERMUXFINGER = 114   # termux_fingerprint() -> JSON (指纹认证结果)
     TERMUXSENSOR = 115   # termux_sensor(x0=传感器名) -> JSON (单次读数)
+    # ---- 宿主能力: 键盘输入监听 (非阻塞轮询; Go 原生实现) ----
+    KEYHIT = 116      # key_hit() -> 1 缓冲有待读按键 / 0 无
+    KEYGET = 117      # get_key() -> 键码 (0..255 原始字节, 1001+ 扩展码) / -1 无按键
+    KEYFLUSH = 118    # key_flush(): 清空键盘输入缓冲 -> 0
 
 
 class Cond:

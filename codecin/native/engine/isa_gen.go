@@ -479,3 +479,6 @@ const sysTERMUXBRIGHT = 112
 const sysTERMUXCAMERA = 113
 const sysTERMUXFINGER = 114
 const sysTERMUXSENSOR = 115
+const sysKEYHIT = 116
+const sysKEYGET = 117
+const sysKEYFLUSH = 118

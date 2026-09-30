@@ -1,0 +1,54 @@
+// Code CIN 官方标准库: 键盘输入监听便捷封装 (key)
+// 用法: import "key.cin"
+// 说明: 需真实终端 (管道 / 重定向下 get_key 恒为 -1, key_hit 恒为 0)。
+//       首次调用会切换终端原始输入 (不回显), 程序退出自动恢复;
+//       Ctrl+C 在此期间不再终止程序, 表现为键码 3 (K_CTRL(67))。
+
+// 扩展键码 (与原生引擎一致; 0..255 为原始字节码)
+enum Key {
+    K_UP = 1001,
+    K_DOWN = 1002,
+    K_LEFT = 1003,
+    K_RIGHT = 1004,
+    K_HOME = 1005,
+    K_END = 1006,
+    K_PGUP = 1007,
+    K_PGDN = 1008,
+    K_INS = 1009,
+    K_DEL = 1010,
+    K_F1 = 1021,
+    K_F2 = 1022,
+    K_F3 = 1023,
+    K_F4 = 1024,
+    K_F5 = 1025,
+    K_F6 = 1026,
+    K_F7 = 1027,
+    K_F8 = 1028,
+    K_F9 = 1029,
+    K_F10 = 1030,
+    K_ESC = 27,
+    K_ENTER = 13,
+    K_TAB = 9,
+    K_BACKSPACE = 8
+}
+
+// Ctrl 组合键码: k_ctrl('C') 即 Ctrl+C (3)
+function k_ctrl(int c) -> int {
+    return c & 0x1F
+}
+
+// 是否扩展键码 (方向键 / 功能键等, 非 0..255 原始字节)
+function k_is_special(int code) -> int {
+    if (code >= 1001 && code <= 1030) { return 1 }
+    return 0
+}
+
+// 阻塞等待一个按键 (内部 10ms 轮询 get_key)
+function key_wait() -> int {
+    while (1) {
+        int k = get_key()
+        if (k != -1) { return k }
+        sleep_ms(10)
+    }
+    return -1
+}
