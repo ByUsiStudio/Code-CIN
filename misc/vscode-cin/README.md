@@ -10,7 +10,7 @@ UCPU 项目 Code CIN 语言的 VSCode 语法高亮扩展。纯声明式实现（
 
 ## 安装
 
-方式一：从 VSIX 安装
+- 方式一：从 VSIX 安装
 
 ```powershell
 npx @vscode/vsce package
@@ -18,9 +18,13 @@ npx @vscode/vsce package
 
 在 VSCode 命令面板执行 `Extensions: Install from VSIX...`，选择生成的 `.vsix` 文件。
 
-方式二：开发调试
+- 方式二：开发调试
 
 用 VSCode 打开本目录，按 `F5` 启动 Extension Development Host，打开任意 `.cin` 文件验证。
+
+- 方式三：从VSIX市场安装
+
+在 VSCode 市场搜索 `Code CIN Language Support`，安装即可。
 
 ## 语言要素参考
 
