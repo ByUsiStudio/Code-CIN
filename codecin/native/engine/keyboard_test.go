@@ -150,3 +150,70 @@ func TestKeyHitAndDrainGuard(t *testing.T) {
 		t.Fatalf("队列有键码时 key_hit 应为 1, 实际 %d", got)
 	}
 }
+
+// TestEnterDirectOutStreamsBuffer 直写模式: 激活时先落盘已缓冲输出,
+// 之后 outWrite 逐条直写且不进缓冲 (Result.Output 保持为空, 不双打)。
+func TestEnterDirectOutStreamsBuffer(t *testing.T) {
+	resetKeyState()
+	defer resetKeyState()
+	var got []string
+	saved := keyOutSink
+	keyOutSink = func(s string) { got = append(got, s) }
+	defer func() { keyOutSink = saved }()
+
+	vm := newHostVM(4096)
+	vm.outWrite("A")
+	if vm.out.String() != "A" {
+		t.Fatalf("直写激活前输出应留在缓冲, 实际 %q", vm.out.String())
+	}
+	vm.enterDirectOut()
+	if len(got) != 1 || got[0] != "A" {
+		t.Fatalf("激活时应把已缓冲输出落盘, 实际 %v", got)
+	}
+	if vm.out.Len() != 0 || !vm.outDirect {
+		t.Fatal("激活后缓冲应清空且置直写标志")
+	}
+	vm.outWrite("B")
+	if len(got) != 2 || got[1] != "B" {
+		t.Fatalf("激活后输出应逐条直写, 实际 %v", got)
+	}
+	if vm.out.Len() != 0 {
+		t.Fatalf("直写模式下不应再进缓冲, 实际 %q", vm.out.String())
+	}
+	if vm.outCount != 2 {
+		t.Fatalf("outCount 应累计 2, 实际 %d", vm.outCount)
+	}
+	// 重复进入: 幂等, 不重复落盘
+	vm.enterDirectOut()
+	if len(got) != 2 {
+		t.Fatalf("enterDirectOut 应幂等, 实际 %v", got)
+	}
+}
+
+// TestOutLimitDirectMode 直写模式同样受 16 MiB 限额: 超限截断置 outOver 并停止直写。
+func TestOutLimitDirectMode(t *testing.T) {
+	resetKeyState()
+	defer resetKeyState()
+	var writes int
+	saved := keyOutSink
+	keyOutSink = func(string) { writes++ }
+	defer func() { keyOutSink = saved }()
+
+	vm := newHostVM(4096)
+	vm.outDirect = true
+	vm.outCount = maxOutputBytes - 3
+	vm.outWrite("abcd") // 只剩 3 字节额度: 截断到 3 并置 outOver
+	if writes != 1 {
+		t.Fatalf("截断部分应直写一次, 实际 %d", writes)
+	}
+	if !vm.outOver {
+		t.Fatal("超限应置 outOver")
+	}
+	vm.outWrite("x") // outOver 后丢弃
+	if writes != 1 {
+		t.Fatalf("outOver 后不应再直写, 实际 %d", writes)
+	}
+	if vm.outCount != maxOutputBytes {
+		t.Fatalf("outCount 应停在限额, 实际 %d", vm.outCount)
+	}
+}

@@ -9,7 +9,8 @@
 
 一次以「静默错误清零 + 安全加固」为主的修复发布，落地 `docs/SUGGESTIONS_NEXT.md`
 第一轮评审的全部 P0/P1 项。所有语义修复均同步 Python 解释器与 Go 原生 VM 两条路径，
-并新增 25 个回归测试（`tests/test_p0_fixes.py`）。
+并新增 25 个回归测试（`tests/test_p0_fixes.py`）；同时新增**键盘输入监听**宿主能力
+（非阻塞轮询）与键盘场景的**顺序实时输出**、终端输入缓存兼容。
 
 ### 修复 (Fixed)
 
@@ -90,6 +91,34 @@
   `termux_camera_photo`、`termux_fingerprint`、`termux_sensor`。
 - **`os_name()` 说明更新**：除 `"windows"` / `"darwin"` / `"linux"` 外，Android 原生构建返回 `"android"`。
 
+#### 键盘输入监听（SYS 116..118，非阻塞轮询）
+
+- **`key_hit()` / `get_key()` / `key_flush()`**：面向游戏循环 / TUI 的非阻塞键盘轮询，
+  核心实现全部由 Go 原生引擎承担（纯标准库，零第三方依赖）。
+  - `key_hit()` -> `1` 有待读按键 / `0` 无；
+  - `get_key()` -> 取出一个键码，无按键返回 `-1`；`0..255` 为原始字节
+    （Ctrl+字母 = 字母 & 0x1F，监听期间 Ctrl+C 不再终止程序），
+    方向键 / Home / End / PgUp / PgDn / Ins / Del 映射为 `1001..1010`，
+    F1..F10 映射为 `1021..1030`（Unix 转义序列与 Windows 扫描码在引擎内统一解码）；
+  - `key_flush()` -> 清空键盘输入缓冲。
+- **平台实现**：Windows 用 msvcrt `_kbhit`/`_getch`；Linux / macOS / Termux 用
+  termios 原始输入（只关行缓冲 / 回显 / Ctrl+C 信号，保留输出处理，
+  `println` 不受影响）；程序退出自动恢复终端设置（幂等，覆盖所有执行出口）。
+- **终端缓存兼容**：激活监听时清空控制台输入残留（Windows `FlushConsoleInputBuffer` /
+  Unix 非阻塞排空）；Windows 启用前先以 `GetConsoleMode` 校验 stdin 为控制台，
+  管道 / 重定向的判定与非 Windows 一致。
+- **顺序输出（禁止一股脑输出）**：真实终端下激活监听时，原生引擎先把已缓冲输出
+  落到终端，之后逐条直写 stdout 实时可见 —— "提示 → 等按键 → 反馈"顺序正确；
+  非终端环境（管道 / 重定向 / 测试捕获）保持"缓冲 + 结束回传"不变。
+- **非终端环境优雅失败**：`key_hit` 恒 `0`，`get_key` 恒 `-1`，不阻塞、不报错。
+- **`codecin/lib/key.cin` 标准库**：`enum Key` 键码常量（`K_UP`..`K_F10`、
+  `K_ESC` `K_ENTER` `K_TAB` `K_BACKSPACE`）+ `k_ctrl`（Ctrl 组合键码）+
+  `k_is_special`（扩展键码判定）+ `key_wait`（10ms 轮询阻塞等一键）。
+- 三个内建同时注册进 Python 编译器 `HOST_BUILTINS` 表；纯解释路径
+  （`--no-native`）调用报 `require the native Go runtime`（与全部宿主 API 一致），
+  `--sandbox` 同样拦截；`cpu.py` 宿主能力判定由编号区间改为
+  `>= AUDIOPLAY` 下界，未来新增宿主 SYS 不再漏判。
+
 ### 文档 (Docs)
 
 - `docs/CIN_GUIDE.md`：新增「enum 枚举」「范围 for」「转义序列」小节，`switch` 增加多值/范围 case，
@@ -102,6 +131,13 @@
 - `docs/beginner/`：`cheatsheet.md`、`ch11-io-host.md`（新增网络、编码与哈希、桌面集成、路径与文件管理、
   时间与系统、Android/Termux 扩展小节）、`ch04-conditions.md`、`ch05-loops.md`、`index.md` 同步。
 - `misc/vim/syntax/cin.vim`：`enum` 加入类型高亮，36 个新宿主内建加入 `cinBuiltin`。
+- `docs/CIN_GUIDE.md`：新增「宿主能力: 键盘输入监听（非阻塞轮询）」分节
+  （键码约定表 + 游戏循环示例 + 平台实现与输出行为说明），官方标准库清单收录 `key.cin`。
+- 修正 `input()` 的过时描述（`docs/language/builtins.md`、`beginner/ch02-variables.md`、
+  `ch11-io-host.md`、`ch12-debug.md`、`cheatsheet.md`、`projects.md`）：
+  自本版起 `input()` 已真实现（读一行标准输入，非法行 / EOF 返回 `0`），
+  相关章节与避坑清单同步为实际行为；`cheatsheet.md` 的 `sqrt(-1)` 条目
+  同步为"两条路径一致返回 NaN"。
 - 本版宿主 API 均为 **Go 原生引擎实现**：纯解释路径（`--no-native`）调用会报
   `host builtins (GUI/audio/system/Termux) require the native Go runtime`；
   它们具备真实文件与网络权限，请只运行可信脚本。

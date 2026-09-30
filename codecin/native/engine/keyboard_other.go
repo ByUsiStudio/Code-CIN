@@ -28,7 +28,19 @@ func keyEnablePlatform() bool {
 	raw.Lflag &^= syscall.ICANON | syscall.ECHO | syscall.ISIG
 	raw.Cc[syscall.VMIN] = 0
 	raw.Cc[syscall.VTIME] = 0
-	return ttyIoctl(ttySetAttr, &raw) == nil
+	if ttyIoctl(ttySetAttr, &raw) != nil {
+		return false
+	}
+	// 清空激活前残留的输入缓存 (如启动命令时敲下的回车)。
+	// 已是非阻塞 (VMIN=0/VTIME=0): read 无输入时立即返回 0, 不会卡住。
+	var b [64]byte
+	for {
+		n, err := syscall.Read(0, b[:])
+		if n <= 0 || err != nil {
+			break
+		}
+	}
+	return true
 }
 
 func keyRestorePlatform() {

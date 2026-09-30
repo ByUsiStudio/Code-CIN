@@ -4,19 +4,40 @@ package engine
 
 import (
 	"syscall"
+	"unsafe"
 )
 
 // Windows 键盘后端: msvcrt 的 _kbhit/_getch。
 // _getch 直读控制台输入缓冲 (不回显、不经行缓冲, 无需 raw mode);
-// 管道/重定向下 _kbhit 恒为 0, 天然优雅失败, 也不会阻塞 VM。
+// 管道/重定向下 GetConsoleMode 失败 -> 不启用, 与非 Windows 平台判定一致,
+// _kbhit 恒为 0, 天然优雅失败, 也不会阻塞 VM。
 
 var (
 	msvcrt    = syscall.NewLazyDLL("msvcrt.dll")
 	procKbhit = msvcrt.NewProc("_kbhit")
 	procGetch = msvcrt.NewProc("_getch")
+
+	kernel32           = syscall.NewLazyDLL("kernel32.dll")
+	procGetStdHandle   = kernel32.NewProc("GetStdHandle")
+	procGetConsoleMode = kernel32.NewProc("GetConsoleMode")
+	procFlushInputBuf  = kernel32.NewProc("FlushConsoleInputBuffer")
 )
 
-func keyEnablePlatform() bool { return true }
+// keyEnablePlatform 校验 stdin 为真实控制台后启用, 并清空启动前残留的
+// 输入缓存 (如启动命令时敲下的回车), 避免程序一激活就吃到旧键。
+func keyEnablePlatform() bool {
+	const stdInputHandle = ^uintptr(9) // (DWORD)-10
+	h, _, _ := procGetStdHandle.Call(stdInputHandle)
+	if h == 0 {
+		return false
+	}
+	var mode uint32
+	if r, _, _ := procGetConsoleMode.Call(h, uintptr(unsafe.Pointer(&mode))); r == 0 {
+		return false // 管道 / 重定向: 不启用
+	}
+	_, _, _ = procFlushInputBuf.Call(h)
+	return true
+}
 
 func keyRestorePlatform() {}
 

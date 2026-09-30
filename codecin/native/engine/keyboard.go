@@ -7,6 +7,7 @@ package engine
 // key_hit = 0, get_key = -1, 不阻塞 VM。
 
 import (
+	"os"
 	"sync"
 )
 
@@ -44,13 +45,20 @@ var (
 	keyForcedOff bool     // 测试钩子: 禁止启用平台后端 (不触碰真实控制台)
 )
 
+// keyOutSink 键盘监听激活后的直写输出通道。
+// os.File.Write 无用户态缓冲, 每次直落 fd -> 天然实时; 测试可替换。
+var keyOutSink = func(s string) { _, _ = os.Stdout.WriteString(s) }
+
 // keyEnsure 惰性启用键盘监听; 可重复调用 (恢复后再次调用会重新启用)。
-func keyEnsure() {
+// 返回是否"本次调用刚激活" (真实终端首次启用), 供 VM 切换直写输出。
+func keyEnsure() bool {
 	keyMu.Lock()
 	defer keyMu.Unlock()
 	if !keyReady && !keyForcedOff {
 		keyReady = keyEnablePlatform()
+		return keyReady
 	}
+	return false
 }
 
 // keyboardRestore 恢复终端设置 (幂等; 引擎 Run 出口统一 defer)。
@@ -84,7 +92,9 @@ func keyDrainLocked() bool {
 
 // keyHit SYS 116: key_hit() -> 1 有待读按键 / 0 无
 func (vm *vmState) keyHit() uint64 {
-	keyEnsure()
+	if keyEnsure() {
+		vm.enterDirectOut()
+	}
 	keyMu.Lock()
 	defer keyMu.Unlock()
 	if len(keyQueue) == 0 {
@@ -98,7 +108,9 @@ func (vm *vmState) keyHit() uint64 {
 
 // keyGet SYS 117: get_key() -> 键码 / -1 (mask64) 无按键
 func (vm *vmState) keyGet() uint64 {
-	keyEnsure()
+	if keyEnsure() {
+		vm.enterDirectOut()
+	}
 	keyMu.Lock()
 	defer keyMu.Unlock()
 	if len(keyQueue) == 0 {
@@ -114,7 +126,9 @@ func (vm *vmState) keyGet() uint64 {
 
 // keyFlush SYS 118: key_flush() 清空键码队列与解码中间态 -> 0
 func (vm *vmState) keyFlush() uint64 {
-	keyEnsure()
+	if keyEnsure() {
+		vm.enterDirectOut()
+	}
 	keyMu.Lock()
 	defer keyMu.Unlock()
 	keyQueue = keyQueue[:0]

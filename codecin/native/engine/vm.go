@@ -49,34 +49,38 @@ type instruction struct {
 }
 
 type vmState struct {
-	prog     []instruction
-	entry    int
-	mem      []byte
-	regs     [33]uint64
-	sp       uint64
-	pc       int
-	heapPtr  uint64
-	steps    uint64
-	flags    struct{ N, Z, C, V bool }
-	out      strings.Builder
-	outOver  bool // 输出超过 maxOutputBytes (截断并置错误)
-	sysIdx   int
-	rng      *rand.Rand
-	inData   []byte
-	inPos    int
-	stdinRdr *bufio.Reader // inData 耗尽后回退读标准输入 (交互 / AOT 产物)
-	emptyStr uint64        // 预留空串地址 (宿主调用返回失败时的安全空串)
+	prog      []instruction
+	entry     int
+	mem       []byte
+	regs      [33]uint64
+	sp        uint64
+	pc        int
+	heapPtr   uint64
+	steps     uint64
+	flags     struct{ N, Z, C, V bool }
+	out       strings.Builder
+	outOver   bool // 输出超过 maxOutputBytes (截断并置错误)
+	outCount  int  // 两种模式的累计输出字节 (16 MiB 限额依据)
+	outDirect bool // 键盘监听激活 (真实终端): 输出直写 stdout, 不进缓冲
+	sysIdx    int
+	rng       *rand.Rand
+	inData    []byte
+	inPos     int
+	stdinRdr  *bufio.Reader // inData 耗尽后回退读标准输入 (交互 / AOT 产物)
+	emptyStr  uint64        // 预留空串地址 (宿主调用返回失败时的安全空串)
 }
 
 // maxOutputBytes 限制单次运行的输出总量: 程序用无限打印不能把宿主 OOM。
 const maxOutputBytes = 16 << 20 // 16 MiB
 
 // outWrite 追加输出; 超过上限则截断并标记 outOver。
+// 键盘监听激活 (outDirect, 真实终端) 时直写 stdout 保证顺序实时显示;
+// 否则进缓冲, 程序结束后随 Result.Output 一次性回传 (管道/测试路径不变)。
 func (vm *vmState) outWrite(s string) {
 	if vm.outOver {
 		return
 	}
-	remaining := maxOutputBytes - vm.out.Len()
+	remaining := maxOutputBytes - vm.outCount
 	if remaining <= 0 {
 		vm.outOver = true
 		return
@@ -84,6 +88,11 @@ func (vm *vmState) outWrite(s string) {
 	if len(s) > remaining {
 		s = s[:remaining]
 		vm.outOver = true
+	}
+	vm.outCount += len(s)
+	if vm.outDirect {
+		keyOutSink(s)
+		return
 	}
 	vm.out.WriteString(s)
 }
@@ -93,11 +102,31 @@ func (vm *vmState) outByte(b byte) {
 	if vm.outOver {
 		return
 	}
-	if vm.out.Len() >= maxOutputBytes {
+	if vm.outCount >= maxOutputBytes {
 		vm.outOver = true
 		return
 	}
+	vm.outCount++
+	if vm.outDirect {
+		keyOutSink(string(b))
+		return
+	}
 	vm.out.WriteByte(b)
+}
+
+// enterDirectOut 键盘监听激活时切换直写模式: 先把已缓冲输出落到终端
+// (激活前的提示先显示), 之后输出逐条直写 stdout, 不再等程序结束一次性回传。
+// 非终端 (管道/测试捕获) 永远不会激活, 不会走到这里。
+// 激活后 vm.out 恒空 -> Result.Output 为空 -> Python 侧不再打印 (不双打)。
+func (vm *vmState) enterDirectOut() {
+	if vm.outDirect {
+		return
+	}
+	vm.outDirect = true
+	if vm.out.Len() > 0 {
+		keyOutSink(vm.out.String())
+		vm.out.Reset()
+	}
 }
 
 // Result 是 Run 的执行结果。
