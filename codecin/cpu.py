@@ -1168,6 +1168,12 @@ class CPU:
         if not args or args[0][0] != 'imm':
             raise ExecutionError("SYS requires an immediate call id")
         call_id = args[0][1]
+        # 沙箱模式: 拦截全部宿主能力 (音频/画布/文件/进程/环境/网络/Termux),
+        # 只放行数学/字符串/内存/输出类内建。原生路径在 _try_native_run 已强制回退。
+        if self.config.sandbox_mode and call_id >= Syscall.AUDIOPLAY:
+            raise ExecutionError(
+                "Host capability disabled in sandbox mode (SYS "
+                f"{call_id}: {Syscall(call_id).name if call_id in Syscall._value2member_map_ else 'UNKNOWN'})")
         x0 = self._reg(0)
         x1 = self._reg(1)
         x2 = self._reg(2)
@@ -1180,9 +1186,15 @@ class CPU:
         if call_id == Syscall.ABS:
             self._set_reg(0, abs(x0 if x0 < (1 << 63) else x0 - (1 << 64)))
         elif call_id in (Syscall.SQRT,):
-            self._set_reg(0, _f_to_bits(math.sqrt(_bits_to_f(x0))))
+            # 负数定义域: 与 Go 路径一致返回 NaN (不抛 CPython 内部异常)
+            v = _bits_to_f(x0)
+            self._set_reg(0, _f_to_bits(math.sqrt(v) if v >= 0 else float('nan')))
         elif call_id == Syscall.POW:
-            self._set_reg(0, _f_to_bits(math.pow(_bits_to_f(x0), _bits_to_f(x1))))
+            try:
+                r = math.pow(_bits_to_f(x0), _bits_to_f(x1))
+            except ValueError:
+                r = float('nan')  # 负底数非整数指数等: 与 Go math.Pow 对齐为 NaN
+            self._set_reg(0, _f_to_bits(r))
         elif call_id == Syscall.SIN:
             self._set_reg(0, _f_to_bits(math.sin(_bits_to_f(x0))))
         elif call_id == Syscall.COS:
@@ -1282,18 +1294,17 @@ class CPU:
             raise ExecutionError(f"Runtime abort: {msg}" if msg
                                  else "Runtime abort")
         elif call_id == Syscall.SUBSTR:
-            # substr(s, start, len): 越界自动裁剪
-            s = self.memory.read_string(x0)
-            n = len(s)
+            # substr(s, start, len): 按字节索引 (与 strlen / s[i] 一致), 越界自动裁剪
+            data = self.memory.read_string(x0).encode('utf-8')
+            n = len(data)
             start = 0 if x1 < 0 else (n if x1 > n else x1)
             length = 0 if x2 < 0 else x2
             self._set_reg(0, self._heap_dup_string(
-                s[start:start + length].encode('utf-8') + b'\x00'))
+                data[start:start + length] + b'\x00'))
         elif call_id == Syscall.INDEXOF:
-            hay = self.memory.read_string(x0)
-            needle = self.memory.read_string(x1)
-            idx = hay.find(needle)
-            self._set_reg(0, idx)
+            hay = self.memory.read_string(x0).encode('utf-8')
+            needle = self.memory.read_string(x1).encode('utf-8')
+            self._set_reg(0, hay.find(needle))
         elif call_id == Syscall.TOUPPER:
             data = self.memory.read_string(x0)
             self._set_reg(0, self._heap_dup_string(
@@ -1359,7 +1370,10 @@ class CPU:
 
     def _try_native_run(self) -> Optional[bool]:
         """尝试使用 Go 原生库执行整个程序; 不可用/不支持时返回 None。"""
-        if not self.config.use_native or self.config.debug_mode or self.config.step_mode:
+        # 沙箱模式强制解释执行: 原生 VM 的宿主调用在 Go 侧实现, 沙箱拦截在
+        # 解释器 _op_sys 入口, 只有纯 Python 路径能保证宿主能力被真正挡住。
+        if (not self.config.use_native or self.config.debug_mode
+                or self.config.step_mode or self.config.sandbox_mode):
             return None
         if self.config.enable_jit:
             return None

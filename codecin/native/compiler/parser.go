@@ -248,6 +248,7 @@ func (p *parser) parseEnum() error {
 	if count == 0 {
 		return fmt.Errorf("Empty enum %s at %s", name, p.locTok(tok))
 	}
+	p.skipNL() // 最后一个成员无尾逗号时, 先跳过换行再收 RBRACE
 	if _, err := p.expect("RBRACE"); err != nil {
 		return err
 	}

@@ -36,12 +36,12 @@ def _eval_expr(text: str, symbols: Dict[str, int]) -> Optional[int]:
         raw = match.group(0).replace('_', '')
         if len(raw) > 1 and raw[:2].lower() in ('0x', '0b', '0o'):
             raw = '0' + raw[1].lower() + raw[2:]
-        try:
-            return str(int(raw, 0))
-        except ValueError:
-            return '0'
+        return str(int(raw, 0))  # 非法字面量 (如 0x_) 抛 ValueError -> 整体求值失败
 
-    text = _RE_EXPR_NUM.sub(repl_num, text)
+    try:
+        text = _RE_EXPR_NUM.sub(repl_num, text)
+    except ValueError:
+        return None
 
     def repl_name(match):
         name = match.group(0)

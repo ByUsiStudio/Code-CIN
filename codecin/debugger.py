@@ -8,6 +8,7 @@
 设计约束: 本模块不 import codecin.cpu (仅 TYPE_CHECKING), 通过属性访问 CPU。
 """
 
+import ast
 import contextlib
 import socket
 import time
@@ -18,6 +19,37 @@ from .console import Colors, Panel
 
 if TYPE_CHECKING:
     from .cpu import CPU
+
+
+# ==================== 条件断点白名单求值 ====================
+
+# 允许出现在条件表达式里的 AST 节点: 比较 / 布尔 / 算术 / 位运算 / 名字 / 常量。
+# 刻意排除 Call / Attribute / Subscript / Lambda / 推导式等一切可执行结构 ——
+# 条件字符串可能来自远程调试端口 (无鉴权), 绝不能用 eval() 求值。
+_COND_ALLOWED_NODES = (
+    ast.Expression, ast.Load, ast.Name, ast.Constant,
+    ast.BoolOp, ast.And, ast.Or, ast.UnaryOp, ast.Not, ast.UAdd, ast.USub,
+    ast.BinOp, ast.Add, ast.Sub, ast.Mult, ast.FloorDiv, ast.Mod,
+    ast.LShift, ast.RShift, ast.BitOr, ast.BitXor, ast.BitAnd,
+    ast.Compare, ast.Eq, ast.NotEq, ast.Lt, ast.LtE, ast.Gt, ast.GtE,
+)
+_COND_MAX_LEN = 512
+
+
+def _eval_breakpoint_condition(expr: str, namespace: dict) -> bool:
+    """按白名单求值条件断点表达式。
+
+    可用名字: ``x0..x32`` (x32=SP 之外的通用寄存器), ``sp``, ``pc``,
+    ``N`` / ``Z`` / ``C`` / ``V``。语法超界立即抛 ValueError (视为条件失败)。
+    """
+    if not expr or len(expr) > _COND_MAX_LEN:
+        raise ValueError("empty or oversized condition")
+    tree = ast.parse(expr, mode='eval')
+    for node in ast.walk(tree):
+        if not isinstance(node, _COND_ALLOWED_NODES):
+            raise ValueError(f"disallowed syntax in condition: {type(node).__name__}")
+    code = compile(tree, '<breakpoint-condition>', 'eval')
+    return bool(eval(code, {"__builtins__": {}}, namespace))
 
 
 # ==================== 状态渲染 ====================
@@ -173,13 +205,13 @@ class DebugServer:
         for bp in self.conditional_breakpoints:
             if bp.address == self.cpu.pc and bp.enabled:
                 try:
-                    namespace = {
-                        'regs': self.cpu.regs.get_all(),
-                        'pc': self.cpu.pc,
-                        'sp': self.cpu.sp,
-                        'pstate': self.cpu.pstate.copy(),
-                    }
-                    if eval(bp.condition, {"__builtins__": {}}, namespace):
+                    namespace = {'pc': int(self.cpu.pc),
+                                 'sp': int(self.cpu.sp)}
+                    for i, v in enumerate(self.cpu.regs.get_all()):
+                        namespace[f'x{i}'] = int(v)
+                    for flag in ('N', 'Z', 'C', 'V'):
+                        namespace[flag] = bool(self.cpu.pstate.get(flag, False))
+                    if _eval_breakpoint_condition(bp.condition, namespace):
                         bp.hit_count += 1
                         self.cpu.console.print(
                             f"{Colors.colorize('Conditional breakpoint hit', Colors.YELLOW)} "

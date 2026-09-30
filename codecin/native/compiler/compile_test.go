@@ -466,7 +466,7 @@ enum Color { RED = 3, GREEN, BLUE }
 int G = BLUE
 
 function main() -> int {
-    int x = 4
+    int x = 5
     int r = 0
     switch (x) {
         case BLUE: r = 20 break
@@ -474,7 +474,7 @@ function main() -> int {
     }
     return G * 100 + r
 }`
-	// G = BLUE = 5, x = 4 命中 case BLUE -> 520
+	// G = BLUE = 5, x = 5 命中 case BLUE -> 520
 	if got := runCompiled(t, src); got != 520 {
 		t.Fatalf("x0 = %d, 期望 520", got)
 	}
@@ -610,7 +610,7 @@ function main() -> int {
 	if !hasImm(prog, "ADDI", 4*8) {
 		t.Fatal("范围 for 未生成 e = p + count*8")
 	}
-	for _, l := range []string{"rfloop", "rfinc", "rfend"} {
+	for _, l := range []string{"_rfloop_", "_rfinc_", "_rfend_"} {
 		if !hasLabelPrefix(prog, l) {
 			t.Fatalf("缺少标签前缀 %s", l)
 		}

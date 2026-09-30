@@ -169,11 +169,17 @@ class JITCompiler:
                 val = self._val(args[0])
                 if val is None:
                     return None
+                # 与解释器 _push 一致: 先减 sp 再查堆碰撞, 防止栈帧静默覆盖堆对象
                 return ['cpu.sp = (cpu.sp - 8) & MASK',
+                        'if cpu.sp < cpu.heap_ptr + 4096: '
+                        'raise ExecutionError("Stack overflow (collides with heap)")',
                         f'mem.write_qword(cpu.sp, ({val}) & MASK)']
             if opcode == 'POP':
                 rd = args[0][1]
-                return ['_v = mem.read_qword(cpu.sp)',
+                # 与解释器 _pop 一致: 栈底保护
+                return ['if cpu.sp >= len(mem) - 8: '
+                        'raise ExecutionError("Stack underflow")',
+                        '_v = mem.read_qword(cpu.sp)',
                         'cpu.sp = (cpu.sp + 8) & MASK',
                         self._reg_write(rd, '_v')]
             if opcode == 'NOP':

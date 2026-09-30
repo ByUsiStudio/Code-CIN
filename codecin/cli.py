@@ -213,6 +213,16 @@ def _run_aot_build(ns: argparse.Namespace, console, program_file: str,
 def main(argv: Optional[List[str]] = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
 
+    # 中文 Windows 默认 stdout/stderr 是 GBK, 输出非 GBK 字符 (emoji 等) 会直接
+    # UnicodeEncodeError; 且重定向产物字节与 Go 路径 (恒 UTF-8) 不一致。
+    # 统一切成 UTF-8, 无法编码的字符以 ? 替换而不是崩溃。
+    for _stream in (sys.stdout, sys.stderr):
+        if hasattr(_stream, 'reconfigure'):
+            try:
+                _stream.reconfigure(encoding='utf-8', errors='replace')
+            except (ValueError, OSError):
+                pass
+
     if '--help' in args or '-h' in args:
         sys.stdout.write(HELP_INTRO + "\n")
         sys.stdout.write(build_parser().format_help())
@@ -272,6 +282,14 @@ def main(argv: Optional[List[str]] = None) -> int:
         return 1
 
     try:
+        # 管道/重定向输入预读到 input_buffer: 让 input() 在原生与解释器路径下
+        # 都能读到 `"42" | python cpu.py t.cin` 这样的标准输入 (交互 TTY 不预读)。
+        try:
+            if sys.stdin is not None and not sys.stdin.isatty():
+                cpu.input_buffer = sys.stdin.read() or ""
+        except (OSError, ValueError, AttributeError):
+            pass  # pytest 等捕获环境禁止读 stdin, 保持为空
+
         if config.compile_to_bin or config.compile_only:
             from . import crom as crom_mod
             crom_mod.save_bin(cpu, output_file, logger=cpu.logger)

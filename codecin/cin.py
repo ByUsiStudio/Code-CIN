@@ -808,6 +808,7 @@ class Parser:
             self.skip_nl()
         if count == 0:
             raise CompilerError(f"Empty enum {name} at {self._loc(tok)}")
+        self.skip_nl()  # 最后一个成员无尾逗号时, 先跳过换行再收 RBRACE
         self.expect('RBRACE')
         self.accept('SEMI')
         self.enum_types.add(name)
@@ -2898,7 +2899,8 @@ class CodeGen:
             self.emit('SYS', self.imm(Syscall.TIME))
             return 'int'
         if name == 'input':
-            self.emit('MOV', self.reg(0), self.imm(0))
+            # 读入一行并解析为整数 (失败为 0); 走 IN 指令, 三条执行路径语义一致。
+            self.emit('IN', self.reg(0))
             return 'int'
 
         # 用户函数

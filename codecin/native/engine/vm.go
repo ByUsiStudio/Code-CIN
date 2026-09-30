@@ -13,10 +13,12 @@
 package engine
 
 import (
+	"bufio"
 	"encoding/binary"
 	"fmt"
 	"math"
 	"math/rand"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -62,7 +64,8 @@ type vmState struct {
 	rng      *rand.Rand
 	inData   []byte
 	inPos    int
-	emptyStr uint64 // 预留空串地址 (宿主调用返回失败时的安全空串)
+	stdinRdr *bufio.Reader // inData 耗尽后回退读标准输入 (交互 / AOT 产物)
+	emptyStr uint64        // 预留空串地址 (宿主调用返回失败时的安全空串)
 }
 
 // maxOutputBytes 限制单次运行的输出总量: 程序用无限打印不能把宿主 OOM。
@@ -811,7 +814,19 @@ func (vm *vmState) readLineInt() uint64 {
 		}
 		return 0
 	}
-	return 0
+	// 输入缓冲耗尽: 与解释器 (int(input()) 兜底) 一致, 回退读标准输入。
+	if vm.stdinRdr == nil {
+		vm.stdinRdr = bufio.NewReader(os.Stdin)
+	}
+	line, err := vm.stdinRdr.ReadString('\n')
+	if err != nil && line == "" {
+		return 0
+	}
+	n, perr := strconv.ParseInt(strings.TrimSpace(line), 10, 64)
+	if perr != nil {
+		return 0
+	}
+	return uint64(n) & mask64
 }
 
 // ---------------- SYS ----------------
@@ -963,9 +978,9 @@ func (vm *vmState) doSyscall(id uint64) string {
 		}
 		vm.setReg(0, addr)
 	case sysSUBSTR:
-		// substr(s, start, len): 按字符索引, 越界自动裁剪
-		runes := []rune(vm.readCString(x0))
-		n := int64(len(runes))
+		// substr(s, start, len): 按字节索引 (与 strlen/s[i] 一致), 越界自动裁剪
+		data := []byte(vm.readCString(x0))
+		n := int64(len(data))
 		start := int64(0)
 		if int64(x1) > n {
 			start = n
@@ -980,7 +995,7 @@ func (vm *vmState) doSyscall(id uint64) string {
 		if end > n {
 			end = n
 		}
-		p, e := vm.heapDupString(string(runes[start:end]))
+		p, e := vm.heapDupString(string(data[start:end]))
 		if e != "" {
 			return e
 		}
@@ -988,12 +1003,8 @@ func (vm *vmState) doSyscall(id uint64) string {
 	case sysINDEXOF:
 		hay := vm.readCString(x0)
 		needle := vm.readCString(x1)
-		bi := strings.Index(hay, needle)
-		idx := int64(-1)
-		if bi >= 0 {
-			idx = int64(len([]rune(hay[:bi])))
-		}
-		vm.setReg(0, uint64(idx)&mask64)
+		// strings.Index 即字节索引 (与 strlen/s[i] 一致); 找不到为 -1
+		vm.setReg(0, uint64(int64(strings.Index(hay, needle)))&mask64)
 	case sysTOUPPER:
 		p, e := vm.heapDupString(strings.ToUpper(vm.readCString(x0)))
 		if e != "" {

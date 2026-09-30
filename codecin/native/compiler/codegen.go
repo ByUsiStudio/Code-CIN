@@ -249,11 +249,14 @@ func (c *compiler) emitGlobalsInit(globals []*GlobalVar) {
 		addr := c.globalsSym[gv.name].addr
 		if gv.init != nil {
 			_, raw, err := c.constValue(gv.init)
-			if err == nil {
-				var b [8]byte
-				binary.LittleEndian.PutUint64(b[:], uint64(raw))
-				c.res.DataWrites = append(c.res.DataWrites, ir.DataWrite{Addr: addr, Data: b[:]})
+			if err != nil {
+				// 与 Python 编译器一致: 非常量初始化器直接报编译错误, 不静默算 0。
+				c.failf("%v", err)
+				return
 			}
+			var b [8]byte
+			binary.LittleEndian.PutUint64(b[:], uint64(raw))
+			c.res.DataWrites = append(c.res.DataWrites, ir.DataWrite{Addr: addr, Data: b[:]})
 		} else if gv.arrayLit != nil {
 			lit := gv.arrayLit
 			if lit.Is2D {
@@ -261,7 +264,8 @@ func (c *compiler) emitGlobalsInit(globals []*GlobalVar) {
 					for j, elem := range row {
 						_, raw, err := c.constValue(elem)
 						if err != nil {
-							continue
+							c.failf("%v", err)
+							return
 						}
 						var b [8]byte
 						binary.LittleEndian.PutUint64(b[:], uint64(raw))
@@ -273,7 +277,8 @@ func (c *compiler) emitGlobalsInit(globals []*GlobalVar) {
 				for i, elem := range lit.ArrayLit[0] {
 					_, raw, err := c.constValue(elem)
 					if err != nil {
-						continue
+						c.failf("%v", err)
+						return
 					}
 					var b [8]byte
 					binary.LittleEndian.PutUint64(b[:], uint64(raw))
@@ -556,7 +561,7 @@ func (c *compiler) genFor(init, cond, update, body *Node) {
 // 展开为指针游走: p = &arr[0]; e = p + N*8;
 // while (p < e) { v = *p; body; p += 8 }
 // 指令序列必须与 Python 侧 gen_rangefor 逐字节一致。
-func (c *compiler) genRangeFor(vname string, elemType, arrExpr, body *Node, hid int) {
+func (c *compiler) genRangeFor(vname string, elemType *Type, arrExpr, body *Node, hid int) {
 	if isFixedArray(elemType) || isPtrArray(elemType) {
 		c.failf("range-for element type must be a scalar or struct, got: %s",
 			typeName(elemType))
