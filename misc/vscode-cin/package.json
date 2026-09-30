@@ -1,9 +1,9 @@
 {
   "name": "codecin-cin",
   "displayName": "Code CIN Language Support",
-  "description": "Code CIN (UCPU) language support: syntax highlighting, bracket matching, snippets for .cin files",
+  "description": "Code CIN language support: syntax highlighting, bracket matching, snippets for .cin files",
   "version": "1.0.0",
-  "publisher": "ucpu",
+  "publisher": "ByUsiStudio",
   "license": "SEE LICENSE IN LICENSE",
   "categories": [
     "Programming Languages"
