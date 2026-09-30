@@ -5,6 +5,71 @@
 
 ---
 
+## [5.6.0] - 2026-09-27
+
+以「语言表达力 + 宿主能力」为主线的一次功能发布：新增 6 项 CIN 语法特性，
+并补齐 **36 个跨平台宿主/系统 API**（全部由 Go 原生引擎实现），配套文档与编辑器高亮同步。
+
+### 新增 (Added)
+
+#### CIN 语法
+
+- **`enum` 枚举**：`enum Color { RED, GREEN = 5, BLUE }`。成员是**编译期整数常量**，
+  未显式赋值时自动递增（首个成员从 `0` 起）；`= <整数常量表达式>` 支持
+  `+ - * / % << >> & | ^` 与一元 `-` / `~`，可引用**先前已定义**的成员。
+  枚举类型名等价于 `int`（`Color c = BLUE`），成员可用于表达式、全局初始化与 `case` 标签；
+  成员只读，赋值报 `Cannot assign to enum member: X (constants are read-only)`。
+- **范围 for**：`for (int v : arr)` 遍历定长数组元素（元素可为标量 / `string` / struct），
+  支持 `break` / `continue`。被遍历对象必须是定长数组：`int[]` 指针形式报
+  `range-for requires a fixed-size array`，多维数组报
+  `range-for over multi-dimensional arrays is not supported`（改用下标循环）。
+- **`for` 初始化子句支持赋值**：`for (i = 0; i < n; i = i + 1)` 现在与类型声明一样合法。
+- **`switch` 增强**：`case 1, 2, 7..9:` —— 逗号分隔的单值与**闭区间**范围可混用（含负数），
+  仍是 C 的贯穿语义；范围要求 `lo <= hi`，否则报 `Empty case range: lo..hi`。
+- **转义扩展**：`\xH` / `\xHH` 写入**原始字节**（`"\xE4\xB8\xAD"` 即 `"中"` 的 UTF-8 三字节）、
+  `\uHHHH` / `\UHHHHHHHH` 按 **Unicode 码点**解析并以 UTF-8 编码写入；新增 `\a \b \f \v`
+  （字符字面量同样支持这四个）。`\u` / `\U` 位数不足或码点越界都有明确报错；未知转义保持原样。
+- **多参数 `print` / `println`**：`println("a=", a, " b=", b)` 依次输出、**不加分隔符**；
+  `println()` 输出空行；单参数行为不变。
+
+#### 宿主 API（36 个，全部 Go 原生实现）
+
+- **路径与文件系统**：`path_join` `path_basename` `path_dirname` `path_abs`（string，路径分隔符随平台）、
+  `file_copy` `file_move` `dir_remove`（递归删除）`chdir`（int，`0`/`-1`）、
+  `is_dir`（`1`/`0`）、`file_mtime`（Unix 秒 / `-1`）、`temp_dir`（string）。
+- **时间与系统**：`time_ms`、`sleep_ms`（单次上限 10 分钟 / 600000 ms）、`cpu_count`、
+  `arch_name`、`mem_info`（JSON `{"total_kb":N,"free_kb":M}`，未知平台为 0）、`is_android`。
+- **网络**：`http_get` / `http_post`（返回响应体，失败空串；15 秒超时、8 MiB 上限）、
+  `download`（`0`/`-1`；非 2xx 算失败，落盘上限 256 MiB）。
+- **编码与哈希**：`sha256`（十六进制小写）、`base64_encode`、`base64_decode`（非法输入空串）。
+- **桌面集成**（Termux 优先，再按平台分发，命令缺失即优雅失败）：`clipboard_get` / `clipboard_set`、
+  `notify`、`open_url`。Windows 用 PowerShell `Get-Clipboard` / `cmd /c clip`、`Wscript.Shell.Popup`
+  （10 秒自动消失）、`cmd /c start`；Linux 用 `wl-paste` / `xclip` / `xsel`、`notify-send`、`xdg-open`；
+  macOS 用 `pbpaste` / `pbcopy`、`osascript`、`open`；Android/Termux 用 `termux-clipboard-*`、
+  `termux-notification`、`termux-open-url`。
+- **Android / Termux 扩展**（非 Android 环境一律优雅失败）：`android_intent`（`am start`，Termux 下回退
+  `termux-am`）、`termux_call`、`termux_share`、`termux_torch`、`termux_volume`、`termux_brightness`、
+  `termux_camera_photo`、`termux_fingerprint`、`termux_sensor`。
+- **`os_name()` 说明更新**：除 `"windows"` / `"darwin"` / `"linux"` 外，Android 原生构建返回 `"android"`。
+
+### 文档 (Docs)
+
+- `docs/CIN_GUIDE.md`：新增「enum 枚举」「范围 for」「转义序列」小节，`switch` 增加多值/范围 case，
+  `for` 说明 init 赋值，`print`/`println` 改为多参数签名；宿主能力新增 6 个分组的 API 表
+  （路径与文件系统 / 时间与系统 / 网络 / 编码与哈希 / 桌面集成，含各平台机制对照表 / Android-Termux 扩展）、
+  限制与常见错误同步。
+- `docs/language/`：`types.md`（新增 enum 类型）、`control-flow.md`（范围 for、case 范围）、
+  `lexical.md`（转义表、关键字、续行运算符 `..`）、`strings.md`、`builtins.md`、`host-abilities.md`
+  （网络 / 编码 / 桌面 / Android 分组与能力矩阵）、`errors.md`、`arrays.md`、`variables.md`、`index.md` 同步。
+- `docs/beginner/`：`cheatsheet.md`、`ch11-io-host.md`（新增网络、编码与哈希、桌面集成、路径与文件管理、
+  时间与系统、Android/Termux 扩展小节）、`ch04-conditions.md`、`ch05-loops.md`、`index.md` 同步。
+- `misc/vim/syntax/cin.vim`：`enum` 加入类型高亮，36 个新宿主内建加入 `cinBuiltin`。
+- 本版宿主 API 均为 **Go 原生引擎实现**：纯解释路径（`--no-native`）调用会报
+  `host builtins (GUI/audio/system/Termux) require the native Go runtime`；
+  它们具备真实文件与网络权限，请只运行可信脚本。
+
+---
+
 ## [5.5.3] - 2026-09-26
 
 以「消除静默算错地址」为主线的一次修复发布：两个会**读错/写错内存且不报错**的

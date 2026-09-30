@@ -12,12 +12,11 @@ type parser struct {
 	toks     []Token
 	pos      int
 	filename string
-	// enums 枚举成员名 -> 编译期整数值 (可被后续成员引用)。
-	enums map[string]int64
-	// enumTypes 已声明的枚举类型名 (裸类型名等价于 int)。
-	enumTypes map[string]bool
-	// rangeID 范围 for 的隐藏局部名序号 ($rf<id>p / $rf<id>e)。
-	rangeID int
+
+	// 枚举与范围 for 状态
+	enums     map[string]int64 // 枚举成员名 -> 编译期整数值 (可被后续成员引用)
+	enumTypes map[string]bool  // 已声明的枚举类型名 (裸类型名等价于 int)
+	rangeID   int              // 范围 for 隐藏局部名序号 ($rf<id>p / $rf<id>e)
 }
 
 func (p *parser) peek() Token {
@@ -918,8 +917,7 @@ func (p *parser) parseRangeFor() (*Node, error) {
 		return nil, err
 	}
 	p.rangeID++
-	return &Node{Kind: "rangefor", Name: vname.sval, Type: elemType,
-		A: arr, D: body, RangeID: p.rangeID}, nil
+	return &Node{Kind: "rangefor", Name: vname.sval, Type: elemType, A: arr, D: body, RangeID: p.rangeID}, nil
 }
 
 func (p *parser) parseDecl(noSemi bool) (*Node, error) {

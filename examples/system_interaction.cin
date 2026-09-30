@@ -32,5 +32,42 @@ function main() -> int {
     // Termux API (在 Android/Termux 上可用; 否则返回 0/-1)
     println("termux: " + int_to_str(termux_available()))
 
+    // ---- 新增宿主 API: 路径与文件系统扩展 ----
+    string t = temp_dir()
+    println("temp_len: " + int_to_str(strlen(t)))
+    string p1 = path_join(t, "codecin_path_demo.txt")
+    string p2 = path_join(t, "codecin_path_demo_copy.txt")
+    string p3 = path_join(t, "codecin_path_demo_moved.txt")
+    println("basename: " + path_basename(p1))
+    file_write(p1, "copy-me")
+    println("copy: " + int_to_str(file_copy(p1, p2)))
+    println("move: " + int_to_str(file_move(p2, p3)))
+    println("size: " + int_to_str(file_size(p3)))
+    println("isdir_temp: " + int_to_str(is_dir(t)) +
+            " isdir_file: " + int_to_str(is_dir(p3)))
+    println("mtime: " + int_to_str(file_mtime(p3)))
+    file_delete(p1)
+    file_delete(p3)
+
+    // 目录: 创建 -> 判定 -> 删除
+    string sd = path_join(t, "codecin_path_demo_dir")
+    mkdir(sd)
+    println("isdir_new: " + int_to_str(is_dir(sd)))
+    dir_remove(sd)
+    println("isdir_gone: " + int_to_str(is_dir(sd)))
+
+    // ---- 新增宿主 API: 编码与哈希 (确定性) ----
+    println("sha256: " + sha256("abc"))
+    println("base64: " + base64_encode("hello"))
+
+    // ---- 新增宿主 API: 系统信息扩展 ----
+    println("cpus: " + int_to_str(cpu_count()))
+    println("arch: " + arch_name())
+    println("android: " + int_to_str(is_android()))
+
+    // ---- Android/Termux 扩展 (非 Android 平台优雅失败: -1 / 空串) ----
+    println("torch: " + int_to_str(termux_torch(0)))
+    println("fingerprint_len: " + int_to_str(strlen(termux_fingerprint())))
+
     return 0
 }

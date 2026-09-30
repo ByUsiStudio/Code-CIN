@@ -20,6 +20,7 @@ FILES = [
     'literals_types.cin',
     'modules_demo.cin',
     'bitwise_builtins.cin',
+    'enum_range_for.cin',
 ]
 
 

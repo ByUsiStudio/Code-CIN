@@ -1,0 +1,64 @@
+// Code CIN 语法扩展示例: enum 枚举 / 范围 for / switch 多值与闭区间 case /
+// 多参数 println / 字符串转义
+// 运行: python cpu.py examples/enum_range_for.cin
+// 全部特性都是确定性的 (不使用 time()/rand()/宿主 API), 三条执行路径输出一致。
+
+// 枚举: 缺省自增 / 显式赋值 / 常量表达式初始化
+enum Color {
+    RED,                  // 0  (缺省自增)
+    GREEN = 5,            // 显式赋值
+    BLUE,                 // 6  (前一个成员 + 1)
+    MASK = (1 << 3) | 1   // 9  (整数常量表达式)
+}
+
+function main() -> int {
+    int total = 0
+
+    // 枚举成员是编译期整数常量; 多参数 println 无分隔符
+    println("enum: ", RED, " ", GREEN, " ", BLUE, " ", MASK)
+
+    // 枚举类型声明等价 int
+    Color c = BLUE
+
+    // switch: 多值 case + 闭区间 case (break 终止贯穿)
+    int i = 0
+    int hits = 0
+    while (i < 10) {
+        switch (i) {
+            case 0, 2, 4: hits = hits + 1 break
+            case 6..8:    hits = hits + 10 break
+            default:      hits = hits + 100
+        }
+        i = i + 1
+    }
+    println("hits: ", hits)
+    total = total + hits
+
+    // 范围 for: 遍历定长数组 (元素为标量 / 字符串)
+    int nums[4] = {1, 2, 3, 4}
+    int nsum = 0
+    for (int v : nums) { nsum = nsum + v }
+    println("nsum: ", nsum)
+    total = total + nsum
+
+    string words[3] = {"ab", "cde", "f"}
+    int wlen = 0
+    for (string w : words) { wlen = wlen + strlen(w) }
+    println("wlen: ", wlen)
+    total = total + wlen
+
+    // 字符串转义: \xHH 与 \uHHHH 逐字节一致
+    // (只输出 ASCII, 避免控制台编码影响三条路径的逐字节比较)
+    if (strcmp("\x41", "A") != 0) { return 1 }
+    string zh = "\u4e2d\u6587"
+    if (strlen(zh) != 6) { return 2 }
+    if (zh[0] != 0xE4) { return 3 }
+    if (zh[1] != 0xB8) { return 4 }
+    if (zh[2] != 0xAD) { return 5 }
+    if ("\u4e2d"[0] != 0xE4) { return 6 }
+    if (strlen("a\0b") != 1) { return 7 }
+    println("esc: ", strlen("a\0b"), " ", "\x41")
+
+    println("c=", c, " total=", total)
+    return total
+}

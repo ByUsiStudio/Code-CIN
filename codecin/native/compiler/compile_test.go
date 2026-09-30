@@ -1,6 +1,7 @@
 package compiler
 
 import (
+	"bytes"
 	"fmt"
 	"sort"
 	"strings"
@@ -364,5 +365,705 @@ function main() -> int {
 				t.Fatalf("x0 = %d, 期望 %d (嵌套下标算错基址)", got, c.want)
 			}
 		})
+	}
+}
+
+// ==================== 枚举 / 范围 for / case 范围 / 多参数 print ====================
+// 这些测试锁定 Python 编译器 (codecin/cin.py) 新增特性在 Go 侧的等价行为。
+
+func countOp(prog *ir.Program, op string) int {
+	n := 0
+	for _, ins := range prog.Instructions {
+		if ins.Op == op {
+			n++
+		}
+	}
+	return n
+}
+
+func countSys(prog *ir.Program, sysID int64) int {
+	n := 0
+	for _, ins := range prog.Instructions {
+		if ins.Op == "SYS" && len(ins.Args) == 1 &&
+			ins.Args[0].Kind == "imm" && ins.Args[0].V == sysID {
+			n++
+		}
+	}
+	return n
+}
+
+// hasImm 判定是否存在 op 指令带指定立即数操作数。
+func hasImm(prog *ir.Program, op string, v int64) bool {
+	for _, ins := range prog.Instructions {
+		if ins.Op != op {
+			continue
+		}
+		for _, a := range ins.Args {
+			if a.Kind == "imm" && a.V == v {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func hasCond(prog *ir.Program, cond string) bool {
+	for _, ins := range prog.Instructions {
+		if ins.Op != "B" {
+			continue
+		}
+		for _, a := range ins.Args {
+			if a.Kind == "cond" && a.Name == cond {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func hasLabelPrefix(prog *ir.Program, prefix string) bool {
+	for name := range prog.Labels {
+		if strings.HasPrefix(name, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasDataWrite(prog *ir.Program, want []byte) bool {
+	for _, dw := range prog.DataWrites {
+		if bytes.Equal(dw.Data, want) {
+			return true
+		}
+	}
+	return false
+}
+
+// ---- 枚举 ----
+
+func TestEnumConstantsFoldIntoCodegen(t *testing.T) {
+	src := `
+enum E { A, B = 5, C }
+function main() -> int {
+    return C
+}`
+	prog, err := Compile(src, "t.cin", false)
+	if err != nil {
+		t.Fatalf("编译失败: %v", err)
+	}
+	// C 自动递增为 6: 值上下文必须折叠为立即数
+	if !hasImm(prog, "MOV", 6) {
+		t.Fatal("`return C` 未折叠为 MOV imm 6")
+	}
+	if got := runCompiled(t, src); got != 6 {
+		t.Fatalf("x0 = %d, 期望 6", got)
+	}
+}
+
+func TestEnumInGlobalInitializerAndCaseLabel(t *testing.T) {
+	src := `
+enum Color { RED = 3, GREEN, BLUE }
+int G = BLUE
+
+function main() -> int {
+    int x = 4
+    int r = 0
+    switch (x) {
+        case BLUE: r = 20 break
+        default: r = 99
+    }
+    return G * 100 + r
+}`
+	// G = BLUE = 5, x = 4 命中 case BLUE -> 520
+	if got := runCompiled(t, src); got != 520 {
+		t.Fatalf("x0 = %d, 期望 520", got)
+	}
+}
+
+func TestEnumMemberIsNotAnLvalue(t *testing.T) {
+	compileErr(t, `
+enum E { A, B }
+function main() -> int {
+    A = 3
+    return 0
+}`, "Cannot assign to enum member")
+}
+
+func TestEnumErrors(t *testing.T) {
+	cases := []struct{ name, src, want string }{
+		{"duplicate_member", `
+enum E { A, B = 5, A }
+function main() -> int { return 0 }`, "Duplicate enum member: A"},
+		{"duplicate_across_enums", `
+enum E { A }
+enum F { A }
+function main() -> int { return 0 }`, "Duplicate enum member: A"},
+		{"empty_enum", `
+enum E { }
+function main() -> int { return 0 }`, "Empty enum E"},
+		{"name_is_keyword", `
+enum int { A }
+function main() -> int { return 0 }`, "Invalid enum name: int"},
+		{"name_is_taken", `
+enum E { A }
+enum E { B }
+function main() -> int { return 0 }`, "Invalid enum name: E"},
+		{"shift_out_of_range", `
+enum E { A = 1 << 63 }
+function main() -> int { return 0 }`, "Enum member A out of 64-bit range"},
+		{"increment_out_of_range", `
+enum E { A = 9223372036854775807, B }
+function main() -> int { return 0 }`, "Enum member B out of 64-bit range"},
+		{"negative_out_of_range", `
+enum E { A = -9223372036854775807 - 2 }
+function main() -> int { return 0 }`, "Enum member A out of 64-bit range"},
+		{"divide_by_zero", `
+enum E { A = 1 / 0, B }
+function main() -> int { return 0 }`, "Enum member A initializer divides by zero"},
+		{"modulo_by_zero", `
+enum E { A = 1 % 0, B }
+function main() -> int { return 0 }`, "Enum member A initializer divides by zero"},
+		{"unknown_name", `
+enum E { A = NOPE }
+function main() -> int { return 0 }`, "must be an integer constant"},
+		{"float_initializer", `
+enum E { A = 1.5 }
+function main() -> int { return 0 }`, "must be an integer constant expression"},
+		{"global_name_collides", `
+enum E { A }
+int A = 1
+function main() -> int { return 0 }`, "already used as an enum member or keyword"},
+		{"global_name_is_keyword", `
+enum E { A }
+int enum = 1
+function main() -> int { return 0 }`, "already used as an enum member or keyword"},
+		{"range_for_var_is_member", `
+enum E { A }
+function main() -> int {
+    int a[2]
+    for (int A : a) { }
+    return 0
+}`, "Invalid range-for variable: A"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) { compileErr(t, c.src, c.want) })
+	}
+}
+
+func TestEnumInitializerArithmetic(t *testing.T) {
+	src := `
+enum E {
+    A = 1 + 2 * 3,
+    B = 10 / 3,
+    C = -10 / 3,
+    D = -10 % 3,
+    E2 = 1 << 4,
+    F = 0xF0 | 0x0F,
+    G = ~0,
+    H = A + B,
+    I = 255 >> 4,
+    J = 7 & 3,
+    K = 7 ^ 3,
+}
+function main() -> int {
+    return A * 1000000 + B * 100000 + C * 10000 + D * 1000 + E2 * 100 + F
+}`
+	// A=7 B=3 C=-3 D=-1 E2=16 F=255 -> 7*1e6 + 3*1e5 - 3*1e4 - 1*1e3 + 16*100 + 255
+	want := uint64(7*1000000 + 3*100000 + (-3)*10000 + (-1)*1000 + 16*100 + 255)
+	if got := runCompiled(t, src); got != want {
+		t.Fatalf("x0 = %d, 期望 %d (枚举常量表达式算错)", got, want)
+	}
+	prog, err := Compile(`
+enum E { G = ~0, H = 255 >> 4 }
+function main() -> int { return G + H }`, "t.cin", false)
+	if err != nil {
+		t.Fatalf("编译失败: %v", err)
+	}
+	// ~0 = -1, 255 >> 4 = 15
+	if !hasImm(prog, "MOV", -1) || !hasImm(prog, "MOV", 15) {
+		t.Fatal("~0 / >> 未折叠为预期立即数")
+	}
+}
+
+// ---- 范围 for ----
+
+func TestRangeForCompilesAndWalksPointer(t *testing.T) {
+	src := `
+function main() -> int {
+    int a[4]
+    a[0] = 1
+    a[1] = 2
+    a[2] = 3
+    a[3] = 4
+    int s = 0
+    for (int v : a) { s = s + v }
+    return s
+}`
+	prog, err := Compile(src, "t.cin", false)
+	if err != nil {
+		t.Fatalf("编译失败: %v", err)
+	}
+	// 指针游走: p += 8, 且 e = p + count*8
+	if !hasImm(prog, "ADDI", 8) {
+		t.Fatal("范围 for 未生成 ADDI +8 的指针递增")
+	}
+	if !hasImm(prog, "ADDI", 4*8) {
+		t.Fatal("范围 for 未生成 e = p + count*8")
+	}
+	for _, l := range []string{"rfloop", "rfinc", "rfend"} {
+		if !hasLabelPrefix(prog, l) {
+			t.Fatalf("缺少标签前缀 %s", l)
+		}
+	}
+	if got := runCompiled(t, src); got != 10 {
+		t.Fatalf("x0 = %d, 期望 10", got)
+	}
+}
+
+func TestRangeForBreakAndContinue(t *testing.T) {
+	src := `
+function main() -> int {
+    int a[6]
+    for (int i = 0; i < 6; i++) { a[i] = i }
+    int s = 0
+    for (int v : a) {
+        if (v == 1) { continue }
+        if (v == 4) { break }
+        s = s + v
+    }
+    return s
+}`
+	// 0 + 2 + 3 = 5
+	if got := runCompiled(t, src); got != 5 {
+		t.Fatalf("x0 = %d, 期望 5 (break/continue 目标错误)", got)
+	}
+}
+
+func TestRangeForGlobalArrayAndFloatElement(t *testing.T) {
+	src := `
+int G[3]
+function main() -> int {
+    G[0] = 1
+    G[1] = 2
+    G[2] = 3
+    float s = 0.0
+    for (float v : G) { s = s + v }
+    return s * 10.0
+}`
+	// (1+2+3) * 10 = 60, 元素 int -> float 需插入 ITOF
+	prog, err := Compile(src, "t.cin", false)
+	if err != nil {
+		t.Fatalf("编译失败: %v", err)
+	}
+	if countSys(prog, SysITOF) == 0 {
+		t.Fatal("int 元素转 float 未生成 ITOF")
+	}
+	if got := runCompiled(t, src); got != 60 {
+		t.Fatalf("x0 = %d, 期望 60", got)
+	}
+}
+
+func TestRangeForErrors(t *testing.T) {
+	cases := []struct{ name, src, want string }{
+		{"ptrarray_param", `
+function f(int[] a) -> int {
+    int s = 0
+    for (int v : a) { s = s + v }
+    return s
+}
+function main() -> int { return f(0) }`, "range-for requires a fixed-size array"},
+		{"ptrarray_local", `
+function main() -> int {
+    int[] a
+    for (int v : a) { }
+    return 0
+}`, "range-for requires a fixed-size array"},
+		{"multidimensional", `
+function main() -> int {
+    int m[2][3]
+    for (int v : m) { }
+    return 0
+}`, "range-for over multi-dimensional arrays is not supported"},
+		{"array_element_type_is_parse_error_not_range_for", `
+function main() -> int {
+    int m[2][3]
+    for (int[] r : m) { }
+    return 0
+}`, "Expected"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) { compileErr(t, c.src, c.want) })
+	}
+}
+
+// ---- case 范围 / 多值 ----
+
+func TestCaseRangeProducesTwoComparisons(t *testing.T) {
+	src := `
+function main() -> int {
+    int x = 5
+    switch (x) {
+        case 1..3: return 1
+        case 7, 9..11: return 2
+        default: return 3
+    }
+    return 0
+}`
+	prog, err := Compile(src, "t.cin", false)
+	if err != nil {
+		t.Fatalf("编译失败: %v", err)
+	}
+	if !hasCond(prog, "LT") || !hasCond(prog, "LE") {
+		t.Fatal("范围 case 未生成 LT/LE 两段有符号比较")
+	}
+	if !hasCond(prog, "EQ") {
+		t.Fatal("单值 case 未生成 EQ 比较")
+	}
+	for _, v := range []int64{1, 3, 7, 9, 11} {
+		if !hasImm(prog, "MOV", v) {
+			t.Fatalf("分派链缺少边界立即数 %d", v)
+		}
+	}
+	if got := runCompiled(t, src); got != 3 {
+		t.Fatalf("x0 = %d, 期望 3 (default)", got)
+	}
+}
+
+func TestCaseRangeRuntime(t *testing.T) {
+	src := `
+function classify(int x) -> int {
+    switch (x) {
+        case 1..3: return 10
+        case 7, 9..11: return 20
+        default: return 30
+    }
+    return 0
+}
+function main() -> int {
+    int s = 0
+    s = s + classify(0)
+    s = s + classify(1)
+    s = s + classify(3)
+    s = s + classify(4)
+    s = s + classify(7)
+    s = s + classify(9)
+    s = s + classify(11)
+    s = s + classify(12)
+    return s
+}`
+	// 30 + 10 + 10 + 30 + 20 + 20 + 20 + 30 = 170
+	if got := runCompiled(t, src); got != 170 {
+		t.Fatalf("x0 = %d, 期望 170 (case 范围匹配错误)", got)
+	}
+}
+
+func TestCaseRangeWithNegativeBounds(t *testing.T) {
+	src := `
+function main() -> int {
+    int x = -2
+    int r = 0
+    switch (x) {
+        case -3..-1: r = 1 break
+        default: r = 2
+    }
+    return r
+}`
+	if got := runCompiled(t, src); got != 1 {
+		t.Fatalf("x0 = %d, 期望 1", got)
+	}
+}
+
+func TestEmptyCaseRangeIsCompileError(t *testing.T) {
+	compileErr(t, `
+function main() -> int {
+    int x = 1
+    switch (x) {
+        case 5..1: return 1
+    }
+    return 0
+}`, "Empty case range: 5..1")
+}
+
+func TestNonConstantCaseAltsAreCompileError(t *testing.T) {
+	cases := []struct{ name, src string }{
+		{"single", `
+function main() -> int {
+    int y = 2
+    int x = 1
+    switch (x) {
+        case y: return 1
+    }
+    return 0
+}`},
+		{"range_high", `
+function main() -> int {
+    int y = 2
+    int x = 1
+    switch (x) {
+        case 0..y: return 1
+    }
+    return 0
+}`},
+		{"range_low", `
+function main() -> int {
+    int y = 2
+    int x = 1
+    switch (x) {
+        case y..9: return 1
+    }
+    return 0
+}`},
+		{"second_alt", `
+function main() -> int {
+    int y = 2
+    int x = 1
+    switch (x) {
+        case 1, y: return 1
+    }
+    return 0
+}`},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) { compileErr(t, c.src, "constant") })
+	}
+}
+
+func TestCaseFloatValueStillReportsType(t *testing.T) {
+	compileErr(t, `
+function main() -> int {
+    int x = 1
+    switch (x) {
+        case 1.5: return 1
+    }
+    return 0
+}`, "case value must be an integer constant, got: float")
+}
+
+// ---- 多参数 print / println ----
+
+func TestPrintSingleArgBytecodeUnchanged(t *testing.T) {
+	// 单参数 println: 字符串化 + PRINT_STR + OUT 10 (与改动前逐字节一致)
+	prog, err := Compile(`function main() -> int { println(7) return 0 }`, "t.cin", false)
+	if err != nil {
+		t.Fatalf("编译失败: %v", err)
+	}
+	if n := countSys(prog, SysITOA); n != 1 {
+		t.Fatalf("println(7) 的 ITOA 次数 = %d, 期望 1", n)
+	}
+	if n := countSys(prog, SysPRINT_STR); n != 1 {
+		t.Fatalf("println(7) 的 PRINT_STR 次数 = %d, 期望 1", n)
+	}
+	if n := countOp(prog, "OUT"); n != 1 {
+		t.Fatalf("println(7) 的 OUT 次数 = %d, 期望 1", n)
+	}
+
+	// 单参数 print: 没有换行
+	prog, err = Compile(`function main() -> int { print(7) return 0 }`, "t.cin", false)
+	if err != nil {
+		t.Fatalf("编译失败: %v", err)
+	}
+	if n := countSys(prog, SysPRINT_STR); n != 1 {
+		t.Fatalf("print(7) 的 PRINT_STR 次数 = %d, 期望 1", n)
+	}
+	if n := countOp(prog, "OUT"); n != 0 {
+		t.Fatalf("print(7) 不应输出换行, OUT 次数 = %d", n)
+	}
+}
+
+func TestPrintMultipleArgs(t *testing.T) {
+	prog, err := Compile(
+		`function main() -> int { println(1, "a", 2.5) return 0 }`, "t.cin", false)
+	if err != nil {
+		t.Fatalf("多参数 println 编译失败: %v", err)
+	}
+	if n := countSys(prog, SysPRINT_STR); n != 3 {
+		t.Fatalf("PRINT_STR 次数 = %d, 期望 3", n)
+	}
+	if n := countSys(prog, SysITOA); n != 1 {
+		t.Fatalf("ITOA 次数 = %d, 期望 1", n)
+	}
+	if n := countSys(prog, SysFTOA); n != 1 {
+		t.Fatalf("FTOA 次数 = %d, 期望 1", n)
+	}
+	if n := countOp(prog, "OUT"); n != 1 {
+		t.Fatalf("OUT 次数 = %d, 期望 1 (只换行一次)", n)
+	}
+
+	// print 多参数: 无换行
+	prog, err = Compile(`function main() -> int { print(1, 2, 3) return 0 }`, "t.cin", false)
+	if err != nil {
+		t.Fatalf("多参数 print 编译失败: %v", err)
+	}
+	if n := countSys(prog, SysPRINT_STR); n != 3 {
+		t.Fatalf("print 的 PRINT_STR 次数 = %d, 期望 3", n)
+	}
+	if n := countOp(prog, "OUT"); n != 0 {
+		t.Fatalf("print 多参数不应输出换行, OUT 次数 = %d", n)
+	}
+
+	// 无参 println: 仅换行
+	prog, err = Compile(`function main() -> int { println() return 0 }`, "t.cin", false)
+	if err != nil {
+		t.Fatalf("println() 编译失败: %v", err)
+	}
+	if n := countSys(prog, SysPRINT_STR); n != 0 {
+		t.Fatalf("println() 的 PRINT_STR 次数 = %d, 期望 0", n)
+	}
+	if n := countOp(prog, "OUT"); n != 1 {
+		t.Fatalf("println() 的 OUT 次数 = %d, 期望 1", n)
+	}
+}
+
+// ---- 字符串转义 ----
+
+func TestStringEscapeBytes(t *testing.T) {
+	cases := []struct {
+		name string
+		lit  string // CIN 源码里的字面量 (含引号)
+		want []byte // 期望的数据字节 (含结尾 NUL)
+	}{
+		{"hex_utf8", `"\xE4\xB8\xAD"`, []byte{0xE4, 0xB8, 0xAD, 0x00}},
+		{"unicode_escape", `"\u4e2d"`, []byte{0xE4, 0xB8, 0xAD, 0x00}},
+		{"unicode_long", `"\U0001F600"`, []byte{0xF0, 0x9F, 0x98, 0x80, 0x00}},
+		{"hex_short", `"\x41"`, []byte{0x41, 0x00}},
+		{"hex_single_low", `"\x9"`, []byte{0x09, 0x00}},
+		{"control_chars", `"\a\b\f\v"`, []byte{7, 8, 12, 11, 0x00}},
+		{"quote_and_backslash", `"\'\\"`, []byte{'\'', '\\', 0x00}},
+		{"unknown_escape_verbatim", `"\q"`, []byte{'q', 0x00}},
+		{"newline_tab", `"\n\t"`, []byte{'\n', '\t', 0x00}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			src := `function main() -> int { string s = ` + c.lit + ` return strlen(s) }`
+			prog, err := Compile(src, "t.cin", false)
+			if err != nil {
+				t.Fatalf("编译失败: %v", err)
+			}
+			if !hasDataWrite(prog, c.want) {
+				t.Fatalf("未找到期望的数据字节 %v", c.want)
+			}
+		})
+	}
+}
+
+func TestHexAndUnicodeEscapesAreIdentical(t *testing.T) {
+	hexProg, err := Compile(
+		`function main() -> int { string s = "\xE4\xB8\xAD" return strlen(s) }`,
+		"t.cin", false)
+	if err != nil {
+		t.Fatalf("编译失败: %v", err)
+	}
+	uniProg, err := Compile(
+		`function main() -> int { string s = "\u4e2d" return strlen(s) }`,
+		"t.cin", false)
+	if err != nil {
+		t.Fatalf("编译失败: %v", err)
+	}
+	if dumpProgram(hexProg) != dumpProgram(uniProg) {
+		t.Fatal(`"\xE4\xB8\xAD" 与 "\u4e2d" 的编译产物不一致`)
+	}
+	// 两处都必须是 3 字节 + NUL
+	if !hasDataWrite(hexProg, []byte{0xE4, 0xB8, 0xAD, 0x00}) {
+		t.Fatal("\\x 转义未产生 3 个原始字节")
+	}
+}
+
+func TestStringEscapeErrors(t *testing.T) {
+	cases := []struct{ name, src, want string }{
+		{"hex_empty", `function main() -> int { string s = "\x" return 0 }`,
+			"\\x escape needs at least one hex digit"},
+		{"hex_no_digits", `function main() -> int { string s = "\xZZ" return 0 }`,
+			"\\x escape needs at least one hex digit"},
+		{"u_too_short", `function main() -> int { string s = "\u12" return 0 }`,
+			"\\u escape needs exactly 4 hex digits"},
+		{"u_non_hex", `function main() -> int { string s = "\uZZZZ" return 0 }`,
+			"\\u escape needs exactly 4 hex digits"},
+		{"U_too_short", `function main() -> int { string s = "\U0001F60" return 0 }`,
+			"\\U escape needs exactly 8 hex digits"},
+		{"U_non_hex", `function main() -> int { string s = "\U0001F60Z" return 0 }`,
+			"\\U escape needs exactly 8 hex digits"},
+		{"u_out_of_range", `function main() -> int { string s = "\U00110000" return 0 }`,
+			"\\U escape out of Unicode range"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) { compileErr(t, c.src, c.want) })
+	}
+}
+
+// ---- 数字与 '..' 的词法 ----
+
+func TestDotDotIsNotPartOfNumber(t *testing.T) {
+	// 1..5 必须切成 NUMBER(1) DOTDOT NUMBER(5)
+	prog, err := Compile(`
+function main() -> int {
+    int x = 4
+    switch (x) {
+        case 1..5: return 7
+    }
+    return 0
+}`, "t.cin", false)
+	if err != nil {
+		t.Fatalf("编译失败: %v", err)
+	}
+	if !hasImm(prog, "MOV", 1) || !hasImm(prog, "MOV", 5) {
+		t.Fatal("1..5 未切成两个数字 token")
+	}
+	if got := runCompiled(t, `
+function main() -> int {
+    int x = 4
+    switch (x) {
+        case 1..5: return 7
+    }
+    return 0
+}`); got != 7 {
+		t.Fatalf("x0 = %d, 期望 7", got)
+	}
+}
+
+func TestFloatMembersAndSecondDotStillWork(t *testing.T) {
+	// 浮点字面量与 struct 成员访问不受 '..' 支持的影响
+	if _, err := Compile(`
+struct P { int x }
+function main() -> int {
+    P p
+    p.x = 3
+    float f = 1.5
+    int z[2]
+    return p.x + f
+}`, "t.cin", false); err != nil {
+		t.Fatalf("浮点/成员访问被破坏: %v", err)
+	}
+}
+
+// ---- for (i = 0; ...) 初始化子句 ----
+
+func TestForInitAssignmentWithoutDeclaration(t *testing.T) {
+	src := `
+function main() -> int {
+    int i = 0
+    int s = 0
+    for (i = 0; i < 5; i++) { s = s + i }
+    return s * 100 + i
+}`
+	// s = 0+1+2+3+4 = 10, i = 5 -> 1005
+	if got := runCompiled(t, src); got != 1005 {
+		t.Fatalf("x0 = %d, 期望 1005", got)
+	}
+}
+
+// ---- 枚举类型名当类型用 ----
+
+func TestEnumTypeNameIsIntAlias(t *testing.T) {
+	src := `
+enum Color { RED, GREEN, BLUE }
+function main() -> int {
+    Color c = GREEN
+    unsigned int u = BLUE
+    Color d = c + u
+    return d
+}`
+	// GREEN=1, BLUE=2 -> 3
+	if got := runCompiled(t, src); got != 3 {
+		t.Fatalf("x0 = %d, 期望 3", got)
 	}
 }

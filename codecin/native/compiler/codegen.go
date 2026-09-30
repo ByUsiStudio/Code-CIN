@@ -229,6 +229,21 @@ func (c *compiler) constValue(n *Node) (*Type, int64, error) {
 	return nil, 0, fmt.Errorf("Non-constant global initializer: %s", n.Kind)
 }
 
+// constInt 求值 case 常量: 整数常量表达式 (支持枚举成员), 返回有符号 64 位值。
+// 失败时已通过 failf 记录与 Python 侧一致的错误文案, ok=false。
+func (c *compiler) constInt(n *Node) (int64, bool) {
+	ct, raw, err := c.constValue(n)
+	if err != nil {
+		c.failf("case value must be an integer constant")
+		return 0, false
+	}
+	if ct == nil || (ct.Kind != kInt && ct.Kind != kBool) {
+		c.failf("case value must be an integer constant, got: %s", typeName(ct))
+		return 0, false
+	}
+	return raw, true
+}
+
 func (c *compiler) emitGlobalsInit(globals []*GlobalVar) {
 	for _, gv := range globals {
 		addr := c.globalsSym[gv.name].addr
@@ -365,17 +380,16 @@ func (c *compiler) prescanLocalsWithNames(body []*Node) []namedLocal {
 			case "rangefor":
 				// 登记顺序必须与 Python _prescan_locals 相同 (影响槽位偏移):
 				// 元素变量 -> $rf<id>p -> $rf<id>e, 然后才遍历循环体。
-				hidden := []namedLocal{
-					{name: s.Name, t: s.Type},
-					{name: fmt.Sprintf("$rf%dp", s.RangeID), t: scalarT(kInt)},
-					{name: fmt.Sprintf("$rf%de", s.RangeID), t: scalarT(kInt)},
-				}
-				for _, lv := range hidden {
-					if seen[lv.name] {
+				hidNames := []string{s.Name,
+					fmt.Sprintf("$rf%dp", s.RangeID),
+					fmt.Sprintf("$rf%de", s.RangeID)}
+				hidTypes := []*Type{s.Type, scalarT(kInt), scalarT(kInt)}
+				for k := range hidNames {
+					if seen[hidNames[k]] {
 						continue
 					}
-					seen[lv.name] = true
-					found = append(found, lv)
+					seen[hidNames[k]] = true
+					found = append(found, namedLocal{name: hidNames[k], t: hidTypes[k]})
 				}
 				walk([]*Node{s.D})
 			}
@@ -576,9 +590,10 @@ func (c *compiler) genRangeFor(vname string, elemType, arrExpr, body *Node, hid 
 
 	c.label(lLoop)
 	// p >= e 时退出 (genCondJumpFalse 在条件为假时跳转)
-	c.genCondJumpFalse(&Node{Kind: "binop", Op: "<",
-		A: &Node{Kind: "var", Name: pname},
-		B: &Node{Kind: "var", Name: ename}}, lEnd)
+	loopCond := &Node{Kind: "binop", Op: "<"}
+	loopCond.A = &Node{Kind: "var", Name: pname}
+	loopCond.B = &Node{Kind: "var", Name: ename}
+	c.genCondJumpFalse(loopCond, lEnd)
 	// v = *p
 	c.genVarValue(pname)
 	c.emit("LD", c.reg(0), ir.Mem(0, 0))
@@ -1727,9 +1742,12 @@ func (c *compiler) genCall(name string, args []*Node) *Type {
 		return scalarT(kVoid)
 	}
 	if name == "println" || name == "print" {
-		if len(args) > 0 {
-			c.genPrint(args[0], name == "println")
-		} else {
+		// 多参数: 依次字符串化输出 (无分隔符); 无参时 println 输出空行。
+		// 单参数时与旧实现逐字节一致 (字符串化 + PRINT_STR [+ OUT 10])。
+		for _, a := range args {
+			c.genPrint(a, false)
+		}
+		if name == "println" || len(args) == 0 {
 			c.emit("OUT", c.imm(10))
 		}
 		return scalarT(kVoid)
@@ -2016,14 +2034,20 @@ func Compile(source, filename string, bounds bool) (*ir.Program, error) {
 	if err != nil {
 		return nil, err
 	}
-	p := &parser{toks: toks, filename: filename}
-	structs, globals, functions, funcOrder, err := p.parseProgram()
+	p := &parser{
+		toks:      toks,
+		filename:  filename,
+		enums:     map[string]int64{},
+		enumTypes: map[string]bool{},
+	}
+	structs, globals, functions, funcOrder, enums, err := p.parseProgram()
 	if err != nil {
 		return nil, err
 	}
 	c.structs = structs
 	c.globals = globals
 	c.functions = functions
+	c.enums = enums
 
 	c.layoutGlobals(globals)
 	c.emitGlobalsInit(globals)

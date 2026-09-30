@@ -99,13 +99,14 @@ type Node struct {
 	Is2D     bool
 	// cpu 语句操作数 (kind, value) 对。
 	Operands [][2]string
+
 	// Alts 仅用于 Kind=="case": case 备选列表, 每项为 caseval (A=常量表达式)
-	// 或 caserange (A=low, B=high); Alts==nil 表示 default 分支。
-	// case 的语句体仍放在 List 中。
-	Alts []*Node
-	// RangeID 仅用于 Kind=="rangefor": 隐藏局部名 $rf<id>p / $rf<id>e 的 id
-	// (自增序号, 与 Python 侧 _range_id 一致 -> 保证两编译器槽位布局相同)。
-	RangeID int
+	// 或 caserange (A=low, B=high); Alts==nil 表示 default 分支。case 的语句体
+	// 仍放在 List 中。RangeID 仅用于 Kind=="rangefor": 隐藏局部名
+	// $rf<id>p / $rf<id>e 的 id (自增序号, 与 Python 侧 _range_id 一致 ->
+	// 保证两编译器的栈槽布局相同)。
+	Alts    []*Node // case 备选; nil = default
+	RangeID int     // rangefor 的隐藏局部名序号
 }
 
 // DeclItem 一条变量声明 (name, type, init, arrayLit)。
@@ -124,8 +125,7 @@ type compiler struct {
 	structs   map[string]*StructDef
 	functions map[string]*FuncDef
 	globals   []*GlobalVar
-	// enums 枚举成员 -> 编译期整数常量 (来自 parser, 由 Compile 注入)。
-	enums map[string]int64
+	enums     map[string]int64 // 枚举成员 -> 编译期整数常量 (来自 parser)
 
 	// 代码生成状态
 	res      *ir.Program
@@ -215,3 +215,4 @@ func newCompiler(filename string, bounds bool) *compiler {
 		globalsSym: map[string]globalVar{},
 	}
 }
+
