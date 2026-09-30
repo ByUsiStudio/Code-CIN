@@ -203,6 +203,11 @@ func (c *compiler) constValue(n *Node) (*Type, int64, error) {
 		return scalarT(kBool), v, nil
 	case "str":
 		return scalarT(kString), int64(c.dataString(n.Str)), nil
+	case "var":
+		if v, ok := c.enums[n.Name]; ok {
+			// 枚举成员: 编译期整数常量 (可用于全局初始化与 case 标签)
+			return scalarT(kInt), v, nil
+		}
 	case "neg":
 		inner := n.A
 		if inner.Kind == "num" {
@@ -357,6 +362,22 @@ func (c *compiler) prescanLocalsWithNames(body []*Node) []namedLocal {
 					}
 				}
 				walk([]*Node{s.D})
+			case "rangefor":
+				// 登记顺序必须与 Python _prescan_locals 相同 (影响槽位偏移):
+				// 元素变量 -> $rf<id>p -> $rf<id>e, 然后才遍历循环体。
+				hidden := []namedLocal{
+					{name: s.Name, t: s.Type},
+					{name: fmt.Sprintf("$rf%dp", s.RangeID), t: scalarT(kInt)},
+					{name: fmt.Sprintf("$rf%de", s.RangeID), t: scalarT(kInt)},
+				}
+				for _, lv := range hidden {
+					if seen[lv.name] {
+						continue
+					}
+					seen[lv.name] = true
+					found = append(found, lv)
+				}
+				walk([]*Node{s.D})
 			}
 		}
 	}
@@ -432,6 +453,8 @@ func (c *compiler) genStmt(s *Node) {
 		c.genWhile(s.A, s.B)
 	case "for":
 		c.genFor(s.A, s.B, s.C, s.D)
+	case "rangefor":
+		c.genRangeFor(s.Name, s.Type, s.A, s.D, s.RangeID)
 	case "dowhile":
 		c.genDowhile(s.A, s.B)
 	case "switch":
@@ -514,6 +537,74 @@ func (c *compiler) genFor(init, cond, update, body *Node) {
 	c.label(lEnd)
 }
 
+// genRangeFor 生成 `for (T v : arr)` —— 遍历定长数组 (元素为 1 槽: 标量/struct/指针)。
+//
+// 展开为指针游走: p = &arr[0]; e = p + N*8;
+// while (p < e) { v = *p; body; p += 8 }
+// 指令序列必须与 Python 侧 gen_rangefor 逐字节一致。
+func (c *compiler) genRangeFor(vname string, elemType, arrExpr, body *Node, hid int) {
+	if isFixedArray(elemType) || isPtrArray(elemType) {
+		c.failf("range-for element type must be a scalar or struct, got: %s",
+			typeName(elemType))
+		return
+	}
+	at := c.exprType(arrExpr)
+	if !isFixedArray(at) {
+		c.failf("range-for requires a fixed-size array (element type of the "+
+			"iterated expression: %s)", typeName(at))
+		return
+	}
+	elemT, count := at.Elem, at.Size
+	if isFixedArray(elemT) {
+		c.failf("range-for over multi-dimensional arrays is not supported; " +
+			"use an index loop")
+		return
+	}
+	pname := fmt.Sprintf("$rf%dp", hid)
+	ename := fmt.Sprintf("$rf%de", hid)
+	lLoop := c.newLabel("rfloop")
+	lInc := c.newLabel("rfinc")
+	lEnd := c.newLabel("rfend")
+
+	// p = &arr[0] (定长数组取值即块地址)
+	c.genValue(arrExpr)
+	c.storeX0Local(pname)
+	// e = p + count*8
+	c.genVarValue(pname)
+	c.emit("ADDI", c.reg(0), c.reg(0), c.imm(int64(count*8)))
+	c.storeX0Local(ename)
+
+	c.label(lLoop)
+	// p >= e 时退出 (genCondJumpFalse 在条件为假时跳转)
+	c.genCondJumpFalse(&Node{Kind: "binop", Op: "<",
+		A: &Node{Kind: "var", Name: pname},
+		B: &Node{Kind: "var", Name: ename}}, lEnd)
+	// v = *p
+	c.genVarValue(pname)
+	c.emit("LD", c.reg(0), ir.Mem(0, 0))
+	c.convert(elemT, elemType)
+	c.storeX0Local(vname)
+	c.breakLbls = append(c.breakLbls, lEnd)
+	c.continueLbls = append(c.continueLbls, lInc)
+	c.genStmt(body)
+	c.breakLbls = c.breakLbls[:len(c.breakLbls)-1]
+	c.continueLbls = c.continueLbls[:len(c.continueLbls)-1]
+	// p += 8
+	c.label(lInc)
+	c.genVarValue(pname)
+	c.emit("ADDI", c.reg(0), c.reg(0), c.imm(8))
+	c.storeX0Local(pname)
+	c.emit("JMP", c.lab(lLoop))
+	c.label(lEnd)
+}
+
+// storeX0Local 把 x0 存入变量槽 (不破坏 x0 之外的约定)。
+func (c *compiler) storeX0Local(name string) {
+	c.emit("MOV", c.reg(2), c.reg(0))
+	c.mustAddrVar(name)
+	c.emit("SD", c.reg(2), ir.Mem(0, 0))
+}
+
 func (c *compiler) genDowhile(body, cond *Node) {
 	lBody := c.newLabel("dbody")
 	lCond := c.newLabel("dcond")
@@ -553,8 +644,12 @@ func (c *compiler) genSwitch(cond *Node, branches []*Node) {
 	c.genValue(cond)
 	c.emit("PUSH", c.reg(0)) // [SP] = selector
 
+	type caseAlt struct {
+		isRange bool
+		lo, hi  int64
+	}
 	type caseLabel struct {
-		raw       uint64
+		alts      []caseAlt
 		isDefault bool
 		lbl       string
 	}
@@ -563,37 +658,60 @@ func (c *compiler) genSwitch(cond *Node, branches []*Node) {
 	labels := make([]caseLabel, 0, len(branches))
 	defaultLbl := ""
 	for _, br := range branches {
-		if br.A == nil {
+		if br.Alts == nil {
 			lbl := c.newLabel("swdef")
 			defaultLbl = lbl
 			labels = append(labels, caseLabel{isDefault: true, lbl: lbl})
 			continue
 		}
-		ct, raw, err := c.constValue(br.A)
-		if err != nil {
-			c.failf("case value must be an integer constant")
-			labels = append(labels, caseLabel{lbl: c.newLabel("swcase")})
-			continue
+		var compiled []caseAlt
+		for _, alt := range br.Alts {
+			if alt.Kind == "caserange" {
+				lo, okLo := c.constInt(alt.A)
+				hi, okHi := c.constInt(alt.B)
+				if !okLo || !okHi {
+					continue
+				}
+				if lo > hi {
+					c.failf("Empty case range: %d..%d", lo, hi)
+					continue
+				}
+				compiled = append(compiled, caseAlt{isRange: true, lo: lo, hi: hi})
+			} else {
+				v, ok := c.constInt(alt.A)
+				if !ok {
+					continue
+				}
+				compiled = append(compiled, caseAlt{lo: v})
+			}
 		}
-		if ct.Kind != kInt && ct.Kind != kBool {
-			c.failf("case value must be an integer constant, got: %s", typeName(ct))
-			labels = append(labels, caseLabel{lbl: c.newLabel("swcase")})
-			continue
-		}
-		// 负数 case 按无符号位模式比较 (旧实现拿 -1 当 default 哨兵并跳过 raw < 0,
-		// 于是 `case -1` 永远匹配不上)。
-		labels = append(labels, caseLabel{raw: uint64(raw), lbl: c.newLabel("swcase")})
+		labels = append(labels, caseLabel{alts: compiled, lbl: c.newLabel("swcase")})
 	}
 
-	// 分派比较链
+	// 分派比较链 (多值/范围展开为多个比较, 顺序不影响语义)
 	for _, l := range labels {
 		if l.isDefault {
 			continue
 		}
-		c.emit("LD", c.reg(0), ir.Mem(32, 0))
-		c.emit("MOV", c.reg(1), c.imm(int64(l.raw)))
-		c.emit("CMP", c.reg(0), c.reg(1))
-		c.emit("B", c.lab(l.lbl), ir.Cond("EQ"))
+		for _, alt := range l.alts {
+			if !alt.isRange {
+				c.emit("LD", c.reg(0), ir.Mem(32, 0))
+				c.emit("MOV", c.reg(1), c.imm(alt.lo))
+				c.emit("CMP", c.reg(0), c.reg(1))
+				c.emit("B", c.lab(l.lbl), ir.Cond("EQ"))
+				continue
+			}
+			lSkip := c.newLabel("swrng")
+			c.emit("LD", c.reg(0), ir.Mem(32, 0))
+			c.emit("MOV", c.reg(1), c.imm(alt.lo))
+			c.emit("CMP", c.reg(0), c.reg(1))
+			c.emit("B", c.lab(lSkip), ir.Cond("LT"))
+			c.emit("LD", c.reg(0), ir.Mem(32, 0))
+			c.emit("MOV", c.reg(1), c.imm(alt.hi))
+			c.emit("CMP", c.reg(0), c.reg(1))
+			c.emit("B", c.lab(l.lbl), ir.Cond("LE"))
+			c.label(lSkip)
+		}
 	}
 	target := defaultLbl
 	if target == "" {
@@ -916,6 +1034,11 @@ func (c *compiler) genValue(n *Node) *Type {
 }
 
 func (c *compiler) genVarValue(name string) *Type {
+	if v, ok := c.enums[name]; ok {
+		// 枚举成员: 编译期整数常量
+		c.emit("MOV", c.reg(0), c.imm(v))
+		return scalarT(kInt)
+	}
 	t := c.varType(name)
 	if t == nil {
 		return nil
@@ -938,6 +1061,10 @@ func (c *compiler) genVarValue(name string) *Type {
 func (c *compiler) genLvalueAddr(n *Node) {
 	switch n.Kind {
 	case "var":
+		if _, ok := c.enums[n.Name]; ok {
+			c.failf("Cannot assign to enum member: %s (constants are read-only)", n.Name)
+			return
+		}
 		c.mustAddrVar(n.Name)
 	case "member":
 		c.genMember(n.A, n.Name, true)
@@ -1095,6 +1222,9 @@ func (c *compiler) genAssign(target, valueNode *Node) *Type {
 func (c *compiler) exprType(n *Node) *Type {
 	switch n.Kind {
 	case "var":
+		if _, ok := c.enums[n.Name]; ok {
+			return scalarT(kInt)
+		}
 		return c.varType(n.Name)
 	case "member":
 		objT := c.exprType(n.A)
