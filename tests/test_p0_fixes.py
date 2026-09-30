@@ -18,7 +18,7 @@ from codecin import CPU, Config, native
 from codecin.assembler import _eval_expr
 from codecin.cin import CINCompiler
 from codecin.debugger import _eval_breakpoint_condition
-from codecin.errors import CompilerError
+from tests.helpers import run_cin_file
 
 needs_native = pytest.mark.skipif(
     native.get_engine() is None, reason="native Go library not built")
@@ -149,7 +149,16 @@ function main() -> string {
 # 4. sqrt / pow 数学域: NaN 对齐
 # ====================================================================
 
-NAN_BITS = 0x7FF8000000000000
+def _is_nan_bits(v: int) -> bool:
+    """IEEE-754 NaN 判定: 指数位全 1 且尾数非 0。
+
+    不断言精确位模式 —— Python 的 float('nan') 为 0x7FF8000000000000,
+    而 x86 硬件 SQRTSD 返回带符号位的 0xFFF8000000000000, IEEE-754
+    允许同一 NaN 值有多个位模式。
+    """
+    return ((v & 0x7FF0000000000000) == 0x7FF0000000000000
+            and (v & 0x000FFFFFFFFFFFFF) != 0)
+
 
 SQRT_SRC = r'''
 function main() -> float {
@@ -160,7 +169,7 @@ function main() -> float {
 @pytest.mark.parametrize('use_native', PATHS, ids=PATH_IDS)
 def test_sqrt_negative_returns_nan(use_native):
     x0, _, _ = run_cin(SQRT_SRC, use_native)
-    assert x0 == NAN_BITS, "sqrt(-1) 必须与 Go 路径一致返回 NaN"
+    assert _is_nan_bits(x0), "sqrt(-1) 必须与 Go 路径一致返回 NaN"
 
 
 POW_SRC = r'''
@@ -172,7 +181,7 @@ function main() -> float {
 @pytest.mark.parametrize('use_native', PATHS, ids=PATH_IDS)
 def test_pow_negative_base_fractional_exp_nan(use_native):
     x0, _, _ = run_cin(POW_SRC, use_native)
-    assert x0 == NAN_BITS, "pow(负底数, 非整数指数) 必须与 Go 一致返回 NaN"
+    assert _is_nan_bits(x0), "pow(负底数, 非整数指数) 必须与 Go 一致返回 NaN"
 
 
 # ====================================================================

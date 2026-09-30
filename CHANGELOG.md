@@ -7,8 +7,46 @@
 
 ## [5.6.0] - 2026-09-27
 
-以「语言表达力 + 宿主能力」为主线的一次功能发布：新增 6 项 CIN 语法特性，
-并补齐 **36 个跨平台宿主/系统 API**（全部由 Go 原生引擎实现），配套文档与编辑器高亮同步。
+一次以「静默错误清零 + 安全加固」为主的修复发布，落地 `docs/SUGGESTIONS_NEXT.md`
+第一轮评审的全部 P0/P1 项。所有语义修复均同步 Python 解释器与 Go 原生 VM 两条路径，
+并新增 25 个回归测试（`tests/test_p0_fixes.py`）。
+
+### 修复 (Fixed)
+
+- **`enum` 末成员无尾逗号解析失败**：`expect(RBRACE)` 前未跳过换行导致
+  `enum Color { RED, GREEN = 5 }` 报 `Expected RBRACE but got NL`。
+  Python 编译器与 Go 编译器同步修复。
+- **`input()` 真实现**：此前恒编译为 `MOV x0, 0`，任何输入都返回 0。现编译为
+  `IN` 指令：解释器从 `input_buffer` / 标准输入逐行读取（非法行返回 0），
+  Go 原生 VM 在缓冲耗尽后回退标准输入；CLI 启动时预读管道 stdin，
+  管道喂入（`echo 42 | ...`）与交互输入均可用。
+- **`substr` / `indexof` 统一字节语义**：此前按字符索引，与 `strlen` / `s[i]`
+  的字节语义不一致，非 ASCII 字符串算错下标。现与 Go 侧一致按 UTF-8 字节切片/查找。
+- **`sqrt` / `pow` 数学域错误对齐 NaN**：解释器此前对 `sqrt(-1.0)` 抛 CPython
+  `ValueError`，与 Go 路径（返回 NaN）不一致。现统一返回 NaN
+  （IEEE-754 允许同一 NaN 有多个位模式，不做精确位断言）。
+- **CLI 编码兜底**：Windows GBK 控制台下输出非 ASCII 即崩，`main()` 入口对
+  stdout/stderr 强制 `reconfigure(encoding='utf-8', errors='replace')`。
+- **Go 编译器无法构建**（既有）：`genRangeFor` 的 `elemType` 参数误声明为
+  `*Node` 导致整个 compiler 包编译失败，改回 `*Type`；同步修正两个从未跑通的
+  Go 测试（range-for 标签前缀、enum 全局初始化器用例的期望值）。
+
+### 安全 (Security)
+
+- **`--sandbox` 真实现**：此前为空壳。现拦截全部宿主能力 SYS 调用
+  （`AUDIOPLAY=39` 起的文件/网络/桌面/进程类），并强制放弃原生 DLL 路径
+  回退解释器执行，保证拦截无旁路。
+- **条件断点白名单求值**：`debugger` 的断点条件此前直接 `eval`，远程调试端口
+  可执行任意代码。现以 AST 白名单（字面量/寄存器名/算术比较/布尔逻辑）
+  校验后受限求值，拒绝 Call/Attribute/Subscript/推导式等一切可执行语法，
+  条件长度上限 512 字符。
+
+### 加固 (Hardened)
+
+- **JIT 栈保护补齐**：PUSH 生成代码补栈溢出检查（栈顶与堆区相撞即报错），
+  POP 补栈下溢检查，与解释器 / 原生 VM 对齐。
+- **汇编器非法数字字面量报错**：`0x_`、`0b__` 等残缺字面量此前静默求值为 0，
+  现编译报错。
 
 ### 新增 (Added)
 
