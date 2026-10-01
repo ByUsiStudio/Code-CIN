@@ -1,0 +1,256 @@
+// Code CIN 官方标准库: 定长二叉搜索树 (tree)
+// 用法: import "tree.cin"
+//
+// 纯 CIN 实现, 不使用任何宿主能力内建, 也不做动态内存分配:
+// 节点存放在库内全局数组里, 容量上限 TREE_CAP = 64。
+//
+// 全局数据段占用 (每槽 8 字节):
+//   tree_key[64] + tree_left[64] + tree_right[64]      = 192 槽
+//   tree_aux_node[128] + tree_aux_val[128]             = 256 槽
+//   标量 (tree_root / tree_count)                      =   2 槽
+//   合计 450 槽 = 3600 字节, 远小于默认 64 KiB 数据段。
+//
+// 语义说明:
+//   * 库内只有一份全局实例, 同一程序内共享; 需要多棵树请用 struct 自行封装;
+//   * 不支持删除节点, 因此节点一旦分配就始终有效, 已有节点恰好是下标 0..tree_size()-1;
+//   * 重复插入被拒绝 (返回 0), 树中不含重复键;
+//   * 空树: tree_min/tree_max 返回 0, tree_height 返回 0, 三个遍历返回 ""。
+
+int tree_key[64]
+int tree_left[64]
+int tree_right[64]
+
+int tree_root = -1
+int tree_count = 0
+
+// 遍历/求高用的显式栈 (避免递归)
+int tree_aux_node[128]
+int tree_aux_val[128]
+
+// ---------------- 生命周期 ----------------
+
+// 容量上限
+function tree_capacity() -> int {
+    return 64
+}
+
+// 重置为空树 (全局数组由运行时清零, 这里只需复位索引)
+function tree_reset() -> void {
+    tree_root = -1
+    tree_count = 0
+}
+
+// 清空 (等价于 tree_reset)
+function tree_clear() -> void {
+    tree_reset()
+}
+
+// ---------------- 状态查询 ----------------
+
+function tree_size() -> int {
+    return tree_count
+}
+
+// 空树返回 1
+function tree_is_empty() -> int {
+    if (tree_count == 0) { return 1 }
+    return 0
+}
+
+// ---------------- 插入与查找 ----------------
+
+// 分配一个新节点; 满时返回 -1 (内部辅助)
+function tree_new_node(int k) -> int {
+    if (tree_count >= 64) { return -1 }
+    int idx = tree_count
+    tree_key[idx] = k
+    tree_left[idx] = -1
+    tree_right[idx] = -1
+    tree_count = tree_count + 1
+    return idx
+}
+
+// 插入; 成功返回 1, 重复键或已满返回 0
+function tree_insert(int k) -> int {
+    if (tree_root < 0) {
+        int first = tree_new_node(k)
+        if (first < 0) { return 0 }
+        tree_root = first
+        return 1
+    }
+    int cur = tree_root
+    while (true) {
+        if (k == tree_key[cur]) { return 0 }
+        if (k < tree_key[cur]) {
+            if (tree_left[cur] < 0) {
+                int l = tree_new_node(k)
+                if (l < 0) { return 0 }
+                tree_left[cur] = l
+                return 1
+            }
+            cur = tree_left[cur]
+        } else {
+            if (tree_right[cur] < 0) {
+                int r = tree_new_node(k)
+                if (r < 0) { return 0 }
+                tree_right[cur] = r
+                return 1
+            }
+            cur = tree_right[cur]
+        }
+    }
+    return 0
+}
+
+// 是否包含键 k, 返回 1/0
+function tree_contains(int k) -> int {
+    int cur = tree_root
+    while (cur >= 0) {
+        if (k == tree_key[cur]) { return 1 }
+        if (k < tree_key[cur]) {
+            cur = tree_left[cur]
+        } else {
+            cur = tree_right[cur]
+        }
+    }
+    return 0
+}
+
+// 最小键; 空树返回 0
+function tree_min() -> int {
+    if (tree_root < 0) { return 0 }
+    int cur = tree_root
+    while (tree_left[cur] >= 0) {
+        cur = tree_left[cur]
+    }
+    return tree_key[cur]
+}
+
+// 最大键; 空树返回 0
+function tree_max() -> int {
+    if (tree_root < 0) { return 0 }
+    int cur = tree_root
+    while (tree_right[cur] >= 0) {
+        cur = tree_right[cur]
+    }
+    return tree_key[cur]
+}
+
+// 高度 (按节点数计: 空树 0, 只有根 1)
+function tree_height() -> int {
+    if (tree_root < 0) { return 0 }
+    int sp = 0
+    tree_aux_node[sp] = tree_root
+    tree_aux_val[sp] = 1
+    sp = sp + 1
+    int best = 0
+    while (sp > 0) {
+        sp = sp - 1
+        int nd = tree_aux_node[sp]
+        int d = tree_aux_val[sp]
+        if (d > best) { best = d }
+        if (tree_left[nd] >= 0) {
+            tree_aux_node[sp] = tree_left[nd]
+            tree_aux_val[sp] = d + 1
+            sp = sp + 1
+        }
+        if (tree_right[nd] >= 0) {
+            tree_aux_node[sp] = tree_right[nd]
+            tree_aux_val[sp] = d + 1
+            sp = sp + 1
+        }
+    }
+    return best
+}
+
+// 叶子节点个数 (无左子且无右子); 空树返回 0
+function tree_count_leaves() -> int {
+    int c = 0
+    for (int i = 0; i < tree_count; i = i + 1) {
+        if (tree_left[i] < 0 && tree_right[i] < 0) { c = c + 1 }
+    }
+    return c
+}
+
+// ---------------- 遍历 (空格分隔, 空树返回 "") ----------------
+
+// 中序: 升序序列
+function tree_inorder_str() -> string {
+    string out = ""
+    int first = 1
+    int sp = 0
+    int cur = tree_root
+    while (sp > 0 || cur >= 0) {
+        while (cur >= 0) {
+            tree_aux_node[sp] = cur
+            sp = sp + 1
+            cur = tree_left[cur]
+        }
+        sp = sp - 1
+        int nd = tree_aux_node[sp]
+        if (first == 0) { out = out + " " }
+        out = out + int_to_str(tree_key[nd])
+        first = 0
+        cur = tree_right[nd]
+    }
+    return out
+}
+
+// 前序: 根-左-右
+function tree_preorder_str() -> string {
+    string out = ""
+    int first = 1
+    if (tree_root < 0) { return out }
+    int sp = 0
+    tree_aux_node[sp] = tree_root
+    sp = sp + 1
+    while (sp > 0) {
+        sp = sp - 1
+        int nd = tree_aux_node[sp]
+        if (first == 0) { out = out + " " }
+        out = out + int_to_str(tree_key[nd])
+        first = 0
+        if (tree_right[nd] >= 0) {
+            tree_aux_node[sp] = tree_right[nd]
+            sp = sp + 1
+        }
+        if (tree_left[nd] >= 0) {
+            tree_aux_node[sp] = tree_left[nd]
+            sp = sp + 1
+        }
+    }
+    return out
+}
+
+// 后序: 左-右-根
+function tree_postorder_str() -> string {
+    string out = ""
+    int first = 1
+    if (tree_root < 0) { return out }
+    int sp1 = 0
+    int sp2 = 0
+    tree_aux_node[sp1] = tree_root
+    sp1 = sp1 + 1
+    while (sp1 > 0) {
+        sp1 = sp1 - 1
+        int nd = tree_aux_node[sp1]
+        tree_aux_val[sp2] = nd
+        sp2 = sp2 + 1
+        if (tree_left[nd] >= 0) {
+            tree_aux_node[sp1] = tree_left[nd]
+            sp1 = sp1 + 1
+        }
+        if (tree_right[nd] >= 0) {
+            tree_aux_node[sp1] = tree_right[nd]
+            sp1 = sp1 + 1
+        }
+    }
+    while (sp2 > 0) {
+        sp2 = sp2 - 1
+        int nd = tree_aux_val[sp2]
+        if (first == 0) { out = out + " " }
+        out = out + int_to_str(tree_key[nd])
+        first = 0
+    }
+    return out
+}

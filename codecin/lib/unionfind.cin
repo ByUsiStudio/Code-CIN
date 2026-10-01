@@ -1,0 +1,115 @@
+// Code CIN 官方标准库: 并查集 (unionfind)
+// 用法: import "unionfind.cin"
+//
+// 纯 CIN 实现, 不使用任何宿主能力内建, 也不做动态内存分配:
+// 三个状态数组都是库内全局定长数组, 容量上限 UF_CAP = 64。
+// 合并策略为按秩合并 + 路径压缩, 单次操作近似 O(alpha(n))。
+//
+// 全局数据段占用 (每槽 8 字节):
+//   uf_parent[64] + uf_rank_arr[64] + uf_sz[64]        = 192 槽
+//   标量 (uf_n / uf_comps)                             =   2 槽
+//   合计 194 槽 = 1552 字节, 远小于默认 64 KiB 数据段。
+//
+// 语义说明:
+//   * 库内只有一份全局实例, 同一程序内共享; 需要多个并查集请用 struct 自行封装;
+//   * 元素编号为 0..uf_n-1, 越界编号 (负数或 >= uf_n) 是"非法元素";
+//   * uf_find / uf_rank 对非法元素返回 -1, uf_size 对非法元素返回 0,
+//     uf_connected / uf_union 只要有一个非法就返回 0;
+//   * 调用 uf_reset(n) 之前 uf_n = 0, 此时所有编号都是非法的。
+
+int uf_parent[64]
+int uf_rank_arr[64]
+int uf_sz[64]
+
+int uf_n = 0
+int uf_comps = 0
+
+// ---------------- 生命周期 ----------------
+
+// 容量上限
+function uf_capacity() -> int {
+    return 64
+}
+
+// 重新初始化: 元素为 0..n-1, 每个元素自成一个集合
+// n <= 0 钳制为 0, n > 64 钳制为 64
+function uf_reset(int n) -> void {
+    int k = n
+    if (k < 0) { k = 0 }
+    if (k > 64) { k = 64 }
+    uf_n = k
+    uf_comps = k
+    for (int i = 0; i < k; i = i + 1) {
+        uf_parent[i] = i
+        uf_rank_arr[i] = 0
+        uf_sz[i] = 1
+    }
+}
+
+// ---------------- 查询 ----------------
+
+// 当前连通分量个数
+function uf_count() -> int {
+    return uf_comps
+}
+
+// 元素 x 所在集合的代表元 (路径压缩); 非法元素返回 -1
+function uf_find(int x) -> int {
+    if (x < 0 || x >= uf_n) { return -1 }
+    int r = x
+    while (uf_parent[r] != r) {
+        r = uf_parent[r]
+    }
+    int cur = x
+    while (uf_parent[cur] != r) {
+        int nxt = uf_parent[cur]
+        uf_parent[cur] = r
+        cur = nxt
+    }
+    return r
+}
+
+// 元素 x 所在集合的秩; 非法元素返回 -1
+function uf_rank(int x) -> int {
+    int r = uf_find(x)
+    if (r < 0) { return -1 }
+    return uf_rank_arr[r]
+}
+
+// 元素 x 所在集合的大小; 非法元素返回 0
+function uf_size(int x) -> int {
+    int r = uf_find(x)
+    if (r < 0) { return 0 }
+    return uf_sz[r]
+}
+
+// a 与 b 是否在同一集合; 任一非法返回 0
+function uf_connected(int a, int b) -> int {
+    int ra = uf_find(a)
+    int rb = uf_find(b)
+    if (ra < 0 || rb < 0) { return 0 }
+    if (ra == rb) { return 1 }
+    return 0
+}
+
+// ---------------- 合并 ----------------
+
+// 合并 a 与 b; 真正发生合并返回 1, 已同集合返回 0, 任一非法返回 0
+function uf_union(int a, int b) -> int {
+    int ra = uf_find(a)
+    int rb = uf_find(b)
+    if (ra < 0 || rb < 0) { return 0 }
+    if (ra == rb) { return 0 }
+    if (uf_rank_arr[ra] < uf_rank_arr[rb]) {
+        int t = ra
+        ra = rb
+        rb = t
+    }
+    uf_parent[rb] = ra
+    uf_sz[ra] = uf_sz[ra] + uf_sz[rb]
+    if (uf_rank_arr[ra] == uf_rank_arr[rb]) {
+        uf_rank_arr[ra] = uf_rank_arr[ra] + 1
+    }
+    uf_comps = uf_comps - 1
+    return 1
+}
