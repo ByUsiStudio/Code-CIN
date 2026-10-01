@@ -2390,6 +2390,138 @@ class CodeGen:
             self._struct_literal_stores(elem[1], leaves,
                                         self._flatten_literal(row))
 
+    # ---------------- struct 值拷贝 (值语义) ----------------
+    #
+    # docs/language/structs.md 承诺「整体赋值 P b = a | 值拷贝 (逐槽复制), 之后
+    # 互不影响」。修复前槽里存的只是对象指针, 所以 `P b = a` / `b = a` /
+    # `ps[1] = ps[0]` 全都是**指针别名**: `b.x = 7` 会改到 `a.x` (解释器与原生
+    # VM 一致地错, 不是差分)。下面两个辅助方法把"指针槽传递"变成"对象逐槽复制"。
+    #
+    # 注意: 传参 / 数组参数元素刻意保持**引用可见** (文档 154/161 行), 因此
+    # `_gen_call` 与函数序言都不做拷贝。
+
+    def _gen_struct_obj_addr(self, target, tt) -> None:
+        """求 struct 左值所指向的**对象地址**到 x0 (不是槽地址)。
+
+        左值形态与 `_gen_lvalue_addr` 返回的东西并不一致, 这里逐一区分:
+          * `v`            -> 槽地址, 槽里存对象指针  => 需要 LD
+          * `a[i]` (struct 数组元素) -> 槽地址, 槽里存对象指针 => 需要 LD
+          * `o.f` (嵌套 struct 字段) -> **字段地址**, 即对象本身 => 不能 LD
+          * `a[i][j]` (多维 struct 数组) -> 子数组地址, 元素槽存指针 => 需要 LD
+        """
+        kind = target[0]
+        if kind == 'member':
+            self._gen_member(target[1], target[2], lvalue=True)
+            ftype, _off = self._struct_field(self._expr_type(target[1]),
+                                             target[2])
+            if not _is_struct(ftype):
+                # 字段必须自身是 struct (不含数组退化) —— 否则下面的拷贝会
+                # 把"字段地址"当对象用, 静默写坏父对象。
+                raise CompilerError(
+                    f"Cannot copy-assign aggregate to field of type {ftype}")
+            return
+        if kind == 'var':
+            if target[1] in self.consts or target[1] in self.enums:
+                raise CompilerError(
+                    f"Cannot assign to {target[1]} (constants are read-only)")
+            self._addr_var(target[1])
+        elif kind == 'index':
+            base_t = self._expr_type(target[1])
+            if _is_fixed_array(base_t):
+                elem = _array_elem(base_t)
+                if _is_fixed_array(elem):
+                    # 子数组 (多维): 槽地址, 槽里存元素对象指针
+                    self._gen_index(target[1], target[2], lvalue=True)
+                elif _is_struct(elem):
+                    self._gen_index(target[1], target[2], lvalue=True)
+                else:
+                    raise CompilerError(
+                        f"Cannot copy-assign into element of type {elem}")
+            elif _is_ptr_array(base_t) and _is_struct(_array_elem(base_t)):
+                # 动态/参数 struct 数组: x0 = 元素槽地址
+                self._gen_index(target[1], target[2], lvalue=True)
+            else:
+                raise CompilerError(
+                    f"Cannot copy-assign into element of array type {base_t}")
+        else:
+            raise CompilerError(f"Invalid assignment target: {kind}")
+        self.emit('LD', self.reg(0), ('mem', 0, 0))     # x0 = 对象地址
+
+    def _struct_copy(self, src_reg: int, dst_reg: int, nslots: int) -> None:
+        """把 x<src_reg> 指向对象的 nslots 个槽复制到 x<dst_reg> 指向的对象。
+
+        值语义的核心原语。只用 x5/x6/x7/x8 与 x9 作为临时寄存器, 且**每一轮都
+        从基址重新 ADDI**, 因此没有跨迭代存活的状态 (不会被后续求值覆盖)。
+        内存操作数统一写成 ('mem', reg, 0) 形式 (先 ADDI 推到 k*8), 不依赖
+        汇编器对 ('mem', reg, imm) 偏移的处理。
+        """
+        if nslots <= 0:
+            return
+        if nslots == 1:
+            self.emit('LD', self.reg(9), ('mem', src_reg, 0))
+            self.emit('SD', self.reg(9), ('mem', dst_reg, 0))
+            return
+        self.emit('MOV', self.reg(8), self.imm(nslots * 8))  # x8 = 总字节数
+        self.emit('MOV', self.reg(7), self.imm(0))           # x7 = 字节游标
+        l_loop = self.new_label('scpy')
+        l_end = self.new_label('scpye')
+        self.label(l_loop)
+        self.emit('CMP', self.reg(7), self.reg(8))
+        self.emit('B', self.lab(l_end), ('cond', 'GE'))
+        self.emit('MOV', self.reg(5), self.reg(dst_reg))
+        self.emit('MOV', self.reg(6), self.reg(src_reg))
+        self.emit('ADD', self.reg(5), self.reg(7))           # x5 = dst + off
+        self.emit('ADD', self.reg(6), self.reg(7))           # x6 = src + off
+        self.emit('LD', self.reg(9), ('mem', 5, 0))
+        self.emit('SD', self.reg(9), ('mem', 6, 0))
+        self.emit('ADDI', self.reg(7), self.reg(7), self.imm(8))
+        self.emit('JMP', self.lab(l_loop))
+        self.label(l_end)
+
+    def _struct_assign_copy(self, src_reg: int, nslots: int) -> None:
+        """目标对象地址 = **栈顶**; 源指针 = x<src_reg>。逐槽复制到目标对象。
+
+        目标地址只在 `_gen_lvalue_addr` 之后才可知 (被赋值对象可能是 temp[i],
+        其下标表达式会覆盖 x1..x6), 所以用栈把"基址 + 字节游标"从 x<src_reg>
+        的求值阶段带到复制阶段 —— 与现有代码用 PUSH/POP 跨求值的做法一致。
+        """
+        if nslots <= 0:
+            raise CompilerError(
+                'internal error: struct value copy of an empty struct')
+        self.emit('ADDI', self.reg(5), self.reg(32), self.imm(8))   # x5 = &src
+        self.emit('MOV', self.reg(6), self.reg(src_reg))            # x6 = src
+        self.emit('MOV', self.reg(7), self.imm(0))                  # x7 = 游标
+        self.emit('MOV', self.reg(8), self.imm(nslots * 8))         # x8 = 结束
+        l_loop = self.new_label('scpya')
+        l_next = self.new_label('scpyn')
+        l_end = self.new_label('scpyae')
+        self.label(l_loop)
+        self.emit('CMP', self.reg(7), self.reg(8))
+        self.emit('B', self.lab(l_end), ('cond', 'GE'))
+        self.emit('LD', self.reg(0), ('mem', 5, 0))                 # x0 = 目标对象
+        self.emit('ADD', self.reg(0), self.reg(7))                  # + 偏移
+        self.emit('MOV', self.reg(1), self.reg(6))
+        self.emit('ADD', self.reg(1), self.reg(7))                  # 源 + 偏移
+        self.emit('LD', self.reg(9), ('mem', 1, 0))
+        self.emit('SD', self.reg(9), ('mem', 0, 0))
+        self.emit('ADDI', self.reg(7), self.reg(7), self.imm(8))
+        self.emit('JMP', self.lab(l_loop))
+        self.label(l_end)
+        self.emit('ADDI', self.reg(32), self.reg(32), self.imm(8))  # 弹目标地址槽
+        self.emit('MOV', self.reg(0), self.reg(6))                  # 赋值表达式的值
+
+    def _struct_assign(self, target, stype) -> None:
+        """struct 整体赋值 / 声明即初始化的值拷贝公共路径。
+
+        调用约定: 进入时 x0 = 源对象指针; 返回后 x0 = 该指针 (与原来 `SD` 存
+        指针后 x0 仍持值的约定一致), 但 `target` 对象已被逐槽覆盖。
+        """
+        nslots = self.structs[stype[1]].size_slots
+        self.emit('PUSH', self.reg(0))              # [SP] = 源对象指针
+        self._gen_struct_obj_addr(target, stype)    # x0 = 目标对象地址
+        self.emit('PUSH', self.reg(0))              # [SP] = 目标对象地址
+        self._struct_assign_copy(7, nslots)
+
     def gen_decl(self, decls) -> None:
         for name, t, init, array_lit in decls:
             if array_lit is not None:
@@ -2405,12 +2537,23 @@ class CodeGen:
                     self.gen_init_1d_literal(name, t, array_lit)
                 continue
             if init is not None:
-                vt = self.gen_value(init)
-                self._convert(vt, t)
-                # x0 = value; 存到变量槽
-                self.emit('MOV', self.reg(2), self.reg(0))
-                self._addr_var(name)
-                self.emit('SD', self.reg(2), ('mem', 0, 0))
+                if _is_struct(t):
+                    # `P b = a`: b 的对象已在序言里分配好, 这里必须**复制 a 的
+                    # 字段**, 不能把 a 的指针写进 b 的槽 (那是别名, 违背文档的
+                    # 整体赋值值拷贝承诺)。b 的对象指针要重新 LD 出来。
+                    vt = self.gen_value(init)       # x0 = 源对象指针
+                    if not _is_struct(vt):
+                        raise CompilerError(
+                            f"Cannot initialize struct {name} from value of "
+                            f"type {vt}")
+                    self._struct_assign(('var', name), init, t)
+                else:
+                    vt = self.gen_value(init)
+                    self._convert(vt, t)
+                    # x0 = value; 存到变量槽
+                    self.emit('MOV', self.reg(2), self.reg(0))
+                    self._addr_var(name)
+                    self.emit('SD', self.reg(2), ('mem', 0, 0))
             elif _is_ptr_array(t) and _is_ptr_array(_array_elem(t)):
                 # int[][] result (无尺寸): 预分配 64 个行指针
                 self.emit('MOV', self.reg(0), self.imm(64 * 8))
