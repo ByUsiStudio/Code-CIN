@@ -57,7 +57,7 @@ aotout/
 /qrec_mvp.*
 
 # ====================== Debug ======================
-/.dsh_probe.tmp
+/.dsh_*.tmp
 /t_*.py
 /.trae/
 
