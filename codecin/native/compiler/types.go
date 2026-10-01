@@ -215,4 +215,3 @@ func newCompiler(filename string, bounds bool) *compiler {
 		globalsSym: map[string]globalVar{},
 	}
 }
-
