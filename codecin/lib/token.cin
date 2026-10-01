@@ -1,0 +1,183 @@
+// Code CIN 官方标准库: 切分与分词 (token)
+// 用法: import "token.cin"
+//
+// CIN 没有字符串数组类型, 所以本库不返回数组, 而是提供"按序号取第 n 个 token"
+// 的 API: tok_count / tok_get / tok_len / tok_find / tok_first / tok_last,
+// 外加按空白切分的便捷封装 tok_word_count / tok_word_get (因为没有字符串数组,
+// 本库不提供 join)。纯 CIN 实现, 只用非宿主内建 (strlen / substr / strcmp),
+// --no-native 下同样可用。
+//
+// 切分语义 (与 Go strings.Split 一致):
+//   * delim 按**整串**匹配 (多字符分隔符算一个整体), 不是"字符集合";
+//   * **保留空 token**: 连续分隔符之间、串首/串尾分隔符旁边都产生空 token,
+//     例如 tok_count("a,,b", ",") == 3、tok_count(",a,", ",") == 3;
+//   * 空串切分后是 1 个空 token (tok_count("", ",") == 1);
+//   * delim 为空串时整个 s 是唯一 token (tok_count(s, "") == 1), 越界序号返回 "";
+//   * tok_word_* 走另一套约定: 连续空白算一个分隔符, 忽略首尾空白, 不产生空词。
+//
+// 字节语义: 下标、长度都是**字节**偏移 (与 strlen / substr / s[i] 一致), 非 ASCII
+// 一律按 UTF-8 字节序列处理, 不做码点解码; delim 请用完整字符, 否则可能把多字节
+// 字符切开。tok_get / tok_first / tok_last / tok_find 会为返回值分配新堆块,
+// tok_count / tok_len 不分配。
+
+// ---------------- 内部辅助函数 (非公开 API, 统一 tok_ 前缀) ----------------
+
+// delim 是否正好从 s 的 at 处开始 (逐字节比较, 不分配堆块)
+function tok_match_at(string s, string delim, int at) -> int {
+    if (at < 0) { return 0 }
+    int n = strlen(s)
+    int dl = strlen(delim)
+    if (at + dl > n) { return 0 }
+    int i = 0
+    while (i < dl) {
+        if (s[at + i] != delim[i]) { return 0 }
+        i = i + 1
+    }
+    return 1
+}
+
+// 是否空白: 空格 / \t / \n / \r
+function tok_is_space_byte(int c) -> int {
+    if (c == ' ' || c == '\t' || c == '\n' || c == '\r') { return 1 }
+    return 0
+}
+
+// ---------------- 公开 API ----------------
+
+// token 个数 (保留空 token); delim 为空串时固定为 1
+function tok_count(string s, string delim) -> int {
+    int n = strlen(s)
+    int dl = strlen(delim)
+    if (dl == 0) { return 1 }
+    int count = 1
+    int i = 0
+    while (i < n) {
+        if (tok_match_at(s, delim, i) == 1) {
+            count = count + 1
+            i = i + dl
+        } else {
+            i = i + 1
+        }
+    }
+    return count
+}
+
+// 第 idx 个 token 的内容 (新堆块); idx 越界或为负返回空串。
+// delim 为空串时只有 idx == 0 有效, 返回整个 s。
+function tok_get(string s, string delim, int idx) -> string {
+    int n = strlen(s)
+    int dl = strlen(delim)
+    if (idx < 0) { return "" }
+    if (dl == 0) {
+        if (idx == 0) { return s }
+        return ""
+    }
+    int cur = 0
+    int start = 0
+    int i = 0
+    while (i < n) {
+        if (tok_match_at(s, delim, i) == 1) {
+            if (cur == idx) { return substr(s, start, i - start) }
+            cur = cur + 1
+            i = i + dl
+            start = i
+        } else {
+            i = i + 1
+        }
+    }
+    if (cur == idx) { return substr(s, start, n - start) }
+    return ""
+}
+
+// 第 idx 个 token 的字节长度; idx 越界或为负返回 -1 (不分配堆块)。
+// delim 为空串时只有 idx == 0 有效, 返回 strlen(s)。
+function tok_len(string s, string delim, int idx) -> int {
+    int n = strlen(s)
+    int dl = strlen(delim)
+    if (idx < 0) { return -1 }
+    if (dl == 0) {
+        if (idx == 0) { return n }
+        return -1
+    }
+    int cur = 0
+    int start = 0
+    int i = 0
+    while (i < n) {
+        if (tok_match_at(s, delim, i) == 1) {
+            if (cur == idx) { return i - start }
+            cur = cur + 1
+            i = i + dl
+            start = i
+        } else {
+            i = i + 1
+        }
+    }
+    if (cur == idx) { return n - start }
+    return -1
+}
+
+// 第一个内容与 t 逐字节相同 (区分大小写) 的 token 序号; 未找到 -1。
+// 空 token 可以被 t = "" 命中。
+function tok_find(string s, string delim, string t) -> int {
+    int total = tok_count(s, delim)
+    int k = 0
+    while (k < total) {
+        if (strcmp(tok_get(s, delim, k), t) == 0) { return k }
+        k = k + 1
+    }
+    return -1
+}
+
+// 第一个 token; 与 tok_get(s, delim, 0) 等价 (空串 / delim 为空串都返回整个 s)
+function tok_first(string s, string delim) -> string {
+    return tok_get(s, delim, 0)
+}
+
+// 最后一个 token; tok_count(s, delim) 为 0 的情况不存在, 因此总有一个 token
+function tok_last(string s, string delim) -> string {
+    return tok_get(s, delim, tok_count(s, delim) - 1)
+}
+
+// 空白分隔的单词个数; 连续空白算一个, 忽略首尾, 全空白为 0。
+// 空白 = 空格 / \t / \n / \r。
+function tok_word_count(string s) -> int {
+    int n = strlen(s)
+    int count = 0
+    int in_word = 0
+    int i = 0
+    while (i < n) {
+        if (tok_is_space_byte(s[i]) == 1) {
+            in_word = 0
+        } else {
+            if (in_word == 0) {
+                count = count + 1
+                in_word = 1
+            }
+        }
+        i = i + 1
+    }
+    return count
+}
+
+// 第 idx 个空白分隔单词 (新堆块); idx 越界或为负返回空串
+function tok_word_get(string s, int idx) -> string {
+    int n = strlen(s)
+    if (idx < 0) { return "" }
+    int cur = 0
+    int i = 0
+    while (i < n) {
+        while (i < n) {
+            if (tok_is_space_byte(s[i]) == 0) { break }
+            i = i + 1
+        }
+        if (i >= n) { break }
+        int start = i
+        while (i < n) {
+            if (tok_is_space_byte(s[i]) == 1) { break }
+            i = i + 1
+        }
+        if (cur == idx) { return substr(s, start, i - start) }
+        cur = cur + 1
+    }
+    return ""
+}
