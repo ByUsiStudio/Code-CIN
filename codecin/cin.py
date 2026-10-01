@@ -1455,6 +1455,8 @@ class CodeGen:
         self.label_counter = 0
 
         self.globals: Dict[str, Tuple[Any, int, bool]] = {}  # name -> (type, addr, is_block)
+        #: 全局 struct 变量的堆对象地址 (单 struct 一个, struct 数组每元素一个)
+        self.struct_blocks: Dict[str, List[int]] = {}
 
     # ---------------- 发射辅助 ----------------
 
@@ -1512,6 +1514,9 @@ class CodeGen:
                 addr = self._alloc_data(_type_slots(t) * 8)
                 self.globals[gv.name] = (t, addr, True)
                 gv.addr = addr
+                if self._contains_struct(t[1]):
+                    # 定长 struct 数组: 每个元素槽存一个堆对象指针
+                    self._layout_struct_array(t, addr, gv.name)
             else:
                 addr = self._alloc_data(8)
                 self.globals[gv.name] = (t, addr, False)
@@ -1519,8 +1524,25 @@ class CodeGen:
                 if _is_struct(t):
                     sd = self.structs[t[1]]
                     block = self._alloc_data(sd.size_slots * 8)
+                    self.struct_blocks[gv.name] = [block]
                     self.res.data_writes.append(
                         (addr, struct.pack('<Q', block)))
+
+    def _layout_struct_array(self, t, addr: int, name: str) -> None:
+        """为全局定长 struct 数组的每个元素分配堆对象并写入指针槽。"""
+        elem = t[1]
+        if not _is_struct(elem):
+            raise CompilerError(
+                f'multi-dimensional struct array {name} is not supported; '
+                f'flatten to a one-dimensional array')
+        sd = self.structs[elem[1]]
+        blocks: List[int] = []
+        for i in range(t[2]):
+            block = self._alloc_data(max(sd.size_slots, 1) * 8)
+            blocks.append(block)
+            self.res.data_writes.append(
+                (addr + i * 8, struct.pack('<Q', block)))
+        self.struct_blocks[name] = blocks
 
     # ---------------- 初始化数据 ----------------
 
@@ -1563,6 +1585,47 @@ class CodeGen:
         raw &= 0xFFFFFFFFFFFFFFFF
         return raw - (1 << 64) if raw >= (1 << 63) else raw
 
+    @staticmethod
+    def _decode_const(ctype: str, raw: int):
+        if ctype == 'float':
+            return struct.unpack('<d', struct.pack('<Q', raw))[0]
+        if ctype == 'bool':
+            return bool(raw)
+        if ctype == 'string':
+            return int(raw) & 0xFFFFFFFFFFFFFFFF
+        return raw if raw < (1 << 63) else raw - (1 << 64)
+
+    def _coerce_const(self, ftype: str, ctype: str, raw: int) -> int:
+        """把编译期常量按字段类型重新编码 (float→int 向零截断等)。"""
+        if ftype == 'string':
+            if ctype != 'string':
+                raise CompilerError(
+                    'struct initializer for a string field must be a string')
+            return int(raw) & 0xFFFFFFFFFFFFFFFF
+        if ctype == 'string':
+            raise CompilerError(
+                f'struct initializer for a {ftype} field must be numeric')
+        value = self._decode_const(ctype, raw)
+        if ftype == 'float':
+            return struct.unpack('<Q', struct.pack('<d', float(value)))[0]
+        if ftype == 'bool':
+            return 1 if value else 0
+        return int(value) & 0xFFFFFFFFFFFFFFFF
+
+    def _emit_struct_const_init(self, block: int, sname: str, leaves,
+                                items) -> None:
+        """把全局 struct 的常量初始化器写进它的堆对象 (布局期已定址)。"""
+        if len(items) > len(leaves):
+            raise CompilerError(
+                f'Too many initializers for struct {sname}: got {len(items)}, '
+                f'expected at most {len(leaves)}')
+        for idx, elem in enumerate(items):
+            off, ftype = leaves[idx]
+            ctype, raw = self._const_value(elem)
+            self.res.data_writes.append(
+                (block + off * 8, struct.pack('<Q',
+                                              self._coerce_const(ftype, ctype, raw))))
+
     def emit_globals_init(self, globals_: List[GlobalVar]) -> None:
         for gv in globals_:
             t, addr, is_block = self.globals[gv.name]
@@ -1570,6 +1633,28 @@ class CodeGen:
                 ctype, raw = self._const_value(gv.init)
                 self.res.data_writes.append((addr, struct.pack('<Q', raw)))
             elif gv.array_lit is not None:
+                if _is_struct(t):
+                    self._emit_struct_const_init(
+                        self.struct_blocks[gv.name][0], t[1],
+                        self._struct_leaf_slots(t),
+                        self._flatten_literal(gv.array_lit))
+                    continue
+                if _is_fixed_array(t) and _is_struct(t[1]):
+                    elem = t[1]
+                    leaves = self._struct_leaf_slots(elem)
+                    rows = gv.array_lit if (gv.array_lit
+                                            and isinstance(gv.array_lit[0], list)) \
+                        else [gv.array_lit]
+                    blocks = self.struct_blocks.get(gv.name, [])
+                    if len(rows) > len(blocks):
+                        raise CompilerError(
+                            f'Too many initializers for struct array {gv.name}: '
+                            f'got {len(rows)}, expected at most {len(blocks)}')
+                    for i, row in enumerate(rows):
+                        self._emit_struct_const_init(
+                            blocks[i], elem[1], leaves,
+                            self._flatten_literal(row))
+                    continue
                 rows = gv.array_lit
                 if rows and isinstance(rows[0], list):
                     # 2D 字面量: 仅 ptrarray 有意义 (int[][] mat1 = ...)
@@ -1680,15 +1765,14 @@ class CodeGen:
             self.emit('ADDI', self.reg(0), self.reg(32), self.imm(-self.frame_bytes))
             self.emit('MOV', self.reg(32), self.reg(0))
 
-        # struct 局部变量: 堆分配对象
+        # struct 局部变量: 堆分配对象 (槽里存对象指针, 与全局 struct 同一模型)
         for _name, (t, loff, _is_block) in list(self.locals.items()):
-            if _is_struct(t) and loff < 0:
-                sd = self.structs[t[1]]
-                self.emit('MOV', self.reg(0), self.imm(sd.size_slots * 8))
-                self.emit('SYS', self.imm(Syscall.MALLOC))
-                self.emit('MOV', self.reg(2), self.reg(0))  # 对象指针
-                self._addr_local(loff)                       # x0 = &slot
-                self.emit('SD', self.reg(2), ('mem', 0, 0))
+            if loff >= 0:                 # 参数槽不拥有对象
+                continue
+            if _is_struct(t):
+                self._alloc_struct_slot(t, loff)
+            elif _is_fixed_array(t) and self._contains_struct(t[1]):
+                self._alloc_struct_array_slots(t, loff)
 
         self.gen_stmts(f.body)
 
@@ -1974,9 +2058,132 @@ class CodeGen:
         self.break_labels.pop()
         self.emit('ADDI', self.reg(32), self.reg(32), self.imm(8))  # 丢 selector
 
+    # ---------------- struct 存储模型 ----------------
+    #
+    # struct 值在槽里恒为"堆对象指针"(局部与全局一致); 定长 struct 数组的
+    # 每个元素槽同样存指针。此前数组元素被当作"值内嵌", 而成员访问又会把元素槽
+    # 当指针解引用, 于是 `ps[0].y = 1` 实际写到绝对地址 8, 静默破坏数据段。
+
+    def _contains_struct(self, t) -> bool:
+        """类型内部是否含 struct (数组元素递归)。"""
+        if _is_struct(t):
+            return True
+        if _is_fixed_array(t):
+            return self._contains_struct(t[1])
+        return False
+
+    def _alloc_struct_slot(self, t, loff: int) -> None:
+        """为 struct 槽分配堆对象、清零, 并把对象指针写入槽。
+
+        文档承诺 struct 字段默认为类型默认值, 但 MALLOC 并不清零
+        (Python 与 Go 侧一致), 所以这里显式清零, 不再依赖"堆恰好是新的"。
+        """
+        sd = self.structs[t[1]]
+        self.emit('MOV', self.reg(0), self.imm(sd.size_slots * 8))
+        self.emit('SYS', self.imm(Syscall.MALLOC))
+        self.emit('MOV', self.reg(3), self.reg(0))       # x3 = 对象基址
+        if sd.size_slots:
+            self.emit('MOV', self.reg(1), self.imm(0))   # x1 = 0
+            self.emit('MOV', self.reg(2), self.reg(0))   # x2 = 清零游标
+            for k in range(sd.size_slots):
+                if k:
+                    self.emit('ADDI', self.reg(2), self.reg(2), self.imm(8))
+                self.emit('SD', self.reg(1), ('mem', 2, 0))
+        self._addr_local(loff)                           # x0 = &槽
+        self.emit('SD', self.reg(3), ('mem', 0, 0))
+
+    def _alloc_struct_array_slots(self, t, loff: int) -> None:
+        """定长 struct 数组: 每个元素一个堆对象, 元素槽存指针。"""
+        elem = t[1]
+        if not _is_struct(elem):
+            raise CompilerError(
+                'multi-dimensional struct arrays are not supported; '
+                'flatten to a one-dimensional array')
+        for i in range(t[2]):
+            self._alloc_struct_slot(elem, loff + i * 8)
+
+    def _struct_leaf_slots(self, t, base: int = 0) -> List[Tuple[int, Any]]:
+        """把 struct 摊平成 (槽偏移, 标量类型) 列表 (声明顺序, 递归嵌套数组)。"""
+        sd = self.structs[t[1]]
+        out: List[Tuple[int, Any]] = []
+        for fname, ftype in sd.fields:
+            foff = base + sd.offsets[fname]
+            if _is_struct(ftype):
+                out.extend(self._struct_leaf_slots(ftype, foff))
+            elif _is_fixed_array(ftype):
+                if _is_struct(ftype[1]):
+                    raise CompilerError(
+                        f'struct array field {t[1]}.{fname} cannot be aggregate-'
+                        f'initialized; assign it in a function instead')
+                for k in range(ftype[2]):
+                    out.append((foff + k, ftype[1]))
+            else:
+                out.append((foff, ftype))
+        return out
+
+    @staticmethod
+    def _flatten_literal(lit: list) -> list:
+        """把 {{1, 2}, 3} 这类嵌套花括号初始化器摊平成一维。"""
+        out: list = []
+        for item in lit:
+            if isinstance(item, list):
+                out.extend(CodeGen._flatten_literal(item))
+            else:
+                out.append(item)
+        return out
+
+    def _struct_literal_stores(self, sname: str, leaves, items) -> None:
+        """x0 = 对象基址; 按 leaves 顺序把 items 写入字段 (值语义初始化)。"""
+        if len(items) > len(leaves):
+            raise CompilerError(
+                f'Too many initializers for struct {sname}: got {len(items)}, '
+                f'expected at most {len(leaves)}')
+        self.emit('PUSH', self.reg(0))              # [SP] = 对象基址
+        for idx, item in enumerate(items):
+            off, ftype = leaves[idx]
+            vt = self.gen_value(item)
+            self._convert(vt, ftype)
+            self.emit('MOV', self.reg(4), self.reg(0))      # x4 = 值
+            self.emit('LD', self.reg(1), ('mem', 32, 0))    # x1 = 对象基址
+            if off:
+                self.emit('ADDI', self.reg(1), self.reg(1), self.imm(off * 8))
+            self.emit('SD', self.reg(4), ('mem', 1, 0))
+        self.emit('ADDI', self.reg(32), self.reg(32), self.imm(8))  # 弹掉基址
+
+    def gen_init_struct_literal(self, name: str, t, lit: list) -> None:
+        """`P p = {3, 4}` —— 写进堆对象, 而不是覆盖指针槽 (旧实现会写坏 FP)。"""
+        leaves = self._struct_leaf_slots(t)
+        items = self._flatten_literal(lit)
+        self._addr_var(name)
+        self.emit('LD', self.reg(0), ('mem', 0, 0))         # x0 = 对象指针
+        self._struct_literal_stores(t[1], leaves, items)
+
+    def gen_init_struct_array_literal(self, name: str, t, lit: list) -> None:
+        """`P ps[2] = {{1, 2}, {3, 4}}` —— 逐元素写进各自的堆对象。"""
+        elem, n = t[1], t[2]
+        leaves = self._struct_leaf_slots(elem)
+        rows = lit if (lit and isinstance(lit[0], list)) else [lit]
+        if len(rows) > n:
+            raise CompilerError(
+                f'Too many initializers for struct array {name}: '
+                f'got {len(rows)}, expected at most {n}')
+        for i, row in enumerate(rows):
+            self._addr_var(name)                            # x0 = 块基址
+            if i:
+                self.emit('ADDI', self.reg(0), self.reg(0), self.imm(i * 8))
+            self.emit('LD', self.reg(0), ('mem', 0, 0))     # x0 = 元素对象指针
+            self._struct_literal_stores(elem[1], leaves,
+                                        self._flatten_literal(row))
+
     def gen_decl(self, decls) -> None:
         for name, t, init, array_lit in decls:
             if array_lit is not None:
+                if _is_struct(t):
+                    self.gen_init_struct_literal(name, t, array_lit)
+                    continue
+                if _is_fixed_array(t) and _is_struct(t[1]):
+                    self.gen_init_struct_array_literal(name, t, array_lit)
+                    continue
                 if array_lit and isinstance(array_lit[0], list):
                     self.gen_init_2d_literal(name, t, array_lit)
                 else:

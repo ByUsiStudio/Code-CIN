@@ -9,17 +9,39 @@
 `codecin/native/aot` 共用同一份文件 (``stub_main.go.txt``), 避免两处漂移。
 临时包建在 `codecin-native` 模块内的 ``.aotbuild-*`` 目录: Go 工具链会忽略
 以 '.' 开头的目录, 因此既不影响 `go build ./...`, 也不需要 replace 指令。
+
+临时目录的生命周期 (加固, 见 docs/SUGGESTIONS_NEXT.md §3.3):
+  * 每次 :func:`build` 之前先调用 :func:`sweep_stale_build_dirs` 清理**陈旧**残留,
+    避免受限环境 (沙箱 / 只读 ACL) 下删不掉的目录无限累积;
+  * ``finally`` 里的 ``rmtree`` 失败**不再静默**: 有 logger 就 ``warning``,
+    没有 logger 时退回模块级 stdlib logger (``codecin.aot``), 绝不吞掉;
+  * 只清理 ``codecin/native/`` **本目录下**、名字带 ``.aotbuild-`` /
+    ``.aotprobe-`` 前缀、且**不是符号链接**的目录, 绝不递归删除别处。
 """
 
+import logging
 import os
 import platform
 import secrets
 import shutil
 import subprocess
-from typing import List, Optional
+import time
+from typing import List, NamedTuple, Optional, Tuple
 
 #: 仓库内 codecin-native 模块目录 (含 go.mod)。
 _NATIVE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'native')
+
+#: 模块级 logger: 调用方没有传 logger 时的兜底 (绝不能因为"没人接"就静默)。
+#: 它是 ``codecin`` logger 的子 logger, 因此 CLI 构造的 Logger (RichHandler) 会
+#: 照常渲染它; 完全没配置 logging 时 stdlib 的 lastResort 也会打到 stderr。
+_LOGGER = logging.getLogger(__name__)
+
+#: AOT 临时目录名前缀 (``.aotprobe-`` 是历史遗留, 一并纳入守卫)。
+TEMP_DIR_PREFIXES = ('.aotbuild-', '.aotprobe-')
+
+#: 陈旧残留的默认容忍时长 (6 小时): 远大于任何一次 go build, 因此不会误删
+#: 并发构建中的临时目录。
+DEFAULT_STALE_AGE_SECONDS = 6 * 3600
 
 #: 生成的 main.go 模板 (与 Go 侧共用)。
 STUB_PATH = os.path.join(_NATIVE_DIR, 'aot', 'stub_main.go.txt')
