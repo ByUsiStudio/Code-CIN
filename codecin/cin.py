@@ -3364,6 +3364,25 @@ class CodeGen:
         self.emit('SYS', self.imm(sys_id))
 
     def _gen_call(self, name: str, args: list):
+        # 用户自定义函数**优先于同名内建** (含宿主能力内建)。
+        # 此前内建先分派, 结果: 用户定义的 `path_join` / `file_read` / `abs` …
+        # 永远不会被调用 —— --no-native 下报 "host builtins … require the native
+        # Go runtime", 原生路径下静默走宿主实现, 于是同一程序两条路径结论不同。
+        fdef = self.functions.get(name)
+        if fdef is not None:
+            for k, arg in enumerate(args):
+                at = self.gen_value(arg)
+                ptype = fdef.params[k][1] if k < len(fdef.params) else None
+                self._convert(at, self._param_promote(ptype))
+                self.emit('PUSH', self.reg(0))
+            self.emit('CALL', self.lab(name))
+            # 调用方清理参数 (不得使用 x0, 它持有返回值)
+            nargs = len(args)
+            if nargs:
+                self.emit('ADDI', self.reg(6), self.reg(32), self.imm(nargs * 8))
+                self.emit('MOV', self.reg(32), self.reg(6))
+            return fdef.ret_type
+
         min_args = BUILTIN_MIN_ARGS.get(name)
         if min_args is not None and len(args) < min_args:
             raise CompilerError(
@@ -3523,22 +3542,8 @@ class CodeGen:
             self.emit('IN', self.reg(0))
             return 'int'
 
-        # 用户函数
-        fdef = self.functions.get(name)
-        if fdef is None:
-            raise CompilerError(f"Unknown function: {name}")
-        for k, arg in enumerate(args):
-            at = self.gen_value(arg)
-            ptype = fdef.params[k][1] if k < len(fdef.params) else None
-            self._convert(at, self._param_promote(ptype))
-            self.emit('PUSH', self.reg(0))
-        self.emit('CALL', self.lab(name))
-        # 调用方清理参数 (不得使用 x0, 它持有返回值)
-        nargs = len(args)
-        if nargs:
-            self.emit('ADDI', self.reg(6), self.reg(32), self.imm(nargs * 8))
-            self.emit('MOV', self.reg(32), self.reg(6))
-        return fdef.ret_type
+        # 用户函数 (已在 _gen_call 开头优先分派; 走到这里说明名字未知)
+        raise CompilerError(f"Unknown function: {name}")
 
     @staticmethod
     def _param_promote(ptype):

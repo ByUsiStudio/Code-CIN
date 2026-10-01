@@ -325,3 +325,53 @@ def test_string_byte_semantics_match_across_paths(name, src, expected, use_nativ
 def test_string_byte_semantics_jit(name, src, expected):
     assert run_cin_source(src, use_native=False,
                           enable_jit=True).regs.read(0) == expected
+
+
+# --------------------------------------------------------------------------
+# 用户函数优先于同名内建 (R3-14)
+#
+# 修复前 _gen_call 先分派内建/宿主内建、最后才查用户函数, 于是同名用户函数
+# 永远不会被调用: --no-native 报 "host builtins ... require the native Go
+# runtime", 原生路径静默走宿主实现 —— 同一程序两条路径结论不同。
+# --------------------------------------------------------------------------
+
+SHADOW_CASES = [
+    # 宿主能力内建同名
+    ('shadow_host_path_join',
+     'function path_join(string a, string b) -> string { return a + "|" + b }\n'
+     'function main() -> int {\n'
+     '    if (strcmp(path_join("a", "b"), "a|b") == 0) { return 1 }\n'
+     '    return 0 }', 1),
+    ('shadow_host_file_read',
+     'function file_read(string p) -> string { return "user" }\n'
+     'function main() -> int {\n'
+     '    if (strcmp(file_read("x"), "user") == 0) { return 1 }\n'
+     '    return 0 }', 1),
+    # 普通内建同名
+    ('shadow_abs',
+     'function abs(int v) -> int { return 42 }\n'
+     'function main() -> int { return abs(-7) }', 42),
+    ('shadow_strlen',
+     'function strlen(string s) -> int { return 99 }\n'
+     'function main() -> int { return strlen("abc") }', 99),
+    ('shadow_atoi',
+     'function atoi(string s) -> int { return 7 }\n'
+     'function main() -> int { return atoi("123") }', 7),
+    # 控制组: 没有同名用户函数时内建仍然生效
+    ('builtin_still_works',
+     'function main() -> int { if (strlen("abcd") == 4) { return 1 } return 0 }', 1),
+]
+
+
+@pytest.mark.parametrize('name,src,expected', SHADOW_CASES,
+                         ids=[c[0] for c in SHADOW_CASES])
+@pytest.mark.parametrize('use_native', PATHS, ids=PATH_IDS)
+def test_user_function_shadows_builtin(name, src, expected, use_native):
+    assert run_cin_source(src, use_native=use_native).regs.read(0) == expected
+
+
+@pytest.mark.parametrize('name,src,expected', SHADOW_CASES,
+                         ids=[c[0] for c in SHADOW_CASES])
+def test_user_function_shadows_builtin_jit(name, src, expected):
+    assert run_cin_source(src, use_native=False,
+                          enable_jit=True).regs.read(0) == expected

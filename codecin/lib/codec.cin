@@ -6,15 +6,21 @@
 // --no-native 的纯 Python 路径与 Go 原生路径下行为完全一致。
 //
 // 字节语义: strlen / substr / s[i] 全是**字节**语义, 本库沿用同一约定 ——
-// 所有编解码都按 UTF-8 字节序列逐个字节处理, 不做码点解码。
+// 所有编解码都按 UTF-8 字节序列逐个字节处理, 不做码点解码; 非 ASCII 输入
+// (含中文) 会被当成普通字节序列参与编码, 解码后原样还原。
 //
-// 堆与容量 (CIN 没有动态内存分配, 字符串拼接的堆块不回收):
-//   * 逐字符拼接会产生 O(n) 个堆块 (每个 1~2 字节), 总计约 O(n) 字节,
-//     与输出长度同阶; 但 txt_reverse / codec_reverse_bytes / codec_morse_decode
-//     这类"反向填表"操作需要逐字节前置, 代价为 O(n^2) 字节堆, 请只用于短串。
-//   * 内存默认 64 KiB (堆 0x8000 起向上, 栈自顶向下), 建议单次调用输入
-//     ≤ 2 KiB; 需要更长的串请用 --mem-size 扩容。
-//   * 本库不使用全局可变状态, 所有函数都是纯函数 (无重入问题)。
+// 堆与容量 (CIN 没有动态内存分配, 字符串拼接的堆块**只增不减**):
+//   * 一次 `a + b` 会新建 len(a)+len(b) 字节的堆块, 因此"结果 = 结果 + 小块"
+//     的逐段拼接总拷贝量是 O(n^2) 字节, 同时每个堆块还有约 16 字节固定开销。
+//   * 实测 (默认 64 KiB 内存, 堆自 0x8000 起向上增长, 栈自顶向下):
+//       - 十六进制编码约 134 字节堆/输入字节 (输出 2 字符, 约 67 字节/输出字符)
+//       - base64 编码约 61 字节堆/输入字节
+//       - 反转 / 异或约 16 字节堆/输入字节 (走内部定长缓冲, 近线性)
+//     一次调用不要指望处理上千字节: 推荐单次输入 ≤ 200 字节;
+//     更长的串请拆成多次调用, 或用 `--mem-size` 扩容后再用。
+//   * 十六进制 / URL / base64 的输出长度分别约为输入的 2 / 3 / 4/3 倍,
+//     仓库内的官方标准库不保证超出上述规模的输入。
+//   * 本库没有全局可变状态, 所有函数都是纯函数 (可重入, 多次调用互不影响)。
 
 // 局部重建缓冲容量 (字节); 供内部辅助函数使用, 不对外暴露语义
 const int codec_buf_cap = 256
@@ -22,16 +28,13 @@ const int codec_buf_cap = 256
 // 256 字节双向字母表: codec_bytes[i] == i (0..255),
 // 用于把任意字节值写回字符串 (CIN 字符串不可原地修改, 只能取单字节再拼接)。
 // 只含 ASCII 与 \xHH 转义, 因此源码本身是纯 ASCII, 不依赖文件编码。
-string codec_bytes = "\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0A\x0B\x0C\x0D\x0E\x0F\x10\x11\x12\x13\x14\x15\x16\x17\x18\x19\x1A\x1B\x1C\x1D\x1E\x1F" + " !\"#$%&'()*+,-./0123456789:;<=>?" + "@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_" + "`abcdefghijklmnopqrstuvwxyz{|}~\x7F" + "\x80\x81\x82\x83\x84\x85\x86\x87\x88\x89\x8A\x8B\x8C\x8D\x8E\x8F\x90\x91\x92\x93\x94\x95\x96\x97\x98\x99\x9A\x9B\x9C\x9D\x9E\x9F" + "\xA0\xA1\xA2\xA3\xA4\xA5\xA6\xA7\xA8\xA9\xAA\xAB\xAC\xAD\xAE\xAF\xB0\xB1\xB2\xB3\xB4\xB5\xB6\xB7\xB8\xB9\xBA\xBB\xBC\xBD\xBE\xBF" + "\xC0\xC1\xC2\xC3\xC4\xC5\xC6\xC7\xC8\xC9\xCA\xCB\xCC\xCD\xCE\xCF\xD0\xD1\xD2\xD3\xD4\xD5\xD6\xD7\xD8\xD9\xDA\xDB\xDC\xDD\xDE\xDF" + "\xE0\xE1\xE2\xE3\xE4\xE5\xE6\xE7\xE8\xE9\xEA\xEB\xEC\xED\xEE\xEF\xF0\xF1\xF2\xF3\xF4\xF5\xF6\xF7\xF8\xF9\xFA\xFB\xFC\xFD\xFE\xFF"
+// 255 字节字母表: codec_bytes[i] == 字节值 (i + 1), 即覆盖 1..255。
+// 字节 0 不在表内 —— CIN 的 string 是 NUL 结尾的, 字符串里**无法表示字节 0**
+// (字面量 "\x00...\xFF" 会在第一个字节就截断成空串), 因此 codec_chr_of(0) 返回 ""。
+// 只含 ASCII 与 \xHH 转义, 源码本身是纯 ASCII, 不依赖文件编码。
+string codec_bytes = "\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0A\x0B\x0C\x0D\x0E\x0F\x10\x11\x12\x13\x14\x15\x16\x17\x18\x19\x1A\x1B\x1C\x1D\x1E\x1F !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~\x7F\x80\x81\x82\x83\x84\x85\x86\x87\x88\x89\x8A\x8B\x8C\x8D\x8E\x8F\x90\x91\x92\x93\x94\x95\x96\x97\x98\x99\x9A\x9B\x9C\x9D\x9E\x9F\xA0\xA1\xA2\xA3\xA4\xA5\xA6\xA7\xA8\xA9\xAA\xAB\xAC\xAD\xAE\xAF\xB0\xB1\xB2\xB3\xB4\xB5\xB6\xB7\xB8\xB9\xBA\xBB\xBC\xBD\xBE\xBF\xC0\xC1\xC2\xC3\xC4\xC5\xC6\xC7\xC8\xC9\xCA\xCB\xCC\xCD\xCE\xCF\xD0\xD1\xD2\xD3\xD4\xD5\xD6\xD7\xD8\xD9\xDA\xDB\xDC\xDD\xDE\xDF\xE0\xE1\xE2\xE3\xE4\xE5\xE6\xE7\xE8\xE9\xEA\xEB\xEC\xED\xEE\xEF\xF0\xF1\xF2\xF3\xF4\xF5\xF6\xF7\xF8\xF9\xFA\xFB\xFC\xFD\xFE\xFF"
 
 // ---------------- 内部辅助函数 (非公开 API, 统一 codec_ 前缀) ----------------
-
-// ASCII 字母: 'A'-'Z' 或 'a'-'z'
-function codec_is_alpha(int c) -> int {
-    if (c >= 'A' && c <= 'Z') { return 1 }
-    if (c >= 'a' && c <= 'z') { return 1 }
-    return 0
-}
 
 // ASCII 数字 '0'-'9'
 function codec_is_digit(int c) -> int {
@@ -48,13 +51,9 @@ function codec_is_url_safe(int c) -> int {
     return 0
 }
 
-// 把 code 限制到 [0, 255] (解码时防御性使用)
-function codec_byte(int code) -> int {
-    return code & 0xFF
-}
-
-// 逐字节重建 s 的 [lo, hi) 区间, 结果与 substr(s, lo, hi - lo) 相同,
-// 用长度为 codec_buf_cap 的局部缓冲倒序填表, 避免逐字节前置拼接的 O(n^2) 堆。
+// 逐字节重建 s 的 [lo, hi) 区间, 结果与 substr(s, lo, hi - lo) 相同;
+// 用一个定长局部缓冲每轮取 codec_buf_cap 个字节再前置, 把逐字节前缀拼接的
+// 拷贝量从 O(n^2) 降到 O(n^2 / codec_buf_cap), 堆开销接近线性。
 function codec_rebuild_range(string s, int lo, int hi) -> string {
     if (lo < 0) { lo = 0 }
     if (hi > strlen(s)) { hi = strlen(s) }
@@ -80,10 +79,13 @@ function codec_rebuild_range(string s, int lo, int hi) -> string {
     return out
 }
 
-// 字节值 -> 单字符字符串 (0..255); 越界值按 [0, 255] 截断
+// 字节值 -> 单字符字符串 (1..255); 越界按 [0, 255] 截断。
+// **字节 0 返回 ""**: CIN 的 string 以 NUL 结尾, 无法在字符串中表示字节 0
+// (表里也没有 0), 所以"输出任意字节"的解码函数遇到 0 一律判为不可表示。
 function codec_chr_of(int b) -> string {
     int v = b & 0xFF
-    return substr(codec_bytes, v, 1)
+    if (v == 0) { return "" }
+    return substr(codec_bytes, v - 1, 1)
 }
 
 // base64 正向字母表下标是否合法 (0..63)
@@ -236,7 +238,9 @@ function codec_hex_decode(string h) -> string {
     while (i < n) {
         int hi = codec_hex_digit(h[i])
         int lo = codec_hex_digit(h[i + 1])
-        out = out + codec_chr_of(hi * 16 + lo)
+        int byte = hi * 16 + lo
+        if (byte == 0) { return "" }
+        out = out + codec_chr_of(byte)
         i = i + 2
     }
     return out
@@ -281,8 +285,10 @@ function codec_url_decode(string s) -> string {
             out = out + " "
             i = i + 1
         } else if (c == '%') {
-            out = out + codec_chr_of(codec_hex_digit(s[i + 1]) * 16
-                                     + codec_hex_digit(s[i + 2]))
+            int d1 = codec_hex_digit(s[i + 1])
+            int d2 = codec_hex_digit(s[i + 2])
+            if (d1 * 16 + d2 == 0) { return "" }
+            out = out + codec_chr_of(d1 * 16 + d2)
             i = i + 3
         } else {
             out = out + substr(s, i, 1)
@@ -386,15 +392,21 @@ function codec_base64_decode(string b) -> string {
         if (i + 3 >= n) { break }
         int c0 = codec_b64_val(b[i])
         int c1 = codec_b64_val(b[i + 1])
-        out = out + codec_chr_of((c0 << 2) | (c1 >> 4))
+        int o0 = (c0 << 2) | (c1 >> 4)
+        if (o0 == 0) { return "" }
+        out = out + codec_chr_of(o0)
         int ch2 = b[i + 2]
         if (ch2 != '=') {
             int c2 = codec_b64_val(ch2)
-            out = out + codec_chr_of(((c1 & 15) << 4) | (c2 >> 2))
+            int o1 = ((c1 & 15) << 4) | (c2 >> 2)
+            if (o1 == 0) { return "" }
+            out = out + codec_chr_of(o1)
             int ch3 = b[i + 3]
             if (ch3 != '=') {
                 int c3 = codec_b64_val(ch3)
-                out = out + codec_chr_of(((c2 & 3) << 6) | c3)
+                int o2 = ((c2 & 3) << 6) | c3
+                if (o2 == 0) { return "" }
+                out = out + codec_chr_of(o2)
             }
         }
         i = i + 4
@@ -402,7 +414,8 @@ function codec_base64_decode(string b) -> string {
     return out
 }
 
-// 字节串 -> RLE: 数字字符转义为 1<digit>, 连续重复 k>=2 次写 <k><byte>
+// 字节串 -> RLE: 数字字符转义为 1<digit>, 连续重复 k>=2 次写 <k><byte>。
+// 输入是 CIN 字符串, 因此其中不可能含字节 0 (NUL 是串尾), 单次展开上限 4096。
 function codec_rle_encode(string s) -> string {
     int n = strlen(s)
     if (n == 0) { return "" }
