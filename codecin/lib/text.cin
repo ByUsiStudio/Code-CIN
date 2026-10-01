@@ -1,0 +1,323 @@
+// Code CIN 官方标准库: 文本处理 (text)
+// 用法: import "text.cin"
+//
+// 比 str.cin 更进一步: 大小写无关比较、反转、替换、区间编辑、标题化、词数统计。
+// 纯 CIN 实现, 只使用非宿主内建 (strlen / substr / indexof / upper / lower /
+// strcmp), 不依赖 Go 原生运行时, --no-native 下同样可用。
+//
+// 字节语义: strlen / substr / s[i] 全是**字节**语义, 本库沿用同一约定 ——
+// 非 ASCII 一律按 UTF-8 字节序列逐个字节处理, 不做码点解码; 下标、长度、切片
+// 边界都是字节偏移。大小写转换只折叠 ASCII 字母 (a-z / A-Z), 其余字节原样保留。
+//
+// 内存注意: CIN 没有堆回收, 每次拼接/子串都会新建堆块。本库不做无界循环拼接,
+// 但 txt_reverse / txt_swap_case 需要逐段重建, 分配量随长度平方增长 (n 字节约
+// O(n^2) 字节堆), 请只对短到中等长度的串使用 (经验值: 单次调用 ≤ 几百字节)。
+// 另外逐字节重建会把多字节字符切成单字节片段, 纯 Python 路径的字符串拼接按
+// UTF-8 解码, 因此**非 ASCII 输入请用 txt_slice / txt_delete_range /
+// txt_insert / txt_replace (模式为完整字符) 等按整段搬运的接口**。
+
+// ---------------- 内部辅助函数 (非公开 API, 统一 txt_ 前缀) ----------------
+
+// ASCII 小写折叠: 'A'-'Z' -> 'a'-'z'; 其他字节原样返回
+function txt_lower_byte(int c) -> int {
+    if (c >= 'A' && c <= 'Z') { return c + 32 }
+    return c
+}
+
+// 是否 ASCII 字母
+function txt_is_alpha_byte(int c) -> int {
+    if (c >= 'a' && c <= 'z') { return 1 }
+    if (c >= 'A' && c <= 'Z') { return 1 }
+    return 0
+}
+
+// 是否 ASCII 字母或数字 (txt_title 的单词字符)
+function txt_is_alnum_byte(int c) -> int {
+    if (txt_is_alpha_byte(c) == 1) { return 1 }
+    if (c >= '0' && c <= '9') { return 1 }
+    return 0
+}
+
+// 是否空白: 空格 / \t / \n / \r
+function txt_is_space_byte(int c) -> int {
+    if (c == ' ' || c == '\t' || c == '\n' || c == '\r') { return 1 }
+    return 0
+}
+
+// needle 是否正好从 hay 的 at 处开始 (逐字节比较, 不分配堆块)
+function txt_match_at(string hay, string needle, int at) -> int {
+    if (at < 0) { return 0 }
+    int hn = strlen(hay)
+    int nn = strlen(needle)
+    if (at + nn > hn) { return 0 }
+    int i = 0
+    while (i < nn) {
+        if (hay[at + i] != needle[i]) { return 0 }
+        i = i + 1
+    }
+    return 1
+}
+
+// 内部: 把 s 的 [start, end) 按 mode 重建 (0 = 原样, 1 = ASCII 大写, 2 = ASCII 小写)。
+// 只有连续的 ASCII 字母才交给 upper / lower, 其余字节整段拷贝,
+// 因此多字节字符不会被从中间切开。
+function txt_case_range(string s, int start, int end, int mode) -> string {
+    int n = strlen(s)
+    if (start < 0) { start = 0 }
+    if (start > n) { start = n }
+    if (end > n) { end = n }
+    if (end < start) { end = start }
+    string out = ""
+    int i = start
+    while (i < end) {
+        int cls = txt_is_alpha_byte(s[i])
+        int j = i
+        while (j < end) {
+            if (txt_is_alpha_byte(s[j]) != cls) { break }
+            j = j + 1
+        }
+        string chunk = substr(s, i, j - i)
+        if (cls == 1 && mode == 1) {
+            out = out + upper(chunk)
+        } else if (cls == 1 && mode == 2) {
+            out = out + lower(chunk)
+        } else {
+            out = out + chunk
+        }
+        i = j
+    }
+    return out
+}
+
+// ---------------- 公开 API ----------------
+
+// 字节长度是否为 0; 空白串不算空 (需要"全空白"判定时用 txt_word_count == 0)
+function txt_is_empty(string s) -> int {
+    if (strlen(s) == 0) { return 1 }
+    return 0
+}
+
+// ASCII 大小写无关的整串相等 (1/0); 长度必须相同, 非 ASCII 字节需逐一相同
+function txt_equals_ignore_case(string a, string b) -> int {
+    int n = strlen(a)
+    if (n != strlen(b)) { return 0 }
+    int i = 0
+    while (i < n) {
+        if (txt_lower_byte(a[i]) != txt_lower_byte(b[i])) { return 0 }
+        i = i + 1
+    }
+    return 1
+}
+
+// s 是否以 p 开头 (ASCII 大小写无关, 1/0); 空 p 恒为 1, 空 s 只有空 p 为 1
+function txt_startswith_ignore_case(string s, string p) -> int {
+    int pn = strlen(p)
+    if (pn > strlen(s)) { return 0 }
+    int i = 0
+    while (i < pn) {
+        if (txt_lower_byte(s[i]) != txt_lower_byte(p[i])) { return 0 }
+        i = i + 1
+    }
+    return 1
+}
+
+// 按字节反转; 空串返回空串 (非 ASCII 会被切成单字节片段, 见文件头说明)
+function txt_reverse(string s) -> string {
+    string out = ""
+    int i = strlen(s) - 1
+    while (i >= 0) {
+        out = out + substr(s, i, 1)
+        i = i - 1
+    }
+    return out
+}
+
+// 从字节下标 from (含) 开始查找 needle 的首次出现, 返回绝对字节下标; 未找到 -1。
+// from 越界裁剪到 [0, strlen(hay)]; needle 为空串时返回裁剪后的 from。
+function txt_index_from(string hay, string needle, int from) -> int {
+    int hn = strlen(hay)
+    if (from < 0) { from = 0 }
+    if (from > hn) { from = hn }
+    if (strlen(needle) == 0) { return from }
+    int i = from
+    while (i < hn) {
+        if (txt_match_at(hay, needle, i) == 1) { return i }
+        i = i + 1
+    }
+    return -1
+}
+
+// needle 最后一次出现的字节下标 (允许重叠匹配); 未找到 -1; 空 needle 返回 strlen(hay)
+function txt_last_index_of(string hay, string needle) -> int {
+    if (strlen(needle) == 0) { return strlen(hay) }
+    int last = -1
+    int pos = 0
+    int hn = strlen(hay)
+    while (pos <= hn) {
+        int at = txt_index_from(hay, needle, pos)
+        if (at < 0) { break }
+        last = at
+        pos = at + 1
+    }
+    return last
+}
+
+// 全部替换 (从左到右扫描, 不重叠); from 为空串时原样返回 s (不做插入)
+function txt_replace(string s, string from, string to) -> string {
+    if (strlen(from) == 0) { return s }
+    int n = strlen(s)
+    int fl = strlen(from)
+    string out = ""
+    int pos = 0
+    while (pos <= n) {
+        int at = txt_index_from(s, from, pos)
+        if (at < 0) { break }
+        out = out + substr(s, pos, at - pos) + to
+        pos = at + fl
+    }
+    return out + substr(s, pos, n - pos)
+}
+
+// 只替换首次出现; from 为空串或无匹配时原样返回 s (无匹配返回同一指针)
+function txt_replace_first(string s, string from, string to) -> string {
+    if (strlen(from) == 0) { return s }
+    int n = strlen(s)
+    int fl = strlen(from)
+    int at = txt_index_from(s, from, 0)
+    if (at < 0) { return s }
+    return substr(s, 0, at) + to + substr(s, at + fl, n - at - fl)
+}
+
+// 删除全部 sub; sub 为空串时原样返回 s
+function txt_remove(string s, string sub) -> string {
+    if (strlen(sub) == 0) { return s }
+    return txt_replace(s, sub, "")
+}
+
+// 左闭右开切片 [start, end), 越界自动裁剪; end <= start 时返回空串
+function txt_slice(string s, int start, int end) -> string {
+    int n = strlen(s)
+    if (start < 0) { start = 0 }
+    if (end < 0) { end = 0 }
+    if (start > n) { start = n }
+    if (end > n) { end = n }
+    if (end <= start) { return "" }
+    return substr(s, start, end - start)
+}
+
+// 在字节下标 pos 处插入 sub; pos 裁剪到 [0, strlen(s)] (超过末尾就追加到末尾)
+function txt_insert(string s, int pos, string sub) -> string {
+    int n = strlen(s)
+    if (pos < 0) { pos = 0 }
+    if (pos > n) { pos = n }
+    return substr(s, 0, pos) + sub + substr(s, pos, n - pos)
+}
+
+// 删除 [pos, pos+len) 区间; pos 裁剪到 [0, strlen(s)], len < 0 视为 0, 越界自动缩短
+function txt_delete_range(string s, int pos, int len) -> string {
+    int n = strlen(s)
+    if (pos < 0) { pos = 0 }
+    if (pos > n) { pos = n }
+    if (len < 0) { len = 0 }
+    if (pos + len > n) { len = n - pos }
+    return substr(s, 0, pos) + substr(s, pos + len, n - pos - len)
+}
+
+// 首个 ASCII 字母大写、其余 ASCII 字母小写 (Python str.capitalize 风格);
+// 前导非字母字节原样保留; 完全没有 ASCII 字母时原样返回; 空串返回空串
+function txt_capitalize(string s) -> string {
+    int n = strlen(s)
+    if (n == 0) { return "" }
+    int i = 0
+    while (i < n) {
+        if (txt_is_alpha_byte(s[i]) == 1) { break }
+        i = i + 1
+    }
+    if (i == n) { return s }
+    string head = txt_case_range(s, 0, i, 0)
+    string first = txt_case_range(s, i, i + 1, 1)
+    string rest = txt_case_range(s, i + 1, n, 2)
+    return head + first + rest
+}
+
+// 每个"单词"的首个字节大写、其余小写; 单词 = 连续的 ASCII 字母/数字。
+// 注意: 只把单词首字节大写, 因此 "abc3def" -> "Abc3def" (与 Python str.title
+// 的 "Abc3Def" 不同); 撇号等非字母数字都是分隔符 ("it's" -> "It'S")。
+function txt_title(string s) -> string {
+    int n = strlen(s)
+    if (n == 0) { return "" }
+    string out = ""
+    int i = 0
+    while (i < n) {
+        if (txt_is_alnum_byte(s[i]) == 1) {
+            int ws = i
+            while (i < n) {
+                if (txt_is_alnum_byte(s[i]) == 0) { break }
+                i = i + 1
+            }
+            out = out + txt_case_range(s, ws, ws + 1, 1)
+            out = out + txt_case_range(s, ws + 1, i, 2)
+        } else {
+            int ss = i
+            while (i < n) {
+                if (txt_is_alnum_byte(s[i]) == 1) { break }
+                i = i + 1
+            }
+            out = out + txt_case_range(s, ss, i, 0)
+        }
+    }
+    return out
+}
+
+// 空白分隔的单词个数; 连续空白算一个, 忽略首尾空白, 全空白为 0。
+// 空白 = 空格 / \t / \n / \r; 非 ASCII 字节属于单词内部字节。
+function txt_word_count(string s) -> int {
+    int n = strlen(s)
+    int count = 0
+    int in_word = 0
+    int i = 0
+    while (i < n) {
+        if (txt_is_space_byte(s[i]) == 1) {
+            in_word = 0
+        } else {
+            if (in_word == 0) {
+                count = count + 1
+                in_word = 1
+            }
+        }
+        i = i + 1
+    }
+    return count
+}
+
+// ASCII 大小写互换 ('a'<->'A'), 非 ASCII 字节原样保留; 空串返回空串
+function txt_swap_case(string s) -> string {
+    int n = strlen(s)
+    string out = ""
+    int i = 0
+    while (i < n) {
+        int c = s[i]
+        int cls = 0
+        if (c >= 'a' && c <= 'z') { cls = 1 }
+        if (c >= 'A' && c <= 'Z') { cls = 2 }
+        int j = i
+        while (j < n) {
+            int d = s[j]
+            int dc = 0
+            if (d >= 'a' && d <= 'z') { dc = 1 }
+            if (d >= 'A' && d <= 'Z') { dc = 2 }
+            if (dc != cls) { break }
+            j = j + 1
+        }
+        string chunk = substr(s, i, j - i)
+        if (cls == 1) {
+            out = out + upper(chunk)
+        } else if (cls == 2) {
+            out = out + lower(chunk)
+        } else {
+            out = out + chunk
+        }
+        i = j
+    }
+    return out
+}
