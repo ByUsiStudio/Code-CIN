@@ -706,6 +706,8 @@ class Parser:
         # 枚举: 成员名 -> 值 (编译期常量), 类型名集合 (等价 int)
         self.enums: Dict[str, int] = {}
         self.enum_types: Set[str] = set()
+        # const 命名常量: 名字 -> (类型, Python 值); 纯编译期, 不占用数据段
+        self.consts: Dict[str, Tuple[str, Any]] = {}
         self._range_id = 0
 
     def peek(self, k: int = 0) -> Token:
@@ -772,16 +774,32 @@ class Parser:
         v = t.value
         if v in BASE_TYPE_WORDS:
             return True
+        if v == 'const':
+            return True
         # struct 类型名 (裸标识符) 后跟另一个标识符 = 声明
         return v not in _KEYWORDS and self.peek(1).kind == 'IDENT'
 
     def parse_dims(self) -> List[int]:
+        """数组维度: 接受整型常量表达式 (`[4]`、`[N]`、`[2 + 3]`)。"""
         dims = []
         while self.peek().kind == 'LBRACKET':
             self.next()
-            num = self.accept('NUMBER')
+            if self.peek().kind == 'RBRACKET':
+                self.next()
+                dims.append(0)           # T[] 指针形式 (无尺寸)
+                continue
+            node = self.parse_expr()
             self.expect('RBRACKET')
-            dims.append(num.value if num else 0)
+            ctype, value = self._const_value_ast(node)
+            if ctype not in ('int', 'bool'):
+                raise CompilerError(
+                    f"array size must be an integer constant, got {ctype} "
+                    f"at {self._loc()}")
+            n = int(value)
+            if n < 0:
+                raise CompilerError(
+                    f"array size must be non-negative, got {n}")
+            dims.append(n)
         return dims
 
     # ---------------- 程序 ----------------
@@ -797,6 +815,8 @@ class Parser:
                 self._parse_struct(structs)
             elif self.peek().kind == 'IDENT' and self.peek().value == 'enum':
                 self._parse_enum()
+            elif self.peek().kind == 'IDENT' and self.peek().value == 'const':
+                self._parse_const_decl()
             elif self.peek().kind == 'IDENT' and self.peek().value == 'function':
                 f = self._parse_function()
                 functions[f.name] = f
@@ -894,6 +914,143 @@ class Parser:
             f"Enum member {mname} initializer must be an integer constant "
             f"expression at {self._loc()}")
 
+    def _const_value_ast(self, node) -> Tuple[str, Any]:
+        """编译期常量求值, 返回 (类型, Python 值)。
+
+        供 `const` 声明、数组维度与枚举之外的常量上下文使用。
+        支持 int / float / bool / string 以及它们的算术与位运算 (字符串仅 `+`)。
+        """
+        kind = node[0]
+        if kind == 'num':
+            return ('float', float(node[1])) if node[2] else ('int', int(node[1]))
+        if kind == 'bool':
+            return ('bool', bool(node[1]))
+        if kind == 'str':
+            return ('string', node[1])
+        if kind == 'var':
+            if node[1] in self.consts:
+                return self.consts[node[1]]
+            if node[1] in self.enums:
+                return ('int', self.enums[node[1]])
+            raise CompilerError(
+                f"Constant expression uses non-constant name '{node[1]}' "
+                f"at {self._loc()}")
+        if kind == 'neg':
+            ctype, value = self._const_value_ast(node[1])
+            if ctype == 'string':
+                raise CompilerError("Cannot negate a string constant")
+            return (ctype, -value)
+        if kind == 'bitnot':
+            ctype, value = self._const_value_ast(node[1])
+            if ctype not in ('int', 'bool'):
+                raise CompilerError(
+                    f"Bitwise NOT requires an integer constant, got {ctype}")
+            return ('int', ~int(value))
+        if kind == 'binop':
+            op = node[1]
+            if op not in ('+', '-', '*', '/', '%', '<<', '>>', '&', '|', '^'):
+                raise CompilerError(
+                    f"Operator '{op}' is not allowed in a constant expression "
+                    f"at {self._loc()}")
+            at, av = self._const_value_ast(node[2])
+            bt, bv = self._const_value_ast(node[3])
+            if at == 'string' or bt == 'string':
+                if op == '+' and at == 'string' and bt == 'string':
+                    return ('string', av + bv)
+                raise CompilerError(
+                    "String constants only support the '+' operator")
+            if at == 'float' or bt == 'float':
+                if op not in ('+', '-', '*', '/'):
+                    raise CompilerError(
+                        f"Operator '{op}' requires integer constants")
+                a, b = float(av), float(bv)
+                if op == '+':
+                    return ('float', a + b)
+                if op == '-':
+                    return ('float', a - b)
+                if op == '*':
+                    return ('float', a * b)
+                if b == 0.0:
+                    raise CompilerError("Constant expression divides by zero")
+                return ('float', a / b)
+            a, b = int(av), int(bv)
+            if op in ('/', '%') and b == 0:
+                raise CompilerError("Constant expression divides by zero")
+            if op == '+':
+                return ('int', a + b)
+            if op == '-':
+                return ('int', a - b)
+            if op == '*':
+                return ('int', a * b)
+            if op == '/':
+                return ('int', _trunc_div(a, b))
+            if op == '%':
+                return ('int', a - _trunc_div(a, b) * b)
+            if op == '<<':
+                return ('int', a << b)
+            if op == '>>':
+                return ('int', a >> b)
+            if op == '&':
+                return ('int', a & b)
+            if op == '|':
+                return ('int', a | b)
+            return ('int', a ^ b)
+        raise CompilerError(
+            f"Not a constant expression at {self._loc()}")
+
+    def _parse_const_decl(self) -> list:
+        """`const <类型> 名字 = <常量表达式> [, ...]` (全局或局部)。
+
+        命名常量是**纯编译期**的: 不占用数据段、不产生任何指令, 因此可以用在
+        数组维度、全局初始化器与任意表达式里。
+        """
+        self.next()                      # const
+        if self.peek().kind != 'IDENT' or self.peek().value not in BASE_TYPE_WORDS:
+            t = self.peek()
+            raise CompilerError(
+                f"const needs a scalar type (int/float/bool/string) at "
+                f"{self._loc(t)}")
+        vtype = self.parse_type()
+        while True:
+            ntok = self.peek()
+            name = self.expect('IDENT').value
+            if name in _KEYWORDS:
+                raise CompilerError(
+                    f"Invalid const name '{name}' at {self._loc(ntok)}")
+            if name in self.enums:
+                raise CompilerError(
+                    f"Name '{name}' is already an enum member at "
+                    f"{self._loc(ntok)}")
+            if name in self.consts:
+                raise CompilerError(
+                    f"Duplicate const: {name} at {self._loc(ntok)}")
+            self.expect('ASSIGN')
+            ctype, value = self._const_value_ast(self.parse_assign())
+            # 按声明的类型规范化 (int←float 向零截断、bool←非零、float←数值提升)
+            if vtype == 'string':
+                if ctype != 'string':
+                    raise CompilerError(
+                        f"const string {name} must be initialized with a string")
+            elif vtype == 'float':
+                if ctype == 'string':
+                    raise CompilerError(
+                        f"const float {name} must be initialized with a number")
+                ctype, value = 'float', float(value)
+            elif vtype == 'bool':
+                if ctype == 'string':
+                    raise CompilerError(
+                        f"const bool {name} must be initialized with a number")
+                ctype, value = 'bool', bool(value)
+            else:
+                if ctype == 'string':
+                    raise CompilerError(
+                        f"const int {name} must be initialized with a number")
+                ctype, value = 'int', int(value)
+            self.consts[name] = (ctype, value)
+            if not self.accept('COMMA'):
+                break
+        return []
+
     def _parse_struct(self, structs: Dict[str, StructDef]) -> None:
         self.next()  # struct
         name = self.expect('IDENT').value
@@ -954,6 +1111,10 @@ class Parser:
             if name in self.enums or name in _KEYWORDS:
                 raise CompilerError(f"Name '{name}' is already used as an enum "
                                     f"member or keyword at {self._loc(name_tok)}")
+            if name in self.consts:
+                raise CompilerError(
+                    f"Name '{name}' is already a const at "
+                    f"{self._loc(name_tok)}")
             dims = self.parse_dims()
             t = vtype
             for d in reversed(dims):
@@ -1207,6 +1368,12 @@ class Parser:
         return ('rangefor', vname, elem_type, arr, body, self._range_id)
 
     def parse_decl(self, no_semi: bool = False):
+        if self.peek().kind == 'IDENT' and self.peek().value == 'const':
+            # 局部 const: 注册为编译期常量, 不产生存储与指令
+            self._parse_const_decl()
+            if not no_semi:
+                self.accept('SEMI')
+            return ('decl', [])
         vtype = self.parse_type()
         decls = []
         while True:
@@ -1457,7 +1624,8 @@ class CINCompiler:
             dbg(f"CIN function {name}: {len(fn.params)} params")
 
         gen = CodeGen(structs, functions, filename=filename,
-                      bounds_check=bounds_check, enums=enums)
+                      bounds_check=bounds_check, enums=enums,
+                      consts=parser.consts)
         gen.layout_globals(globals_)
         for name, (typ, addr, block) in gen.globals.items():
             dbg(f"CIN global '{name}': type={typ} addr=0x{addr:x} block={block}")
@@ -1474,10 +1642,12 @@ class CodeGen:
     def __init__(self, structs: Dict[str, StructDef],
                  functions: Dict[str, FuncDef], filename: str = '<cin>',
                  bounds_check: bool = False,
-                 enums: Optional[Dict[str, int]] = None):
+                 enums: Optional[Dict[str, int]] = None,
+                 consts: Optional[Dict[str, Tuple[str, Any]]] = None):
         self.structs = structs
         self.functions = functions
         self.enums: Dict[str, int] = dict(enums or {})
+        self.consts: Dict[str, Tuple[str, Any]] = dict(consts or {})
         self.res = CompileResult()
         self._filename = filename
         self._bounds = bounds_check
@@ -1594,6 +1764,16 @@ class CodeGen:
             return 'int', node[1] & 0xFFFFFFFFFFFFFFFF
         if kind == 'bool':
             return 'bool', 1 if node[1] else 0
+        if kind == 'var' and node[1] in self.consts:
+            # const 命名常量可用于全局初始化器
+            ctype, value = self.consts[node[1]]
+            if ctype == 'float':
+                return 'float', struct.unpack('<Q', struct.pack('<d', float(value)))[0]
+            if ctype == 'string':
+                return 'string', self._data_string(value)
+            if ctype == 'bool':
+                return 'bool', 1 if value else 0
+            return 'int', int(value) & 0xFFFFFFFFFFFFFFFF
         if kind == 'var' and node[1] in self.enums:
             # 枚举成员: 编译期整数常量 (可用于全局初始化与 case 标签)
             return 'int', self.enums[node[1]] & 0xFFFFFFFFFFFFFFFF
@@ -2443,12 +2623,26 @@ class CodeGen:
         raise CompilerError(f"Cannot generate code for expression: {kind}")
 
     def _gen_var_value(self, name: str) -> Any:
-        if name in self.enums:
-            # 枚举成员: 编译期整数常量
-            self.emit('MOV', self.reg(0), self.imm(self.enums[name]))
-            return 'int'
         t = self._var_type(name)
         if t is None:
+            # 不是已声明的变量 -> 编译期常量 (局部变量可以遮蔽 const)
+            if name in self.consts:
+                ctype, value = self.consts[name]
+                if ctype == 'float':
+                    bits = struct.unpack('<Q', struct.pack('<d', float(value)))[0]
+                    self.emit('MOV', self.reg(0), self.imm(bits))
+                    return 'float'
+                if ctype == 'string':
+                    self.emit('MOV', self.reg(0),
+                              self.imm(self._data_string(value)))
+                    return 'string'
+                self.emit('MOV', self.reg(0),
+                          self.imm(int(value) & 0xFFFFFFFFFFFFFFFF))
+                return 'bool' if ctype == 'bool' else 'int'
+            if name in self.enums:
+                # 枚举成员: 编译期整数常量
+                self.emit('MOV', self.reg(0), self.imm(self.enums[name]))
+                return 'int'
             raise CompilerError(f"Undefined variable: {name}")
         is_block = False
         if name in self.locals:
@@ -2467,6 +2661,10 @@ class CodeGen:
         """求值左值地址到 x0。"""
         kind = node[0]
         if kind == 'var':
+            if node[1] in self.consts:
+                raise CompilerError(
+                    f"Cannot assign to const: {node[1]} (constants are "
+                    f"read-only)")
             if node[1] in self.enums:
                 raise CompilerError(
                     f"Cannot assign to enum member: {node[1]} (constants are "
@@ -2618,9 +2816,14 @@ class CodeGen:
     def _expr_type(self, node):
         kind = node[0]
         if kind == 'var':
+            vt = self._var_type(node[1])
+            if vt is not None:
+                return vt           # 变量遮蔽同名的 const / enum 成员
+            if node[1] in self.consts:
+                return self.consts[node[1]][0]
             if node[1] in self.enums:
                 return 'int'
-            return self._var_type(node[1])
+            return None
         if kind == 'member':
             obj_t = self._expr_type(node[1])
             if _is_struct(obj_t):
@@ -2806,6 +3009,21 @@ class CodeGen:
     def _gen_compound(self, target, op: str, value_node) -> Any:
         """target op= value (op ∈ + - * / % & | ^ << >>); 左值地址只求值一次。"""
         tt = self._expr_type(target)
+        if tt == 'string':
+            # 字符串只支持 +=: 读出旧串 + 右侧 (自动字符串化) + 写回新串
+            if op != '+':
+                raise CompilerError(f"Cannot apply '{op}=' to type: string")
+            self._gen_lvalue_addr(target)
+            self.emit('PUSH', self.reg(0))                 # [SP] = 目标地址
+            self.emit('LD', self.reg(0), ('mem', 0, 0))    # x0 = 旧字符串
+            self.emit('PUSH', self.reg(0))
+            self._gen_string_value(value_node)             # x0 = rhs 字符串
+            self.emit('MOV', self.reg(1), self.reg(0))
+            self.emit('POP', self.reg(0))                  # x0 = 旧串
+            self.emit('SYS', self.imm(Syscall.STR_CONCAT))
+            self.emit('POP', self.reg(2))                  # x2 = 目标地址
+            self.emit('SD', self.reg(0), ('mem', 2, 0))
+            return 'string'
         if tt not in ('int', 'bool', 'float'):
             raise CompilerError(f"Cannot apply '{op}=' to type: {tt}")
         if tt == 'float' and op not in ('+', '-', '*', '/'):
@@ -2986,6 +3204,8 @@ class CodeGen:
         host = HOST_BUILTINS.get(name)
         if host is not None:
             return None if host[2] == 'void' else host[2]
+        if name == 'exit' and name not in self.functions:
+            return 'void'
         if name in ('sin', 'cos', 'tan', 'sqrt', 'pow', 'floor', 'ceil', 'round'):
             return 'float'
         if name in ('strlen', 'strcmp', 'rand', 'time', 'abs', 'input',
@@ -3018,6 +3238,17 @@ class CodeGen:
                 self.gen_print(a, newline=False)
             if name == 'println' or not args:
                 self.emit('OUT', self.imm(10))
+            return 'void'
+
+        if name == 'exit' and name not in self.functions:
+            # exit(code): 立即以 code 结束程序 (与 main 的返回值同一出口)。
+            # 发出 MOV x0, code + HALT —— 入口就是 CALL main; HALT, 三路径一致。
+            if len(args) != 1:
+                raise CompilerError(
+                    f'exit() expects exactly 1 argument, got {len(args)}')
+            at = self.gen_value(args[0])
+            self._convert(at, 'int')
+            self.emit('HALT')
             return 'void'
 
         math_unary = {'sqrt': Syscall.SQRT, 'sin': Syscall.SIN,

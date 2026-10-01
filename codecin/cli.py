@@ -5,6 +5,7 @@ build_parser() 单一来源定义, --help 与解析行为自动保持一致。
 """
 
 import argparse
+import contextlib
 import os
 import sys
 from typing import List, Optional
@@ -223,10 +224,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     # 统一切成 UTF-8, 无法编码的字符以 ? 替换而不是崩溃。
     for _stream in (sys.stdout, sys.stderr):
         if hasattr(_stream, 'reconfigure'):
-            try:
+            with contextlib.suppress(ValueError, OSError):
                 _stream.reconfigure(encoding='utf-8', errors='replace')
-            except (ValueError, OSError):
-                pass
 
     if '--help' in args or '-h' in args:
         sys.stdout.write(HELP_INTRO + "\n")

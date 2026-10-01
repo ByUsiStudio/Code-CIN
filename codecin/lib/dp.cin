@@ -1,0 +1,325 @@
+// Code CIN 官方标准库: 经典动态规划 (dp)
+// 用法: import "dp.cin"
+//
+// 纯 CIN 实现, 不使用任何宿主能力内建, 也不做动态内存分配:
+// 所有 DP 表都是库内全局定长数组 (滚动数组), 容量上限如下:
+//   DP_STR_MAX    = 192   字符串类 DP (LCS / 编辑距离 / 回文) 处理的字节数上限
+//   DP_KNAP_CAP   = 256   0/1 背包的容量上限
+//   DP_AMOUNT_MAX = 256   零钱问题的金额上限
+//   DP_LIS_MAX    = 256   最长递增子序列的元素个数上限
+//   DP_PATH_COLS  = 256   网格最小路径和的列数上限
+//   DP_FIB_CACHE  = 64    dp_fib_memo 的自建缓存容量
+//
+// 全局数据段占用 (每槽 8 字节):
+//   dp_row_prev[193] + dp_row_cur[193]                 = 386 槽
+//   dp_amt[257]                                        = 257 槽
+//   dp_cap[257]                                        = 257 槽
+//   dp_fib_cache[64]                                   =  64 槽
+//   标量 (dp_fib_ready / dp_fib_hi)                     =   2 槽
+//   合计 966 槽 = 7728 字节, 小于默认 64 KiB 数据段。
+//
+// 语义说明与边界行为:
+//   * 容量超限一律**按上限截断**(与 heap_build 的做法一致), 不报错:
+//     cap > DP_KNAP_CAP 按 DP_KNAP_CAP 算; amount > DP_AMOUNT_MAX 按 DP_AMOUNT_MAX 算;
+//     串长 > DP_STR_MAX 只看前 DP_STR_MAX 字节; n > DP_LIS_MAX 只看前 DP_LIS_MAX 个元素;
+//     唯一的例外是 dp_min_path: cols > DP_PATH_COLS 时返回 -1 (列数参与行主序下标,
+//     截断会把整张网格读错, 所以明确失败);
+//   * 字符串一律按**字节**比较 (s[i] 得到 0..255 的整数编码);
+//   * 所有返回值都是 int (64 位有符号), 斐波那契/阶乘/组合数都可能溢出回绕, 不报错;
+//   * 库内只有一份全局实例, 上面那些滚动数组是**跨函数复用的内部暂存区**,
+//     调用方不要依赖它们在两次调用之间的内容, 也不要嵌套调用本库的不同函数。
+
+const int DP_STR_MAX = 192
+const int DP_KNAP_CAP = 256
+const int DP_AMOUNT_MAX = 256
+const int DP_LIS_MAX = 256
+const int DP_PATH_COLS = 256
+const int DP_FIB_CACHE = 64
+
+// 内部暂存区 (详见文件头: 不同函数按需复用)
+int dp_row_prev[DP_STR_MAX + 1]
+int dp_row_cur[DP_STR_MAX + 1]
+int dp_amt[DP_AMOUNT_MAX + 1]
+int dp_cap[DP_KNAP_CAP + 1]
+
+// dp_fib_memo 的缓存: dp_fib_ready == 0 表示还没建表
+int dp_fib_cache[DP_FIB_CACHE]
+int dp_fib_ready = 0
+int dp_fib_hi = 0
+
+// ---------------- 递推入门 ----------------
+
+// 斐波那契数 (迭代, O(n)); fib(0)=0, fib(1)=1, n < 0 返回 0
+// n >= 93 时结果超出 64 位有符号整数范围, 静默回绕
+function dp_fib(int n) -> int {
+    if (n <= 0) { return 0 }
+    int a = 0
+    int b = 1
+    for (int i = 2; i <= n; i = i + 1) {
+        int c = a + b
+        a = b
+        b = c
+    }
+    return b
+}
+
+// 斐波那契数 (带自建缓存): 结果与 dp_fib 完全一致
+//   n < 0 返回 0; n >= DP_FIB_CACHE 时不做缓存, 直接走迭代实现
+function dp_fib_memo(int n) -> int {
+    if (n < 0) { return 0 }
+    if (n >= DP_FIB_CACHE) { return dp_fib(n) }
+    if (dp_fib_ready == 0) {
+        dp_fib_cache[0] = 0
+        dp_fib_cache[1] = 1
+        dp_fib_hi = 1
+        dp_fib_ready = 1
+    }
+    while (dp_fib_hi < n) {
+        int nxt = dp_fib_hi + 1
+        dp_fib_cache[nxt] = dp_fib_cache[nxt - 1] + dp_fib_cache[nxt - 2]
+        dp_fib_hi = nxt
+    }
+    return dp_fib_cache[n]
+}
+
+// 阶乘 (迭代): fact(0)=1, fact(1)=1, n < 0 返回 0
+// n >= 21 时结果超出 64 位有符号整数范围, 静默回绕 (建议 n <= 20)
+function dp_fact(int n) -> int {
+    if (n < 0) { return 0 }
+    int r = 1
+    for (int i = 2; i <= n; i = i + 1) {
+        r = r * i
+    }
+    return r
+}
+
+// 爬楼梯方案数 (每步 1 级或 2 级): n < 0 返回 0, n == 0 返回 1 (一步不走也算一种)
+// 等价于 fib(n + 1); n 很大时同样按 64 位整数回绕
+function dp_stairs(int n) -> int {
+    if (n < 0) { return 0 }
+    if (n == 0) { return 1 }
+    return dp_fib(n + 1)
+}
+
+// ---------------- 背包 ----------------
+
+// 0/1 背包最大价值: n 件物品 (重量 w[i], 价值 v[i]), 容量 cap
+//   n <= 0 或 cap <= 0 返回 0;
+//   cap > DP_KNAP_CAP 时按 DP_KNAP_CAP 计算;
+//   重量 < 0 的物品按"重量 0"处理 (等价于白拿一件); 重量 > cap 的物品自动跳过
+function dp_knapsack01(int[] w, int[] v, int n, int cap) -> int {
+    if (n <= 0) { return 0 }
+    if (cap <= 0) { return 0 }
+    int c = cap
+    if (c > DP_KNAP_CAP) { c = DP_KNAP_CAP }
+    for (int j = 0; j <= c; j = j + 1) {
+        dp_cap[j] = 0
+    }
+    for (int i = 0; i < n; i = i + 1) {
+        int wi = w[i]
+        if (wi < 0) { wi = 0 }
+        int vi = v[i]
+        if (wi > c) { continue }
+        for (int j = c; j >= wi; j = j - 1) {
+            int cand = dp_cap[j - wi] + vi
+            if (cand > dp_cap[j]) { dp_cap[j] = cand }
+        }
+    }
+    return dp_cap[c]
+}
+
+// ---------------- 字符串 DP ----------------
+
+// 最长公共子序列长度 (按字节比较, 滚动两行 O(min) 空间)
+//   任一空串返回 0; 串长超过 DP_STR_MAX 时只看前 DP_STR_MAX 字节
+function dp_lcs(string a, string b) -> int {
+    int la = strlen(a)
+    int lb = strlen(b)
+    if (la > DP_STR_MAX) { la = DP_STR_MAX }
+    if (lb > DP_STR_MAX) { lb = DP_STR_MAX }
+    for (int j = 0; j <= lb; j = j + 1) {
+        dp_row_prev[j] = 0
+    }
+    for (int i = 1; i <= la; i = i + 1) {
+        dp_row_cur[0] = 0
+        for (int j = 1; j <= lb; j = j + 1) {
+            if (a[i - 1] == b[j - 1]) {
+                dp_row_cur[j] = dp_row_prev[j - 1] + 1
+            } else {
+                int best = dp_row_prev[j]
+                if (dp_row_cur[j - 1] > best) { best = dp_row_cur[j - 1] }
+                dp_row_cur[j] = best
+            }
+        }
+        for (int j = 0; j <= lb; j = j + 1) {
+            dp_row_prev[j] = dp_row_cur[j]
+        }
+    }
+    return dp_row_prev[lb]
+}
+
+// 编辑距离 (Levenshtein: 插入 / 删除 / 替换 代价都是 1, 按字节比较)
+//   任一空串时返回另一个串的长度; 串长超过 DP_STR_MAX 时只看前 DP_STR_MAX 字节
+function dp_edit_distance(string a, string b) -> int {
+    int la = strlen(a)
+    int lb = strlen(b)
+    if (la > DP_STR_MAX) { la = DP_STR_MAX }
+    if (lb > DP_STR_MAX) { lb = DP_STR_MAX }
+    for (int j = 0; j <= lb; j = j + 1) {
+        dp_row_prev[j] = j
+    }
+    for (int i = 1; i <= la; i = i + 1) {
+        dp_row_cur[0] = i
+        for (int j = 1; j <= lb; j = j + 1) {
+            int cost = 1
+            if (a[i - 1] == b[j - 1]) { cost = 0 }
+            int best = dp_row_prev[j - 1] + cost          // 替换 / 相同
+            if (dp_row_prev[j] + 1 < best) { best = dp_row_prev[j] + 1 }
+            if (dp_row_cur[j - 1] + 1 < best) { best = dp_row_cur[j - 1] + 1 }
+            dp_row_cur[j] = best
+        }
+        for (int j = 0; j <= lb; j = j + 1) {
+            dp_row_prev[j] = dp_row_cur[j]
+        }
+    }
+    return dp_row_prev[lb]
+}
+
+// 最长回文子串长度 (按字节; 中心扩展, 等价于区间 DP 的 O(n^2) 空间优化写法)
+//   空串返回 0; 长度超过 DP_STR_MAX 时只看前 DP_STR_MAX 字节
+function dp_longest_palindrome(string s) -> int {
+    int n = strlen(s)
+    if (n > DP_STR_MAX) { n = DP_STR_MAX }
+    if (n <= 0) { return 0 }
+    int best = 1
+    for (int c = 0; c < n; c = c + 1) {
+        int l = c
+        int r = c
+        while (l >= 0 && r < n && s[l] == s[r]) {
+            int len = r - l + 1
+            if (len > best) { best = len }
+            l = l - 1
+            r = r + 1
+        }
+        l = c
+        r = c + 1
+        while (l >= 0 && r < n && s[l] == s[r]) {
+            int len = r - l + 1
+            if (len > best) { best = len }
+            l = l - 1
+            r = r + 1
+        }
+    }
+    return best
+}
+
+// ---------------- 零钱问题 ----------------
+
+// 最少硬币数 (每种面额可用无限次): 凑不出返回 -1
+//   amount < 0 返回 -1; amount == 0 返回 0 (不用任何硬币);
+//   面额 <= 0 的硬币被忽略 (避免死循环); amount > DP_AMOUNT_MAX 时按 DP_AMOUNT_MAX 算
+function dp_coin_change(int[] coins, int n, int amount) -> int {
+    if (amount < 0) { return -1 }
+    if (amount == 0) { return 0 }
+    int amt = amount
+    if (amt > DP_AMOUNT_MAX) { amt = DP_AMOUNT_MAX }
+    dp_amt[0] = 0
+    for (int j = 1; j <= amt; j = j + 1) {
+        dp_amt[j] = -1
+    }
+    for (int i = 0; i < n; i = i + 1) {
+        int c = coins[i]
+        if (c <= 0) { continue }
+        for (int j = c; j <= amt; j = j + 1) {
+            if (dp_amt[j - c] < 0) { continue }
+            int cand = dp_amt[j - c] + 1
+            if (dp_amt[j] < 0 || cand < dp_amt[j]) { dp_amt[j] = cand }
+        }
+    }
+    return dp_amt[amt]
+}
+
+// 凑出 amount 的**组合数** (硬币顺序不计, 每种面额可用无限次)
+//   amount < 0 返回 0; amount == 0 返回 1 (空组合);
+//   面额 <= 0 的硬币被忽略; amount > DP_AMOUNT_MAX 时按 DP_AMOUNT_MAX 算;
+//   结果按 64 位整数回绕 (可能溢出, 建议 amount 较小)
+function dp_coin_ways(int[] coins, int n, int amount) -> int {
+    if (amount < 0) { return 0 }
+    int amt = amount
+    if (amt > DP_AMOUNT_MAX) { amt = DP_AMOUNT_MAX }
+    for (int j = 0; j <= amt; j = j + 1) {
+        dp_amt[j] = 0
+    }
+    dp_amt[0] = 1
+    for (int i = 0; i < n; i = i + 1) {
+        int c = coins[i]
+        if (c <= 0) { continue }
+        for (int j = c; j <= amt; j = j + 1) {
+            dp_amt[j] = dp_amt[j] + dp_amt[j - c]
+        }
+    }
+    return dp_amt[amt]
+}
+
+// ---------------- 序列 DP ----------------
+
+// 最长**严格**递增子序列长度 (O(n^2)); n <= 0 返回 0
+// n > DP_LIS_MAX 时只看前 DP_LIS_MAX 个元素
+function dp_lis(int[] a, int n) -> int {
+    if (n <= 0) { return 0 }
+    int k = n
+    if (k > DP_LIS_MAX) { k = DP_LIS_MAX }
+    int best = 0
+    for (int i = 0; i < k; i = i + 1) {
+        dp_cap[i] = 1
+        for (int j = 0; j < i; j = j + 1) {
+            if (a[j] < a[i]) {
+                if (dp_cap[j] + 1 > dp_cap[i]) { dp_cap[i] = dp_cap[j] + 1 }
+            }
+        }
+        if (dp_cap[i] > best) { best = dp_cap[i] }
+    }
+    return best
+}
+
+// 最大子段和 (Kadane, O(n)): 至少取一个元素, 全负数时返回其中最大的那个
+// n <= 0 返回 0
+function dp_max_subarray(int[] a, int n) -> int {
+    if (n <= 0) { return 0 }
+    int best = a[0]
+    int cur = a[0]
+    for (int i = 1; i < n; i = i + 1) {
+        if (cur < 0) {
+            cur = a[i]
+        } else {
+            cur = cur + a[i]
+        }
+        if (cur > best) { best = cur }
+    }
+    return best
+}
+
+// ---------------- 网格 DP ----------------
+
+// 网格最小路径和 (只能向右或向下走), 网格按**行主序一维**给出: grid[r * cols + c]
+//   起点与终点都计入和; rows <= 0 或 cols <= 0 返回 0;
+//   cols > DP_PATH_COLS 返回 -1 (列数参与行主序下标, 定长滚动数组放不下, 明确失败)
+function dp_min_path(int[] grid, int rows, int cols) -> int {
+    if (rows <= 0 || cols <= 0) { return 0 }
+    if (cols > DP_PATH_COLS) { return -1 }
+    for (int c = 0; c < cols; c = c + 1) {
+        dp_cap[c] = grid[c]
+    }
+    for (int c = 1; c < cols; c = c + 1) {
+        dp_cap[c] = dp_cap[c] + dp_cap[c - 1]
+    }
+    for (int r = 1; r < rows; r = r + 1) {
+        dp_cap[0] = dp_cap[0] + grid[r * cols]
+        for (int c = 1; c < cols; c = c + 1) {
+            int m = dp_cap[c]
+            if (dp_cap[c - 1] < m) { m = dp_cap[c - 1] }
+            dp_cap[c] = m + grid[r * cols + c]
+        }
+    }
+    return dp_cap[cols - 1]
+}

@@ -6,6 +6,9 @@
     python script/bump_version.py 5.7.0            # 落盘
     python script/bump_version.py --dry-run 5.7.0  # 只打印将要做的改动, 不写任何文件
 
+`--root DIR` 可指向另一棵完整的仓库副本 (含 script/ 与 codecin/), 便于在临时
+目录里演练真实落盘流程; 默认操作本脚本所在仓库。
+
 一次完成四件事 (全部成功才算成功, 失败会回滚已写的文件):
 
   1. 校验入参: 必须严格 `x.y.z`, 且**必须大于**当前版本 (否则非 0 退出, 不动文件);
@@ -24,6 +27,7 @@
 """
 
 import argparse
+import contextlib
 import datetime
 import os
 import re
@@ -73,7 +77,7 @@ class BumpError(Exception):
 
 def _read_text(path: str) -> str:
     # newline='' : 不做换行翻译, 原样保留 CRLF/LF
-    with open(path, 'r', encoding='utf-8', newline='') as f:
+    with open(path, encoding='utf-8', newline='') as f:
         return f.read()
 
 
@@ -171,7 +175,7 @@ def find_old_version_files(root: str, old_version: str) -> list:
             try:
                 if os.path.getsize(path) > 2 * 1024 * 1024:
                     continue
-                with open(path, 'r', encoding='utf-8', errors='ignore') as f:
+                with open(path, encoding='utf-8', errors='ignore') as f:
                     if old_version in f.read():
                         hits.append(rel)
             except OSError:                   # pragma: no cover - 无权限/竞态
@@ -186,17 +190,17 @@ def _parse_date(text: str) -> str:
     try:
         datetime.datetime.strptime(text, '%Y-%m-%d')
     except ValueError:
-        raise BumpError(f'--date 必须是 YYYY-MM-DD: {text!r}', code=2)
+        raise BumpError(f'--date 必须是 YYYY-MM-DD: {text!r}', code=2) from None
     return text
 
 
 def run(args: argparse.Namespace) -> int:
     root = os.path.abspath(args.root) if args.root else REPO_ROOT
-    if not args.dry_run and os.path.normcase(root) != os.path.normcase(REPO_ROOT):
+    gen_script = os.path.join(root, GEN_ISA_REL)
+    if not os.path.isfile(gen_script):
         raise BumpError(
-            f'--root 只能指向本脚本所在仓库 ({REPO_ROOT}): '
-            f'Go 侧生成器 script/gen_native_isa.py 只写自己的仓库; '
-            f'换目录请用 --dry-run', code=2)
+            f'找不到 {gen_script}: --root 必须指向一个包含 script/ 与 codecin/ 的'
+            f'仓库树 (完整副本); 只做试算请加 --dry-run', code=2)
 
     new_version = args.version.strip()
     if STRICT_VERSION_RE.match(new_version) is None:
@@ -218,7 +222,7 @@ def run(args: argparse.Namespace) -> int:
         version_tuple(current_version)
     except ValueError:
         raise BumpError(
-            f'当前版本号 {current_version!r} 不是 x.y.z, 无法比较', code=2)
+            f'当前版本号 {current_version!r} 不是 x.y.z, 无法比较', code=2) from None
 
     if compare(new_version, current_version) <= 0:
         raise BumpError(
@@ -228,11 +232,12 @@ def run(args: argparse.Namespace) -> int:
     new_init_text = rewrite_source_version(init_text, new_version)
 
     changelog_text = _read_text(changelog_path)
+    if f'[{new_version}]' in changelog_text:
+        raise BumpError(
+            f'{CHANGELOG_REL} 已存在 [{new_version}] 小节, 拒绝重复插入', code=1)
     nl = detect_newline(changelog_text)
     section = build_changelog_section(new_version, date_str, nl)
     new_changelog_text = insert_changelog_section(changelog_text, section, nl)
-    if new_changelog_text == changelog_text:
-        raise BumpError('CHANGELOG.md 未发生变化 (小节已存在?)', code=1)
 
     old_build_version = None
     if os.path.isfile(version_go_path):
@@ -270,9 +275,8 @@ def run(args: argparse.Namespace) -> int:
     sys.stdout.write(f'[bump_version] {CHANGELOG_REL}: 已插入 [{new_version}] 小节 '
                      f'({date_str})\n')
 
-    gen_script = os.path.join(REPO_ROOT, GEN_ISA_REL)
     proc = subprocess.run(
-        [sys.executable, gen_script], cwd=REPO_ROOT,
+        [sys.executable, gen_script], cwd=root,
         capture_output=True, text=True, encoding='utf-8', errors='replace')
     if proc.returncode != 0:
         _write_bytes(init_path, init_backup)
@@ -323,17 +327,16 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument('--date', default=None, metavar='YYYY-MM-DD',
                    help='CHANGELOG 小节日期 (默认今天)')
     p.add_argument('--root', default=None, metavar='DIR',
-                   help='目标仓库根 (默认本脚本所在仓库; 非 --dry-run 时必须是它)')
+                   help='目标仓库根 (默认: 本脚本所在仓库; 非 --dry-run 时该目录'
+                        '必须包含 script/gen_native_isa.py 与 codecin/)')
     return p
 
 
 def main(argv=None) -> int:
     for stream in (sys.stdout, sys.stderr):
         if hasattr(stream, 'reconfigure'):
-            try:
+            with contextlib.suppress(ValueError, OSError):
                 stream.reconfigure(encoding='utf-8', errors='replace')
-            except (ValueError, OSError):    # pragma: no cover - 非标准流
-                pass
     args = build_parser().parse_args(argv)
     try:
         return run(args)

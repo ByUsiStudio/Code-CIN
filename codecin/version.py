@@ -243,10 +243,8 @@ def format_build_info(info: Optional[Dict[str, Any]] = None) -> str:
         native_text = '不可用 (回退纯 Python 解释执行)'
 
     matches = data.get('native_version_matches')
-    if matches is None:
-        matches_text = '(未知)'
-    else:
-        matches_text = '一致' if matches else '不一致 (原生库可能过期)'
+    matches_text = ('(未知)' if matches is None
+                    else '一致' if matches else '不一致 (原生库可能过期)')
 
     jit_text = '可用' if data.get('jit') else '不可用'
 

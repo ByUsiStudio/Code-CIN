@@ -124,7 +124,7 @@ function main() -> int {
     // 非 ASCII 字节不属于 ASCII 字母: 整段原样保留
     if (strcmp(txt_swap_case("\\xE4\\xB8\\xADa"), "\\xE4\\xB8\\xADA") != 0) { return 30 }
     if (strcmp(txt_swap_case("b\\xE4\\xB8\\xAD"), "B\\xE4\\xB8\\xAD") != 0) { return 31 }
-    if (strcmp(txt_title("\\xE4\\xB8\\xADab"), "\\xE4\\xB8\\xADab") != 0) { return 32 }
+    if (strcmp(txt_title("\\xE4\\xB8\\xADab"), "\\xE4\\xB8\\xADAb") != 0) { return 32 }
     return 0
 }'''
     assert _run(workdir, src, use_native=use_native).regs.read(0) == 0
@@ -193,11 +193,12 @@ function main() -> int {
 
 @pytest.mark.parametrize('use_native', (False, True), ids=('interp', 'native'))
 def test_text_long_strings(workdir, use_native):
-    """长串 (120 字节) 上不分配/少分配堆块的路径, 以及全串重建路径。"""
+    """长串 (120 字节) 上不分配/少分配堆块的路径。
+
+    只调用不逐段重建结果串的接口: 字符串拼接不回收堆块, 逐字节重建的长串会
+    吃满默认 64 KiB 内存 (见 test_text_long_rebuild 的说明)。
+    """
     many = 'ab ' * 40            # 120 字节
-    rev = ' ba' * 40             # txt_reverse(many)
-    upper = 'AB ' * 40           # txt_swap_case(many)
-    titled = 'Ab ' * 40          # txt_title(many)
     src = ('''
 import "text.cin"
 function main() -> int {
@@ -212,9 +213,34 @@ function main() -> int {
     if (strlen(txt_delete_range(many, 117, 3)) != 117) { return 8 }
     if (strcmp(txt_insert(many, 0, ""), many) != 0) { return 9 }
     if (txt_equals_ignore_case(many, many) != 1) { return 10 }
-    if (strcmp(txt_reverse(many), "''' + rev + '''") != 0) { return 11 }
-    if (strcmp(txt_swap_case(many), "''' + upper + '''") != 0) { return 12 }
-    if (strcmp(txt_title(many), "''' + titled + '''") != 0) { return 13 }
+    if (strcmp(txt_replace_first(many, "ab", "AB"), "''' + ('AB ' + 'ab ' * 39) + '''") != 0) { return 11 }
+    if (strcmp(txt_remove(many, " "), "''' + 'ab' * 40 + '''") != 0) { return 12 }
+    return 0
+}''')
+    assert _run(workdir, src, use_native=use_native).regs.read(0) == 0
+
+
+@pytest.mark.parametrize('use_native', (False, True), ids=('interp', 'native'))
+def test_text_long_rebuild(workdir, use_native):
+    """长串 (90 字节, 30 个单词) 的全串重建: reverse / swap_case / title。
+
+    规模刻意停在 90 字节: 每次拼接都新建堆块且不回收, 重建 n 字节约需 O(n^2)
+    字节堆, 默认 64 KiB 内存下 120 字节的多段文本就会 Stack overflow。
+    """
+    many = 'ab ' * 30            # 90 字节
+    rev = ' ba' * 30             # txt_reverse(many)
+    upper = 'AB ' * 30           # txt_swap_case(many)
+    titled = 'Ab ' * 30          # txt_title(many)
+    src = ('''
+import "text.cin"
+function main() -> int {
+    string many = "''' + many + '''"
+    if (strlen(many) != 90) { return 1 }
+    if (txt_word_count(many) != 30) { return 2 }
+    if (strcmp(txt_reverse(many), "''' + rev + '''") != 0) { return 3 }
+    if (strcmp(txt_swap_case(many), "''' + upper + '''") != 0) { return 4 }
+    if (strcmp(txt_title(many), "''' + titled + '''") != 0) { return 5 }
+    if (strcmp(txt_capitalize("''' + titled + '''"), "''' + ('Ab ' + 'ab ' * 29) + '''") != 0) { return 6 }
     return 0
 }''')
     assert _run(workdir, src, use_native=use_native).regs.read(0) == 0

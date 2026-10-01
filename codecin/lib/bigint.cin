@@ -1,0 +1,560 @@
+// Code CIN 官方标准库: 任意精度整数 (bigint)
+// 用法: import "bigint.cin"
+//
+// 表示: 十进制数位数组, 低位存放在下标 0 (d[0] 是个位), n 为有效数位个数,
+// neg 为符号位 (0 非负 / 1 负)。整块数据都装在 struct 的固长数组里,
+// 因此不需要任何动态内存, 也不依赖宿主能力内建。
+//
+// 容量: BIGINT_DIGITS = 64 位十进制数位 (最大 10^64 - 1)。
+// 溢出: 结果超出容量时**饱和** —— 绝对值变成 10^64 - 1 (符号保留), 同时把
+//       全局溢出标志置 1; 用 bi_overflow() 查询 / bi_reset_overflow() 清除。
+//       饱和后继续参与运算会继续得到饱和值, 不会崩溃。
+//
+// 内存: 每个 BigInt 值是 66 槽 = 528 字节。遵循 CIN 值语义的写法
+//       (`BigInt r = bi_add(a, b)`) 会在堆上分配一块 struct 且不回收;
+//       默认 64 KiB 内存下整个程序大约只能承受 50 余次这样的"返回新值"调用。
+//       库内所有循环都改用 bi_xxx_into(a, b, out) 复用调用方提供的 out,
+//       所以 bi_fact / bi_pow 这类长循环**只占固定几块内存**。
+//       自己写长循环时也请用 *_into 形式, 或给 cpu.py 加大 --mem-size。
+
+struct BigInt {
+    int d[64]
+    int n
+    int neg
+}
+
+// 容量常量 (与 struct 的 d[64] 维度一致, 约定只读)
+int BIGINT_DIGITS = 64
+
+// 溢出标志: 1 表示曾经发生过容量饱和 (粘滞, 需要手动清除)
+int bi_ovf = 0
+
+// ---------------- 基础 ----------------
+
+// 固定返回容量常量 64
+function bi_capacity() -> int {
+    return 64
+}
+
+// 是否发生过越界饱和: 1 / 0
+function bi_overflow() -> int {
+    return bi_ovf
+}
+
+// 清除溢出标志
+function bi_reset_overflow() -> void {
+    bi_ovf = 0
+}
+
+// 置零 (清空全部数位, n = 1, neg = 0)
+function bi_clear(BigInt a) -> void {
+    for (int i = 0; i < 64; i = i + 1) {
+        a.d[i] = 0
+    }
+    a.n = 1
+    a.neg = 0
+}
+
+// 规范化: 收紧 n、去掉前导零、零的符号归 0
+function bi_norm(BigInt a) -> void {
+    int n = a.n
+    if (n < 1) {
+        n = 1
+        a.d[0] = 0
+    }
+    if (n > 64) { n = 64 }
+    int i = n - 1
+    while (i > 0 && a.d[i] == 0) { i = i - 1 }
+    a.n = i + 1
+    if (a.n == 1 && a.d[0] == 0) { a.neg = 0 }
+}
+
+// 值拷贝 (槽级复制, 不做指针别名), out 可与 a 为同一结构体
+function bi_copy(BigInt dst, BigInt src) -> void {
+    int i = 0
+    while (i < 64) {
+        dst.d[i] = src.d[i]
+        i = i + 1
+    }
+    dst.n = src.n
+    dst.neg = src.neg
+    bi_norm(dst)
+}
+
+// 饱和到 10^64 - 1, 符号由 s 决定并置溢出标志
+function bi_saturate(BigInt a, int s) -> void {
+    for (int i = 0; i < 64; i = i + 1) { a.d[i] = 9 }
+    a.n = 64
+    a.neg = 0
+    if (s < 0) { a.neg = 1 }
+    bi_ovf = 1
+}
+
+// 符号: -1 / 0 / 1 (会先规范化 a)
+function bi_sign(BigInt a) -> int {
+    bi_norm(a)
+    if (a.n == 1 && a.d[0] == 0) { return 0 }
+    if (a.neg != 0) { return -1 }
+    return 1
+}
+
+// 是否为零: 1 / 0
+function bi_is_zero(BigInt a) -> int {
+    if (bi_sign(a) == 0) { return 1 }
+    return 0
+}
+
+// 是否为负数: 1 / 0 (零返回 0)
+function bi_is_negative(BigInt a) -> int {
+    if (bi_sign(a) < 0) { return 1 }
+    return 0
+}
+
+// 去掉前导零后的位数 (零返回 1)
+function bi_digits(BigInt a) -> int {
+    bi_norm(a)
+    return a.n
+}
+
+// 是否已经饱和到容量上界 10^64 - 1
+function bi_is_saturated(BigInt a) -> int {
+    if (bi_digits(a) != 64) { return 0 }
+    int i = 0
+    while (i < 64) {
+        if (a.d[i] != 9) { return 0 }
+        i = i + 1
+    }
+    return 1
+}
+
+// ---------------- 构造 ----------------
+
+// 零
+function bi_zero() -> BigInt {
+    BigInt r
+    bi_clear(r)
+    return r
+}
+
+// 由 64 位整数构造 (int 最多 19 位十进制, 永远不会溢出)
+function bi_from_int(int v) -> BigInt {
+    BigInt r
+    bi_clear(r)
+    int x = v
+    int sgn = 1
+    if (x < 0) { sgn = -1 }
+    int i = 0
+    while (x != 0) {
+        if (i >= 64) {
+            bi_saturate(r, sgn)
+            return r
+        }
+        int dig = x % 10
+        if (dig < 0) { dig = 0 - dig }
+        r.d[i] = dig
+        x = idiv(x, 10)
+        i = i + 1
+    }
+    if (i == 0) { return r }
+    r.n = i
+    if (sgn < 0) { r.neg = 1 }
+    bi_norm(r)
+    return r
+}
+
+// 解析十进制字符串: 允许前导 '+' / '-'; 遇到第一个非数字字符即停止解析
+// (如 "12ab" -> 12, "abc" -> 0); 有效数字超过容量时饱和为 10^64 - 1
+function bi_from_str(string s) -> BigInt {
+    BigInt r
+    bi_clear(r)
+    int len = strlen(s)
+    int i = 0
+    int neg = 0
+    if (len > 0) {
+        int c0 = s[0]
+        if (c0 == 45) {
+            neg = 1
+            i = 1
+        } else if (c0 == 43) {
+            i = 1
+        }
+    }
+    int last = i - 1
+    int count = 0
+    while (i < len) {
+        int c = s[i]
+        if (c < 48 || c > 57) { break }
+        last = i
+        count = count + 1
+        i = i + 1
+    }
+    if (count == 0) { return r }
+    if (count > 64) {
+        bi_saturate(r, 1)
+        if (neg == 1) { r.neg = 1 }
+        return r
+    }
+    int k = 0
+    while (k < count) {
+        r.d[k] = s[last - k] - 48
+        k = k + 1
+    }
+    r.n = count
+    if (neg == 1) { r.neg = 1 }
+    bi_norm(r)
+    return r
+}
+
+// 十进制字符串: 零输出 "0", 负数带前导 '-'
+function bi_to_str(BigInt a) -> string {
+    bi_norm(a)
+    string out = ""
+    if (a.neg != 0) { out = "-" }
+    int i = a.n - 1
+    while (i >= 0) {
+        out = out + int_to_str(a.d[i])
+        i = i - 1
+    }
+    return out
+}
+
+// ---------------- 比较 ----------------
+
+// 绝对值比较: -1 / 0 / 1
+function bi_cmp_mag(BigInt a, BigInt b) -> int {
+    bi_norm(a)
+    bi_norm(b)
+    int na = a.n
+    int nb = b.n
+    if (na != nb) {
+        if (na > nb) { return 1 }
+        return -1
+    }
+    int i = na - 1
+    while (i >= 0) {
+        if (a.d[i] != b.d[i]) {
+            if (a.d[i] > b.d[i]) { return 1 }
+            return -1
+        }
+        i = i - 1
+    }
+    return 0
+}
+
+// 与数学顺序一致的比较: -1 (a < b) / 0 / 1 (a > b)
+function bi_cmp(BigInt a, BigInt b) -> int {
+    int sa = bi_sign(a)
+    int sb = bi_sign(b)
+    if (sa == 0 && sb == 0) { return 0 }
+    if (sa != sb) {
+        if (sa < sb) { return -1 }
+        return 1
+    }
+    int m = bi_cmp_mag(a, b)
+    if (sa < 0) { return 0 - m }
+    return m
+}
+
+// ---------------- 加减核心 (无堆分配) ----------------
+
+// out = |a| + |b|; out 必须与 a、b 为不同的结构体
+function bi_add_mag_into(BigInt a, BigInt b, BigInt out) -> void {
+    bi_clear(out)
+    int na = bi_digits(a)
+    int nb = bi_digits(b)
+    int n = na
+    if (nb > n) { n = nb }
+    int carry = 0
+    int i = 0
+    while (i < n) {
+        int t = carry
+        if (i < na) { t = t + a.d[i] }
+        if (i < nb) { t = t + b.d[i] }
+        out.d[i] = t % 10
+        carry = idiv(t, 10)
+        i = i + 1
+    }
+    if (carry > 0) {
+        if (n >= 64) {
+            bi_saturate(out, 1)
+            return
+        }
+        out.d[n] = carry
+        n = n + 1
+    }
+    out.n = n
+    bi_norm(out)
+}
+
+// out = |a| - |b|, 要求 |a| >= |b|; out 必须与 a、b 为不同的结构体
+function bi_sub_mag_into(BigInt a, BigInt b, BigInt out) -> void {
+    bi_clear(out)
+    int na = bi_digits(a)
+    int nb = bi_digits(b)
+    int borrow = 0
+    int i = 0
+    while (i < na) {
+        int t = a.d[i] - borrow
+        if (i < nb) { t = t - b.d[i] }
+        if (t < 0) {
+            t = t + 10
+            borrow = 1
+        } else {
+            borrow = 0
+        }
+        out.d[i] = t
+        i = i + 1
+    }
+    out.n = na
+    bi_norm(out)
+}
+
+// out = a + b (符号规则与数学一致); out 必须与 a、b 为不同的结构体
+function bi_add_into(BigInt a, BigInt b, BigInt out) -> void {
+    int sa = bi_sign(a)
+    int sb = bi_sign(b)
+    if (sa == sb) {
+        bi_add_mag_into(a, b, out)
+        if (sa < 0 && bi_is_zero(out) == 0) { out.neg = 1 }
+        return
+    }
+    int c = bi_cmp_mag(a, b)
+    if (c == 0) {
+        bi_clear(out)
+        return
+    }
+    if (c > 0) {
+        bi_sub_mag_into(a, b, out)
+        if (sa < 0) { out.neg = 1 }
+        return
+    }
+    bi_sub_mag_into(b, a, out)
+    if (sb < 0) { out.neg = 1 }
+}
+
+// out = a - b; out 必须与 a、b 为不同的结构体
+function bi_sub_into(BigInt a, BigInt b, BigInt out) -> void {
+    int sa = bi_sign(a)
+    int sb = bi_sign(b)
+    if (sa != sb) {
+        bi_add_mag_into(a, b, out)
+        // a - b 的符号: a 非零时取 a 的符号, a 为零时取 b 的反号
+        if (sa == 0) {
+            if (sb > 0) { out.neg = 1 }
+        } else if (sa < 0) {
+            out.neg = 1
+        }
+        return
+    }
+    int c = bi_cmp_mag(a, b)
+    if (c == 0) {
+        bi_clear(out)
+        return
+    }
+    if (c > 0) {
+        bi_sub_mag_into(a, b, out)
+        if (sa < 0) { out.neg = 1 }
+        return
+    }
+    bi_sub_mag_into(b, a, out)
+    // 同号且 |b| > |a| 时结果符号与 a 相反 (a 为正则结果为负)
+    if (sa > 0) { out.neg = 1 }
+}
+
+// out = -a
+function bi_neg_into(BigInt a, BigInt out) -> void {
+    bi_copy(out, a)
+    if (bi_is_zero(out) == 0) {
+        if (out.neg == 0) {
+            out.neg = 1
+        } else {
+            out.neg = 0
+        }
+    }
+}
+
+// out = |a|
+function bi_abs_into(BigInt a, BigInt out) -> void {
+    bi_copy(out, a)
+    out.neg = 0
+}
+
+// ---------------- 乘法核心 (无堆分配) ----------------
+
+// out = a * b, 逐位相乘 + 进位 (不依赖原生 64 位乘法);
+// out 必须与 a、b 为不同的结构体
+function bi_mul_into(BigInt a, BigInt b, BigInt out) -> void {
+    int sa = bi_sign(a)
+    int sb = bi_sign(b)
+    int na = a.n
+    int nb = b.n
+    bi_clear(out)
+    if (sa == 0 || sb == 0) { return }
+    if (na + nb - 1 > 64) {
+        bi_saturate(out, sa * sb)
+        return
+    }
+    int i = 0
+    while (i < na) {
+        int carry = 0
+        int j = 0
+        while (j < nb) {
+            int t = out.d[i + j] + a.d[i] * b.d[j] + carry
+            out.d[i + j] = t % 10
+            carry = idiv(t, 10)
+            j = j + 1
+        }
+        int k = i + nb
+        while (carry > 0) {
+            if (k >= 64) {
+                bi_saturate(out, sa * sb)
+                return
+            }
+            int t2 = out.d[k] + carry
+            out.d[k] = t2 % 10
+            carry = idiv(t2, 10)
+            k = k + 1
+        }
+        i = i + 1
+    }
+    out.n = 64
+    bi_norm(out)
+    if (bi_is_zero(out) == 0 && sa * sb < 0) { out.neg = 1 }
+}
+
+// out = a * k, k 为 64 位整数; 要求 |k| <= 10^17 (更大请用 bi_mul_into);
+// out 必须与 a 为不同的结构体
+function bi_mul_small_into(BigInt a, int k, BigInt out) -> void {
+    int m = k
+    int sgn = 1
+    if (m < 0) {
+        m = 0 - m
+        sgn = -1
+    }
+    int sa = bi_sign(a)
+    int na = a.n
+    bi_clear(out)
+    if (m == 0 || sa == 0) { return }
+    int carry = 0
+    int i = 0
+    while (i < na) {
+        int t = a.d[i] * m + carry
+        out.d[i] = t % 10
+        carry = idiv(t, 10)
+        i = i + 1
+    }
+    int p = na
+    while (carry > 0) {
+        if (p >= 64) {
+            bi_saturate(out, sa * sgn)
+            return
+        }
+        out.d[p] = carry % 10
+        carry = idiv(carry, 10)
+        p = p + 1
+    }
+    out.n = p
+    bi_norm(out)
+    if (bi_is_zero(out) == 0 && sa * sgn < 0) { out.neg = 1 }
+}
+
+// ---------------- 返回值语义包装 ----------------
+
+// 绝对值
+function bi_abs(BigInt a) -> BigInt {
+    BigInt r
+    bi_abs_into(a, r)
+    return r
+}
+
+// 相反数 (零的相反数仍为 0)
+function bi_neg(BigInt a) -> BigInt {
+    BigInt r
+    bi_neg_into(a, r)
+    return r
+}
+
+// a + b
+function bi_add(BigInt a, BigInt b) -> BigInt {
+    BigInt r
+    bi_add_into(a, b, r)
+    return r
+}
+
+// a - b
+function bi_sub(BigInt a, BigInt b) -> BigInt {
+    BigInt r
+    bi_sub_into(a, b, r)
+    return r
+}
+
+// a * b (逐位相乘 + 进位)
+function bi_mul(BigInt a, BigInt b) -> BigInt {
+    BigInt r
+    bi_mul_into(a, b, r)
+    return r
+}
+
+// a * k
+function bi_mul_small(BigInt a, int k) -> BigInt {
+    BigInt r
+    bi_mul_small_into(a, k, r)
+    return r
+}
+
+// a 的 e 次幂 (快速幂); e < 0 视为 0, 即返回 1
+function bi_pow(BigInt a, int e) -> BigInt {
+    BigInt base
+    BigInt acc
+    BigInt tmp
+    int k = e
+    int neg = 0
+    if (k < 0) { k = 0 }
+    bi_abs_into(a, base)
+    if (a.neg != 0 && k % 2 == 1) { neg = 1 }
+    bi_clear(acc)
+    acc.d[0] = 1
+    acc.n = 1
+    acc.neg = 0
+    while (k > 0) {
+        if (k % 2 == 1) {
+            bi_mul_into(acc, base, tmp)
+            bi_copy(acc, tmp)
+            if (bi_is_saturated(acc) == 1 && k > 1) {
+                bi_saturate(acc, 1)
+                if (neg == 1) { acc.neg = 1 }
+                return acc
+            }
+        }
+        k = idiv(k, 2)
+        if (k > 0) {
+            bi_mul_into(base, base, tmp)
+            bi_copy(base, tmp)
+            if (bi_is_saturated(base) == 1) {
+                bi_saturate(acc, 1)
+                if (neg == 1) { acc.neg = 1 }
+                return acc
+            }
+        }
+    }
+    if (neg == 1 && bi_is_zero(acc) == 0) { acc.neg = 1 }
+    return acc
+}
+
+// n 的阶乘 (n < 0 视为 0! = 1); 超过容量时饱和并置溢出标志
+function bi_fact(int n) -> BigInt {
+    BigInt acc
+    BigInt tmp
+    bi_clear(acc)
+    acc.d[0] = 1
+    acc.n = 1
+    acc.neg = 0
+    int i = 2
+    while (i <= n) {
+        bi_mul_small_into(acc, i, tmp)
+        bi_copy(acc, tmp)
+        if (bi_is_saturated(acc) == 1) { break }
+        i = i + 1
+    }
+    return acc
+}
