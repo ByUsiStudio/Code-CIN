@@ -245,3 +245,32 @@ def test_combin_lib(workdir, use_native):
     cpu = _run(workdir, COMBIN_SRC, use_native=use_native)
     assert not cpu.execution_failed
     assert cpu.regs.read(0) == 0
+
+
+TOGETHER_SRC = '''
+import "combin.cin"
+import "path.cin"
+
+function main() -> int {
+    // 两库同时导入: 全局符号 (comb_primes / path_parts_buf) 与函数名不得冲突
+    if (comb_sieve(100) != 25) { return 1 }
+    if (comb_choose(5, 2) != 10) { return 2 }
+    if (strcmp(path_normalize("a//b/./c/../d"), "a/b/d") != 0) { return 3 }
+    if (strcmp(path_str_basename("/a/b/c.txt"), "c.txt") != 0) { return 4 }
+    // 交错调用: path.cin 的全局分段缓冲不得破坏 combin.cin 的筛表
+    if (path_split_count("/a/b/c") != 3) { return 5 }
+    if (comb_prime_at(24) != 97) { return 6 }
+    if (strcmp(path_str_basename("/x/y/z"), "z") != 0) { return 7 }
+    if (comb_prime_count() != 25) { return 8 }
+    if (comb_catalan(5) != 42) { return 9 }
+    if (path_within("/x", "/x/y/z") != 1) { return 10 }
+    return 0
+}'''
+
+
+@pytest.mark.parametrize('use_native', (False, True), ids=('interp', 'native'))
+def test_combin_and_path_importable_together(workdir, use_native):
+    cpu = _run(workdir, TOGETHER_SRC, name='lib_combin_path.cin',
+               use_native=use_native)
+    assert not cpu.execution_failed
+    assert cpu.regs.read(0) == 0

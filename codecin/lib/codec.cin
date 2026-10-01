@@ -1,0 +1,534 @@
+// Code CIN 官方标准库: 编解码与简单密码 (codec)
+// 用法: import "codec.cin"
+//
+// 纯 CIN 实现, 只使用非宿主内建 (strlen / strcmp / substr / int_to_str),
+// 不调用 sha256 / base64_encode / base64_decode 等宿主能力, 因此在
+// --no-native 的纯 Python 路径与 Go 原生路径下行为完全一致。
+//
+// 字节语义: strlen / substr / s[i] 全是**字节**语义, 本库沿用同一约定 ——
+// 所有编解码都按 UTF-8 字节序列逐个字节处理, 不做码点解码。
+//
+// 堆与容量 (CIN 没有动态内存分配, 字符串拼接的堆块不回收):
+//   * 逐字符拼接会产生 O(n) 个堆块 (每个 1~2 字节), 总计约 O(n) 字节,
+//     与输出长度同阶; 但 txt_reverse / codec_reverse_bytes / codec_morse_decode
+//     这类"反向填表"操作需要逐字节前置, 代价为 O(n^2) 字节堆, 请只用于短串。
+//   * 内存默认 64 KiB (堆 0x8000 起向上, 栈自顶向下), 建议单次调用输入
+//     ≤ 2 KiB; 需要更长的串请用 --mem-size 扩容。
+//   * 本库不使用全局可变状态, 所有函数都是纯函数 (无重入问题)。
+
+// 局部重建缓冲容量 (字节); 供内部辅助函数使用, 不对外暴露语义
+const int codec_buf_cap = 256
+
+// 256 字节双向字母表: codec_bytes[i] == i (0..255),
+// 用于把任意字节值写回字符串 (CIN 字符串不可原地修改, 只能取单字节再拼接)。
+// 只含 ASCII 与 \xHH 转义, 因此源码本身是纯 ASCII, 不依赖文件编码。
+string codec_bytes = "\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0A\x0B\x0C\x0D\x0E\x0F\x10\x11\x12\x13\x14\x15\x16\x17\x18\x19\x1A\x1B\x1C\x1D\x1E\x1F" + " !\"#$%&'()*+,-./0123456789:;<=>?" + "@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_" + "`abcdefghijklmnopqrstuvwxyz{|}~\x7F" + "\x80\x81\x82\x83\x84\x85\x86\x87\x88\x89\x8A\x8B\x8C\x8D\x8E\x8F\x90\x91\x92\x93\x94\x95\x96\x97\x98\x99\x9A\x9B\x9C\x9D\x9E\x9F" + "\xA0\xA1\xA2\xA3\xA4\xA5\xA6\xA7\xA8\xA9\xAA\xAB\xAC\xAD\xAE\xAF\xB0\xB1\xB2\xB3\xB4\xB5\xB6\xB7\xB8\xB9\xBA\xBB\xBC\xBD\xBE\xBF" + "\xC0\xC1\xC2\xC3\xC4\xC5\xC6\xC7\xC8\xC9\xCA\xCB\xCC\xCD\xCE\xCF\xD0\xD1\xD2\xD3\xD4\xD5\xD6\xD7\xD8\xD9\xDA\xDB\xDC\xDD\xDE\xDF" + "\xE0\xE1\xE2\xE3\xE4\xE5\xE6\xE7\xE8\xE9\xEA\xEB\xEC\xED\xEE\xEF\xF0\xF1\xF2\xF3\xF4\xF5\xF6\xF7\xF8\xF9\xFA\xFB\xFC\xFD\xFE\xFF"
+
+// ---------------- 内部辅助函数 (非公开 API, 统一 codec_ 前缀) ----------------
+
+// ASCII 字母: 'A'-'Z' 或 'a'-'z'
+function codec_is_alpha(int c) -> int {
+    if (c >= 'A' && c <= 'Z') { return 1 }
+    if (c >= 'a' && c <= 'z') { return 1 }
+    return 0
+}
+
+// ASCII 数字 '0'-'9'
+function codec_is_digit(int c) -> int {
+    if (c >= '0' && c <= '9') { return 1 }
+    return 0
+}
+
+// URL 无需转义的字节: A-Za-z0-9-_.~
+function codec_is_url_safe(int c) -> int {
+    if (c >= 'A' && c <= 'Z') { return 1 }
+    if (c >= 'a' && c <= 'z') { return 1 }
+    if (c >= '0' && c <= '9') { return 1 }
+    if (c == '-' || c == '_' || c == '.' || c == '~') { return 1 }
+    return 0
+}
+
+// 把 code 限制到 [0, 255] (解码时防御性使用)
+function codec_byte(int code) -> int {
+    return code & 0xFF
+}
+
+// 逐字节重建 s 的 [lo, hi) 区间, 结果与 substr(s, lo, hi - lo) 相同,
+// 用长度为 codec_buf_cap 的局部缓冲倒序填表, 避免逐字节前置拼接的 O(n^2) 堆。
+function codec_rebuild_range(string s, int lo, int hi) -> string {
+    if (lo < 0) { lo = 0 }
+    if (hi > strlen(s)) { hi = strlen(s) }
+    if (hi <= lo) { return "" }
+    string out = ""
+    int buf[codec_buf_cap]
+    int pos = lo
+    while (pos < hi) {
+        int k = 0
+        int stop = pos + codec_buf_cap
+        if (stop > hi) { stop = hi }
+        while (pos < stop) {
+            buf[k] = s[pos]
+            k = k + 1
+            pos = pos + 1
+        }
+        int j = k - 1
+        while (j >= 0) {
+            out = out + codec_chr_of(buf[j])
+            j = j - 1
+        }
+    }
+    return out
+}
+
+// 字节值 -> 单字符字符串 (0..255); 越界值按 [0, 255] 截断
+function codec_chr_of(int b) -> string {
+    int v = b & 0xFF
+    return substr(codec_bytes, v, 1)
+}
+
+// base64 正向字母表下标是否合法 (0..63)
+function codec_b64_ok(int c) -> int {
+    if (c >= 'A' && c <= 'Z') { return 1 }
+    if (c >= 'a' && c <= 'z') { return 1 }
+    if (c >= '0' && c <= '9') { return 1 }
+    if (c == '+' || c == '/') { return 1 }
+    return 0
+}
+
+// base64 字符 -> 6 位值 (调用前必须先用 codec_b64_ok 校验; 非法返回 -1)
+function codec_b64_val(int c) -> int {
+    if (c >= 'A' && c <= 'Z') { return c - 'A' }
+    if (c >= 'a' && c <= 'z') { return c - 'a' + 26 }
+    if (c >= '0' && c <= '9') { return c - '0' + 52 }
+    if (c == '+') { return 62 }
+    if (c == '/') { return 63 }
+    return -1
+}
+
+// 摩尔斯码查表: 大写字母 / 数字 -> 点划串, 未知返回 ""
+function codec_morse_of(int c) -> string {
+    if (c == 'A') { return ".-" }
+    if (c == 'B') { return "-..." }
+    if (c == 'C') { return "-.-." }
+    if (c == 'D') { return "-.." }
+    if (c == 'E') { return "." }
+    if (c == 'F') { return "..-." }
+    if (c == 'G') { return "--." }
+    if (c == 'H') { return "...." }
+    if (c == 'I') { return ".." }
+    if (c == 'J') { return ".---" }
+    if (c == 'K') { return "-.-" }
+    if (c == 'L') { return ".-.." }
+    if (c == 'M') { return "--" }
+    if (c == 'N') { return "-." }
+    if (c == 'O') { return "---" }
+    if (c == 'P') { return ".--." }
+    if (c == 'Q') { return "--.-" }
+    if (c == 'R') { return ".-." }
+    if (c == 'S') { return "..." }
+    if (c == 'T') { return "-" }
+    if (c == 'U') { return "..-" }
+    if (c == 'V') { return "...-" }
+    if (c == 'W') { return ".--" }
+    if (c == 'X') { return "-..-" }
+    if (c == 'Y') { return "-.--" }
+    if (c == 'Z') { return "--.." }
+    if (c == '0') { return "-----" }
+    if (c == '1') { return ".----" }
+    if (c == '2') { return "..---" }
+    if (c == '3') { return "...--" }
+    if (c == '4') { return "....-" }
+    if (c == '5') { return "....." }
+    if (c == '6') { return "-...." }
+    if (c == '7') { return "--..." }
+    if (c == '8') { return "---.." }
+    if (c == '9') { return "----." }
+    return ""
+}
+
+// 摩尔斯码 -> 字符 (未知返回 0)
+function codec_morse_char(string code) -> int {
+    if (strcmp(code, ".-") == 0) { return 'A' }
+    if (strcmp(code, "-...") == 0) { return 'B' }
+    if (strcmp(code, "-.-.") == 0) { return 'C' }
+    if (strcmp(code, "-..") == 0) { return 'D' }
+    if (strcmp(code, ".") == 0) { return 'E' }
+    if (strcmp(code, "..-.") == 0) { return 'F' }
+    if (strcmp(code, "--.") == 0) { return 'G' }
+    if (strcmp(code, "....") == 0) { return 'H' }
+    if (strcmp(code, "..") == 0) { return 'I' }
+    if (strcmp(code, ".---") == 0) { return 'J' }
+    if (strcmp(code, "-.-") == 0) { return 'K' }
+    if (strcmp(code, ".-..") == 0) { return 'L' }
+    if (strcmp(code, "--") == 0) { return 'M' }
+    if (strcmp(code, "-.") == 0) { return 'N' }
+    if (strcmp(code, "---") == 0) { return 'O' }
+    if (strcmp(code, ".--.") == 0) { return 'P' }
+    if (strcmp(code, "--.-") == 0) { return 'Q' }
+    if (strcmp(code, ".-.") == 0) { return 'R' }
+    if (strcmp(code, "...") == 0) { return 'S' }
+    if (strcmp(code, "-") == 0) { return 'T' }
+    if (strcmp(code, "..-") == 0) { return 'U' }
+    if (strcmp(code, "...-") == 0) { return 'V' }
+    if (strcmp(code, ".--") == 0) { return 'W' }
+    if (strcmp(code, "-..-") == 0) { return 'X' }
+    if (strcmp(code, "-.--") == 0) { return 'Y' }
+    if (strcmp(code, "--..") == 0) { return 'Z' }
+    if (strcmp(code, "-----") == 0) { return '0' }
+    if (strcmp(code, ".----") == 0) { return '1' }
+    if (strcmp(code, "..---") == 0) { return '2' }
+    if (strcmp(code, "...--") == 0) { return '3' }
+    if (strcmp(code, "....-") == 0) { return '4' }
+    if (strcmp(code, ".....") == 0) { return '5' }
+    if (strcmp(code, "-....") == 0) { return '6' }
+    if (strcmp(code, "--...") == 0) { return '7' }
+    if (strcmp(code, "---..") == 0) { return '8' }
+    if (strcmp(code, "----.") == 0) { return '9' }
+    return 0
+}
+
+// ---------------- 公开 API ----------------
+
+// 字节下标 i 处的字符 (单字符字符串); 越界返回 "" (与内置下标不同, 本函数做边界检查)
+function codec_char_at(string s, int i) -> string {
+    if (i < 0 || i >= strlen(s)) { return "" }
+    return substr(s, i, 1)
+}
+
+// 单字节的十六进制 (小写), 高半字节在前
+function codec_hex_byte(int b) -> string {
+    string d = "0123456789abcdef"
+    int v = b & 0xFF
+    return substr(d, v >> 4, 1) + substr(d, v & 15, 1)
+}
+
+// 字节串 -> 小写十六进制 (无分隔); 空串返回空串
+function codec_hex_encode(string s) -> string {
+    string out = ""
+    int n = strlen(s)
+    for (int i = 0; i < n; i = i + 1) {
+        out = out + codec_hex_byte(s[i])
+    }
+    return out
+}
+
+// 十六进制字符 -> 数值; 非法返回 -1
+function codec_hex_digit(int c) -> int {
+    if (c >= '0' && c <= '9') { return c - '0' }
+    if (c >= 'a' && c <= 'f') { return c - 'a' + 10 }
+    if (c >= 'A' && c <= 'F') { return c - 'A' + 10 }
+    return -1
+}
+
+// 小写/大写十六进制 -> 字节串; 长度为奇数或含非法字符时返回 ""
+function codec_hex_decode(string h) -> string {
+    int n = strlen(h)
+    if (n == 0) { return "" }
+    if ((n % 2) != 0) { return "" }
+    int i = 0
+    while (i < n) {
+        if (codec_hex_digit(h[i]) < 0) { return "" }
+        if (codec_hex_digit(h[i + 1]) < 0) { return "" }
+        i = i + 2
+    }
+    string out = ""
+    i = 0
+    while (i < n) {
+        int hi = codec_hex_digit(h[i])
+        int lo = codec_hex_digit(h[i + 1])
+        out = out + codec_chr_of(hi * 16 + lo)
+        i = i + 2
+    }
+    return out
+}
+
+// 字节串 -> 百分号编码 (URL): 只保留 A-Za-z0-9-_.~, 其余为 %XX (大写十六进制)
+function codec_url_encode(string s) -> string {
+    string out = ""
+    int n = strlen(s)
+    for (int i = 0; i < n; i = i + 1) {
+        int c = s[i]
+        if (codec_is_url_safe(c) == 1) {
+            out = out + substr(s, i, 1)
+        } else {
+            out = out + "%" + lower(codec_hex_byte(c))
+        }
+    }
+    return out
+}
+
+// 百分号编码 -> 字节串; '+' 视为空格; 非法 % 序列 (截断或非十六进制) 返回 ""
+function codec_url_decode(string s) -> string {
+    int n = strlen(s)
+    if (n == 0) { return "" }
+    int i = 0
+    while (i < n) {
+        int c = s[i]
+        if (c == '%') {
+            if (i + 2 >= n) { return "" }
+            if (codec_hex_digit(s[i + 1]) < 0) { return "" }
+            if (codec_hex_digit(s[i + 2]) < 0) { return "" }
+            i = i + 3
+        } else {
+            i = i + 1
+        }
+    }
+    string out = ""
+    i = 0
+    while (i < n) {
+        int c = s[i]
+        if (c == '+') {
+            out = out + " "
+            i = i + 1
+        } else if (c == '%') {
+            out = out + codec_chr_of(codec_hex_digit(s[i + 1]) * 16
+                                     + codec_hex_digit(s[i + 2]))
+            i = i + 3
+        } else {
+            out = out + substr(s, i, 1)
+            i = i + 1
+        }
+    }
+    return out
+}
+
+// 凯撒密码加密: 只移动 ASCII 字母, 大小写各自保持; shift 可为负, 按 26 取模
+function codec_caesar(string s, int shift) -> string {
+    int m = shift % 26
+    if (m < 0) { m = m + 26 }
+    string out = ""
+    int n = strlen(s)
+    for (int i = 0; i < n; i = i + 1) {
+        int c = s[i]
+        if (c >= 'A' && c <= 'Z') {
+            out = out + codec_chr_of((c - 'A' + m) % 26 + 'A')
+        } else if (c >= 'a' && c <= 'z') {
+            out = out + codec_chr_of((c - 'a' + m) % 26 + 'a')
+        } else {
+            out = out + substr(s, i, 1)
+        }
+    }
+    return out
+}
+
+// 凯撒密码解密: 等价 codec_caesar(s, -shift)
+function codec_decaesar(string s, int shift) -> string {
+    return codec_caesar(s, 0 - shift)
+}
+
+// ROT13: 凯撒的特例 (shift = 13), 只转字母
+function codec_rot13(string s) -> string {
+    return codec_caesar(s, 13)
+}
+
+// 循环密钥 XOR: 密钥为空时原样返回 s; 自逆 (加密 = 解密)
+function codec_xor_cipher(string s, string key) -> string {
+    int kn = strlen(key)
+    if (kn == 0) { return s }
+    string out = ""
+    int n = strlen(s)
+    for (int i = 0; i < n; i = i + 1) {
+        out = out + codec_chr_of((s[i] ^ key[i % kn]) & 0xFF)
+    }
+    return out
+}
+
+// 字节串 -> 标准 base64 (字母表 A-Za-z0-9+/, '=' 填充); 空串返回空串
+function codec_base64_encode(string s) -> string {
+    string a = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+    int n = strlen(s)
+    if (n == 0) { return "" }
+    string out = ""
+    int i = 0
+    while (i + 3 <= n) {
+        int b0 = s[i]
+        int b1 = s[i + 1]
+        int b2 = s[i + 2]
+        out = out + substr(a, b0 >> 2, 1) + substr(a, ((b0 & 3) << 4) | (b1 >> 4), 1) + substr(a, ((b1 & 15) << 2) | (b2 >> 6), 1) + substr(a, b2 & 63, 1)
+        i = i + 3
+    }
+    int rem = n - i
+    if (rem == 1) {
+        int b0 = s[i]
+        out = out + substr(a, b0 >> 2, 1) + substr(a, (b0 & 3) << 4, 1) + "=="
+    } else if (rem == 2) {
+        int b0 = s[i]
+        int b1 = s[i + 1]
+        out = out + substr(a, b0 >> 2, 1) + substr(a, ((b0 & 3) << 4) | (b1 >> 4), 1) + substr(a, (b1 & 15) << 2, 1) + "="
+    }
+    return out
+}
+
+// base64 -> 字节串; 长度非 4 的倍数 / 非法字符 / 填充位置错误时返回 ""
+function codec_base64_decode(string b) -> string {
+    int n = strlen(b)
+    if (n == 0) { return "" }
+    if ((n % 4) != 0) { return "" }
+    int pad = 0
+    if (b[n - 1] == '=') { pad = pad + 1 }
+    if (b[n - 2] == '=') { pad = pad + 1 }
+    if (pad > 2) { return "" }
+    if (pad == 1 && n < 4) { return "" }
+    if (pad == 2 && n < 4) { return "" }
+    int i = 0
+    while (i < n) {
+        int c = b[i]
+        if (i >= n - pad) {
+            if (c != '=') { return "" }
+        } else {
+            if (codec_b64_ok(c) == 0) { return "" }
+        }
+        i = i + 1
+    }
+    string out = ""
+    i = 0
+    while (i < n) {
+        if (i + 3 >= n) { break }
+        int c0 = codec_b64_val(b[i])
+        int c1 = codec_b64_val(b[i + 1])
+        out = out + codec_chr_of((c0 << 2) | (c1 >> 4))
+        int ch2 = b[i + 2]
+        if (ch2 != '=') {
+            int c2 = codec_b64_val(ch2)
+            out = out + codec_chr_of(((c1 & 15) << 4) | (c2 >> 2))
+            int ch3 = b[i + 3]
+            if (ch3 != '=') {
+                int c3 = codec_b64_val(ch3)
+                out = out + codec_chr_of(((c2 & 3) << 6) | c3)
+            }
+        }
+        i = i + 4
+    }
+    return out
+}
+
+// 字节串 -> RLE: 数字字符转义为 1<digit>, 连续重复 k>=2 次写 <k><byte>
+function codec_rle_encode(string s) -> string {
+    int n = strlen(s)
+    if (n == 0) { return "" }
+    string out = ""
+    int i = 0
+    while (i < n) {
+        int c = s[i]
+        int j = i
+        while (j < n) {
+            if (s[j] != c) { break }
+            j = j + 1
+        }
+        int run = j - i
+        if (run >= 2) {
+            out = out + int_to_str(run) + substr(s, i, 1)
+        } else if (codec_is_digit(c) == 1) {
+            out = out + "1" + substr(s, i, 1)
+        } else {
+            out = out + substr(s, i, 1)
+        }
+        i = j
+    }
+    return out
+}
+
+// RLE -> 字节串; 非法 (计数缺字节 / 前导 0 / 展开超限) 返回 ""
+function codec_rle_decode(string s) -> string {
+    int n = strlen(s)
+    if (n == 0) { return "" }
+    string out = ""
+    int i = 0
+    while (i < n) {
+        int c = s[i]
+        if (codec_is_digit(c) == 1) {
+            if (c == '0') { return "" }
+            int count = 0
+            while (i < n) {
+                if (codec_is_digit(s[i]) == 0) { break }
+                count = count * 10 + (s[i] - '0')
+                if (count > 4096) { return "" }
+                i = i + 1
+            }
+            if (i >= n) { return "" }
+            string unit = substr(s, i, 1)
+            i = i + 1
+            int k = 0
+            while (k < count) {
+                out = out + unit
+                k = k + 1
+            }
+        } else {
+            out = out + substr(s, i, 1)
+            i = i + 1
+        }
+    }
+    return out
+}
+
+// 字母/数字 -> 摩尔斯码: 字符间单空格, 单词间 "/"; 不支持的字节跳过; 空串返回空串
+function codec_morse_encode(string s) -> string {
+    string out = ""
+    int n = strlen(s)
+    int last_word = 0
+    for (int i = 0; i < n; i = i + 1) {
+        int c = s[i]
+        if (c >= 'a' && c <= 'z') { c = c - 32 }
+        string code = codec_morse_of(c)
+        if (strlen(code) > 0) {
+            if (strlen(out) > 0) { out = out + " " }
+            out = out + code
+            last_word = 1
+        } else if (c == ' ') {
+            if (last_word == 1) {
+                out = out + " /"
+                last_word = 0
+            }
+        }
+    }
+    return out
+}
+
+// 摩尔斯码 -> 大写字母/数字: 未知码字跳过, 无有效码字时返回 ""
+function codec_morse_decode(string m) -> string {
+    int n = strlen(m)
+    if (n == 0) { return "" }
+    string out = ""
+    int i = 0
+    int last_word = 0
+    while (i < n) {
+        if (m[i] == ' ') {
+            i = i + 1
+            continue
+        }
+        if (m[i] == '/') {
+            if (strlen(out) > 0 && last_word == 1) {
+                out = out + " "
+                last_word = 0
+            }
+            i = i + 1
+            continue
+        }
+        int start = i
+        while (i < n) {
+            if (m[i] == ' ' || m[i] == '/') { break }
+            i = i + 1
+        }
+        int ch = codec_morse_char(substr(m, start, i - start))
+        if (ch != 0) {
+            out = out + codec_chr_of(ch)
+            last_word = 1
+        }
+    }
+    return out
+}
+
+// 按字节反转字符串; 空串返回空串 (多字节 UTF-8 字符会被拆散)
+function codec_reverse_bytes(string s) -> string {
+    int n = strlen(s)
+    string out = ""
+    int i = n
+    while (i >= codec_buf_cap) {
+        out = out + codec_rebuild_range(s, i - codec_buf_cap, i)
+        i = i - codec_buf_cap
+    }
+    if (i > 0) {
+        out = out + codec_rebuild_range(s, 0, i)
+    }
+    return out
+}

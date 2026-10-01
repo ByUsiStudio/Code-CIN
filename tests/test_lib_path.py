@@ -171,43 +171,45 @@ function main() -> int {
     // 绝对路径与相对路径没有可比的分段前缀 -> ""
     if (strcmp(path_common_prefix("/a", "a"), "") != 0) { return 115 }
     if (strcmp(path_common_prefix("", "a"), "") != 0) { return 116 }
-    if (strcmp(path_common_prefix("/", "/a"), "/") != 0) { return 117 }
-    if (strcmp(path_common_prefix("C:\\\\a\\\\b", "C:\\\\a\\\\c"), "C:/a") != 0) { return 118 }
+    // 根目录 "/" 没有分段, 因此与 "/a" 没有分段层面的公共前缀 -> "" (root 本身例外见下)
+    if (strcmp(path_common_prefix("/", "/a"), "") != 0) { return 117 }
+    if (strcmp(path_common_prefix("/", "/"), "") != 0) { return 118 }
+    if (strcmp(path_common_prefix("C:\\\\a\\\\b", "C:\\\\a\\\\c"), "C:/a") != 0) { return 119 }
 
     // ---- path_within ----
-    if (path_within("/a/b", "/a/b/c.txt") != 1) { return 119 }
-    if (path_within("/a/b", "/a/b") != 1) { return 120 }
-    if (path_within("/a/b", "/a/bc") != 0) { return 121 }
-    if (path_within("/a/b", "/a") != 0) { return 122 }
-    if (path_within("/a/b", "/x/y") != 0) { return 123 }
-    if (path_within("", "a/b") != 0) { return 124 }
-    if (path_within("/", "/a/b") != 1) { return 125 }
-    if (path_within("/", "a/b") != 0) { return 126 }
-    if (path_within("a", "a/b") != 1) { return 127 }
-    if (path_within("/a/b/c", "/a/b/c/d") != 1) { return 128 }
+    if (path_within("/a/b", "/a/b/c.txt") != 1) { return 120 }
+    if (path_within("/a/b", "/a/b") != 1) { return 121 }
+    if (path_within("/a/b", "/a/bc") != 0) { return 122 }
+    if (path_within("/a/b", "/a") != 0) { return 123 }
+    if (path_within("/a/b", "/x/y") != 0) { return 124 }
+    if (path_within("", "a/b") != 0) { return 125 }
+    if (path_within("/", "/a/b") != 1) { return 126 }
+    if (path_within("/", "a/b") != 0) { return 127 }
+    if (path_within("a", "a/b") != 1) { return 128 }
+    if (path_within("/a/b/c", "/a/b/c/d") != 1) { return 129 }
 
     // ---- path_change_ext ----
-    if (strcmp(path_change_ext("a/b/c.txt", "md"), "a/b/c.md") != 0) { return 129 }
-    if (strcmp(path_change_ext("a/b/c.txt", ".md"), "a/b/c.md") != 0) { return 130 }
-    if (strcmp(path_change_ext("a/b/c.txt", ""), "a/b/c") != 0) { return 131 }
-    if (strcmp(path_change_ext("a", "txt"), "a.txt") != 0) { return 132 }
-    if (strcmp(path_change_ext("a.tar.gz", "zip"), "a.tar.zip") != 0) { return 133 }
-    if (strcmp(path_change_ext("", "txt"), ".txt") != 0) { return 134 }
-    if (strcmp(path_change_ext("/a/b/", "txt"), "/a/b.txt") != 0) { return 135 }
-    if (strcmp(path_change_ext(".gitignore", "txt"), ".gitignore.txt") != 0) { return 136 }
-    if (strcmp(path_change_ext(".", "txt"), ".") != 0) { return 137 }
-    if (strcmp(path_change_ext("..", "txt"), "..") != 0) { return 138 }
+    if (strcmp(path_change_ext("a/b/c.txt", "md"), "a/b/c.md") != 0) { return 130 }
+    if (strcmp(path_change_ext("a/b/c.txt", ".md"), "a/b/c.md") != 0) { return 131 }
+    if (strcmp(path_change_ext("a/b/c.txt", ""), "a/b/c") != 0) { return 132 }
+    if (strcmp(path_change_ext("a", "txt"), "a.txt") != 0) { return 133 }
+    if (strcmp(path_change_ext("a.tar.gz", "zip"), "a.tar.zip") != 0) { return 134 }
+    if (strcmp(path_change_ext("", "txt"), "") != 0) { return 135 }
+    if (strcmp(path_change_ext("/a/b/", "txt"), "/a/b/") != 0) { return 136 }
+    if (strcmp(path_change_ext(".gitignore", "txt"), ".gitignore.txt") != 0) { return 137 }
+    if (strcmp(path_change_ext(".", "txt"), ".") != 0) { return 138 }
+    if (strcmp(path_change_ext("..", "txt"), "..") != 0) { return 139 }
 
     // ---- 组合使用: 规范化后取各段 ----
     string n = path_normalize("/srv/www/../www/./site//index.html")
-    if (strcmp(n, "/srv/www/site/index.html") != 0) { return 139 }
-    if (strcmp(path_ext(n), ".html") != 0) { return 140 }
-    if (strcmp(path_stem(n), "index") != 0) { return 141 }
-    if (strcmp(path_str_basename(n), "index.html") != 0) { return 142 }
-    if (strcmp(path_str_dirname(n), "/srv/www/site") != 0) { return 143 }
-    if (path_within("/srv/www", n) != 1) { return 144 }
-    if (path_split_count(n) != 4) { return 145 }
-    if (strcmp(path_change_ext(n, "htm"), "/srv/www/site/index.htm") != 0) { return 146 }
+    if (strcmp(n, "/srv/www/site/index.html") != 0) { return 140 }
+    if (strcmp(path_ext(n), ".html") != 0) { return 141 }
+    if (strcmp(path_stem(n), "index") != 0) { return 142 }
+    if (strcmp(path_str_basename(n), "index.html") != 0) { return 143 }
+    if (strcmp(path_str_dirname(n), "/srv/www/site") != 0) { return 144 }
+    if (path_within("/srv/www", n) != 1) { return 145 }
+    if (path_split_count(n) != 4) { return 146 }
+    if (strcmp(path_change_ext(n, "htm"), "/srv/www/site/index.htm") != 0) { return 147 }
 
     return 0
 }'''
@@ -216,5 +218,33 @@ function main() -> int {
 @pytest.mark.parametrize('use_native', (False, True), ids=('interp', 'native'))
 def test_path_lib(workdir, use_native):
     cpu = _run(workdir, PATH_SRC, use_native=use_native)
+    assert not cpu.execution_failed
+    assert cpu.regs.read(0) == 0
+
+
+TOGETHER_SRC = '''
+import "path.cin"
+import "combin.cin"
+
+function main() -> int {
+    // 与 combin.cin 同时导入, 并以 path_ 前缀做一轮端到端小流程
+    if (comb_sieve(50) != 15) { return 1 }    string p = path_normalize("src//lib/../lib/./path.cin")
+    if (strcmp(p, "src/lib/path.cin") != 0) { return 2 }
+    if (strcmp(path_ext(p), ".cin") != 0) { return 3 }
+    if (strcmp(path_stem(p), "path") != 0) { return 4 }
+    if (strcmp(path_str_dirname(p), "src/lib") != 0) { return 5 }
+    if (path_within("src", p) != 1) { return 6 }
+    if (strcmp(path_str_join("src/lib", "path.cin"), "src/lib/path.cin") != 0) { return 7 }
+    if (comb_prime_at(14) != 47) { return 8 }
+    if (strcmp(path_change_ext(p, "bak"), "src/lib/path.bak") != 0) { return 9 }
+    if (comb_is_prime(47) != 1) { return 10 }
+    return 0
+}'''
+
+
+@pytest.mark.parametrize('use_native', (False, True), ids=('interp', 'native'))
+def test_path_and_combin_importable_together(workdir, use_native):
+    cpu = _run(workdir, TOGETHER_SRC, name='lib_path_combin.cin',
+               use_native=use_native)
     assert not cpu.execution_failed
     assert cpu.regs.read(0) == 0

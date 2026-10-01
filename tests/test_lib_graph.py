@@ -309,6 +309,12 @@ function main() -> int {
     if (reach != 16) { return 161 }
     if (dd[15] != 120) { return 162 }
     if (graph_weight(14, 15) != 15) { return 163 }
+
+    // ---- 内部辅助 (非稳定接口, 顺带覆盖) ----
+    if (graph_aux_node(0) != 1 || graph_aux_node(15) != 1) { return 164 }
+    if (graph_aux_node(16) != 0 || graph_aux_node(-1) != 0) { return 165 }
+    if (graph_aux_arc(0, 1) != 1 || graph_aux_arc(1, 0) != 1) { return 166 }
+    if (graph_aux_arc(0, 2) != 0) { return 167 }
     return 0
 }'''
 
