@@ -1,0 +1,199 @@
+// Code CIN 官方标准库: 定长二叉堆 (heap)
+// 用法: import "heap.cin"
+//
+// 纯 CIN 实现, 不使用任何宿主能力内建, 也不做动态内存分配:
+// 堆存放在库内全局数组里, 容量上限 HEAP_CAP = 64。
+// 同一份实现同时支持最小堆与最大堆, 由标志位 heap_is_max 选择
+// (heap_is_max == 0 为最小堆, 非零为最大堆); heap_sort 固定升序。
+//
+// 全局数据段占用 (每槽 8 字节):
+//   heap_data[64]                                      =  64 槽
+//   标量 (heap_len / heap_is_max)                      =   2 槽
+//   合计 66 槽 = 528 字节, 远小于默认 64 KiB 数据段。
+//
+// 语义说明:
+//   * 库内只有一份全局实例, 同一程序内共享; 需要多个堆请用 struct 自行封装;
+//   * heap_sort 直接在被排序数组上就地完成 (内部自建最大堆), 不读写上面的全局堆,
+//     因此调用 heap_sort 不会破坏已有的堆状态;
+//   * 空堆: heap_pop / heap_peek / heap_replace 返回 0 (无法区分"空"与"堆顶就是 0",
+//     需要区分时先查 heap_is_empty)。
+
+int heap_data[64]
+int heap_len = 0
+int heap_is_max = 0
+
+// ---------------- 生命周期 ----------------
+
+// 容量上限
+function heap_capacity() -> int {
+    return 64
+}
+
+// 重置为空堆; is_max 非零表示最大堆, 否则最小堆
+function heap_reset(int is_max) -> void {
+    heap_len = 0
+    if (is_max) {
+        heap_is_max = 1
+    } else {
+        heap_is_max = 0
+    }
+}
+
+// ---------------- 状态查询 ----------------
+
+function heap_size() -> int {
+    return heap_len
+}
+
+// 空堆返回 1
+function heap_is_empty() -> int {
+    if (heap_len == 0) { return 1 }
+    return 0
+}
+
+// ---------------- 内部辅助 ----------------
+
+// a 是否应排在 b 前面 (即 a 更靠近堆顶); 内部辅助
+function heap_better(int a, int b) -> int {
+    if (heap_is_max != 0) {
+        if (a > b) { return 1 }
+        return 0
+    }
+    if (a < b) { return 1 }
+    return 0
+}
+
+// 把下标 i 的元素下沉到合适位置 (内部辅助, 按当前 heap_is_max)
+function heap_sift_down(int i) -> void {
+    int done = 0
+    while (done == 0) {
+        int l = 2 * i + 1
+        int r = 2 * i + 2
+        int best = i
+        if (l < heap_len && heap_better(heap_data[l], heap_data[best]) == 1) { best = l }
+        if (r < heap_len && heap_better(heap_data[r], heap_data[best]) == 1) { best = r }
+        if (best == i) {
+            done = 1
+        } else {
+            int t = heap_data[i]
+            heap_data[i] = heap_data[best]
+            heap_data[best] = t
+            i = best
+        }
+    }
+}
+
+// 在 a[0..m-1] 内把下标 i 下沉 (最大堆, 供 heap_sort 用); 内部辅助
+function heap_sift_max(int[] a, int m, int i) -> void {
+    int done = 0
+    while (done == 0) {
+        int l = 2 * i + 1
+        int r = 2 * i + 2
+        int best = i
+        if (l < m && a[l] > a[best]) { best = l }
+        if (r < m && a[r] > a[best]) { best = r }
+        if (best == i) {
+            done = 1
+        } else {
+            int t = a[i]
+            a[i] = a[best]
+            a[best] = t
+            i = best
+        }
+    }
+}
+
+// ---------------- 入堆 / 出堆 ----------------
+
+// 入堆; 成功返回 1, 满时返回 0 (丢弃该值)
+function heap_push(int v) -> int {
+    if (heap_len >= 64) { return 0 }
+    int i = heap_len
+    heap_data[i] = v
+    heap_len = heap_len + 1
+    int done = 0
+    while (i > 0 && done == 0) {
+        int p = idiv(i - 1, 2)
+        if (heap_better(heap_data[i], heap_data[p]) == 1) {
+            int t = heap_data[i]
+            heap_data[i] = heap_data[p]
+            heap_data[p] = t
+            i = p
+        } else {
+            done = 1
+        }
+    }
+    return 1
+}
+
+// 弹出堆顶并返回; 空堆返回 0
+function heap_pop() -> int {
+    if (heap_len == 0) { return 0 }
+    int top = heap_data[0]
+    heap_len = heap_len - 1
+    if (heap_len > 0) {
+        heap_data[0] = heap_data[heap_len]
+        heap_sift_down(0)
+    }
+    return top
+}
+
+// 查看堆顶 (不出堆); 空堆返回 0
+function heap_peek() -> int {
+    if (heap_len == 0) { return 0 }
+    return heap_data[0]
+}
+
+// 弹出堆顶并压入 v, 返回被弹出的值; 空堆时等价于 push(v) 并返回 0
+function heap_replace(int v) -> int {
+    if (heap_len == 0) {
+        heap_push(v)
+        return 0
+    }
+    int top = heap_data[0]
+    heap_data[0] = v
+    heap_sift_down(0)
+    return top
+}
+
+// ---------------- 建堆 / 校验 / 排序 ----------------
+
+// 用 a 的前 n 个元素重建堆; n 钳制到 [0, 64], 超过容量的元素被丢弃
+function heap_build(int[] a, int n, int is_max) -> void {
+    heap_reset(is_max)
+    int k = n
+    if (k < 0) { k = 0 }
+    if (k > 64) { k = 64 }
+    for (int i = 0; i < k; i = i + 1) {
+        heap_data[i] = a[i]
+    }
+    heap_len = k
+    int i = idiv(heap_len, 2) - 1
+    while (i >= 0) {
+        heap_sift_down(i)
+        i = i - 1
+    }
+}
+
+// 校验堆性质: 每个孩子都不比父节点更优先; 满足返回 1, 否则 0
+function heap_is_valid() -> int {
+    for (int i = 1; i < heap_len; i = i + 1) {
+        int p = idiv(i - 1, 2)
+        if (heap_better(heap_data[i], heap_data[p]) == 1) { return 0 }
+    }
+    return 1
+}
+
+// 就地升序排序 (堆排序, 内部自建最大堆); 不依赖也不修改全局堆状态
+function heap_sort(int[] a, int n) -> void {
+    if (n <= 1) { return }
+    for (int i = idiv(n, 2) - 1; i >= 0; i = i - 1) {
+        heap_sift_max(a, n, i)
+    }
+    for (int end = n - 1; end > 0; end = end - 1) {
+        int t = a[0]
+        a[0] = a[end]
+        a[end] = t
+        heap_sift_max(a, end, 0)
+    }
+}
