@@ -1,0 +1,414 @@
+// Code CIN 官方标准库: 数论与组合数学 (combin)
+// 用法: import "combin.cin"
+// 前缀: comb_
+//
+// 纯 CIN 实现, 不调用任何宿主能力内建 (无 file_* / path_* / mkdir ...)。
+// 仅使用非宿主内建: strlen / substr / strcmp / int_to_str / idiv / % / abs / min / max。
+//
+// 定长全局数据 (无动态内存分配):
+//   COMB_SIEVE_MAX = 512   筛表容量常量 (合法下标 0..511)
+//   comb_sieve_tab[512]    合数标记: 1 表示非素数 (下标 0/1 恒为 1)
+//   comb_primes[512]       素数列表 (升序, 供 comb_prime_at / comb_next_prime 使用)
+//   comb_prime_n           最近一次 comb_sieve 找到的素数个数
+// 全局数据段合计 = 512*8*2 + 8 = 8200 字节 (< 8.1 KiB), 远低于默认 64 KiB。
+// 所有函数与全局变量统一使用 comb_ 前缀 (常量 COMB_SIEVE_MAX 同前缀)。
+//
+// 边界约定 (统一惯例):
+//   - "无定义" 的输入 (负数 / 越界 / 非法进制) 返回 0 或 "" (见各函数注释);
+//   - 需要"失败"信号的查询函数返回 -1 (comb_prime_at / comb_next_prime);
+//   - 64 位整数乘法按硬件自然回绕: comb_fact / comb_perm / comb_choose 只在
+//     n <= 20 时保证精确, 更大 n 的结果无意义 (不保证回绕后的符号)。
+//   - CIN 的 '/' 恒为浮点除, 本库整数除法一律用内建 idiv(a, b) 或 %。
+
+const int COMB_SIEVE_MAX = 512
+
+int comb_sieve_tab[512]
+int comb_primes[512]
+int comb_prime_n = 0
+
+// ---------------- 最大公约数 / 最小公倍数 ----------------
+
+// 欧几里得算法; 取绝对值后计算, 因此负数同样可用
+// comb_gcd(a, 0) = abs(a); comb_gcd(0, 0) = 0
+function comb_gcd(int a, int b) -> int {
+    int x = abs(a)
+    int y = abs(b)
+    while (y != 0) {
+        int r = x % y
+        x = y
+        y = r
+    }
+    return x
+}
+
+// 最小公倍数; 任一参数为 0 时返回 0 (数学上无定义)
+function comb_lcm(int a, int b) -> int {
+    if (a == 0 || b == 0) { return 0 }
+    int g = comb_gcd(a, b)
+    return abs(idiv(a, g) * b)
+}
+
+// 三个数的最大公约数: comb_gcd3(a, b, c) = comb_gcd(comb_gcd(a, b), c)
+function comb_gcd3(int a, int b, int c) -> int {
+    return comb_gcd(comb_gcd(a, b), c)
+}
+
+// ---------------- 素数 ----------------
+
+// 试除法判素; n < 2 返回 0, 2 返回 1, 偶数直接返回 0
+// 只试除到 sqrt(n), 因此与筛表容量无关, 可用于任意大的 n
+// (用 d <= idiv(n, d) 而非 d*d <= n 判断上界, 避免大 n 时乘法回绕)
+function comb_is_prime(int n) -> int {
+    if (n < 2) { return 0 }
+    if (n == 2) { return 1 }
+    if (n % 2 == 0) { return 0 }
+    int d = 3
+    while (d <= idiv(n, d)) {
+        if (n % d == 0) { return 0 }
+        d = d + 2
+    }
+    return 1
+}
+
+// 埃氏筛: 在 [0, n] 内筛出素数, 结果写入全局表 comb_primes, 返回素数个数。
+//   - n < 2      -> 找到 0 个素数, 表内容被清空, 返回 0
+//   - n > 511    -> 按 n = 511 截断 (容量 COMB_SIEVE_MAX = 512), 只保证
+//                   [0, 511] 范围内的结果正确
+//   - 常量内存: 只写全局表, 不使用局部固长数组, 无动态分配
+function comb_sieve(int n) -> int {
+    int lim = n
+    if (lim > COMB_SIEVE_MAX - 1) { lim = COMB_SIEVE_MAX - 1 }
+    comb_prime_n = 0
+    for (int i = 0; i < COMB_SIEVE_MAX; i = i + 1) {
+        comb_sieve_tab[i] = 0
+        comb_primes[i] = 0
+    }
+    if (lim < 2) { return 0 }
+    comb_sieve_tab[0] = 1
+    comb_sieve_tab[1] = 1
+    int p = 2
+    while (p * p <= lim) {
+        if (comb_sieve_tab[p] == 0) {
+            int m = p * p
+            while (m <= lim) {
+                comb_sieve_tab[m] = 1
+                m = m + p
+            }
+        }
+        p = p + 1
+    }
+    int c = 0
+    for (int i = 2; i <= lim; i = i + 1) {
+        if (comb_sieve_tab[i] == 0) {
+            comb_primes[c] = i
+            c = c + 1
+        }
+    }
+    comb_prime_n = c
+    return c
+}
+
+// 第 i 个素数的值 (0 起, 依据最近一次 comb_sieve 的结果); 越界返回 -1
+function comb_prime_at(int i) -> int {
+    if (i < 0 || i >= comb_prime_n) { return -1 }
+    return comb_primes[i]
+}
+
+// 最近一次 comb_sieve 找到的素数个数; 未筛过时为 0
+function comb_prime_count() -> int {
+    return comb_prime_n
+}
+
+// >= n 的最小素数 (n 本身是素数就返回 n)。
+// 超出筛表范围 [0, 511] 时返回 -1; 找不到表内素数 (n < 2 且表为空) 也返回 -1。
+// 例: comb_next_prime(7) = 7, comb_next_prime(8) = 11, comb_next_prime(97) = 101
+function comb_next_prime(int n) -> int {
+    int i = 0
+    while (i < comb_prime_n) {
+        if (comb_primes[i] >= n) { return comb_primes[i] }
+        i = i + 1
+    }
+    return -1
+}
+
+// ---------------- 阶乘 / 排列 / 组合 / 卡特兰 / 斐波那契 ----------------
+
+// 阶乘 n!; 仅 n in [0, 20] 精确 (20! = 2432902008176640000 是 64 位内最大值)。
+// n < 0 或 n > 20 返回 0
+function comb_fact(int n) -> int {
+    if (n < 0 || n > 20) { return 0 }
+    int r = 1
+    for (int i = 2; i <= n; i = i + 1) {
+        r = r * i
+    }
+    return r
+}
+
+// 排列数 P(n, k) = n * (n-1) * ... * (n-k+1)。
+// k < 0 或 k > n 返回 0; k == 0 返回 1。
+// 仅 n in [0, 20] 保证不溢出
+function comb_perm(int n, int k) -> int {
+    if (n < 0 || k < 0 || k > n) { return 0 }
+    int r = 1
+    for (int i = 0; i < k; i = i + 1) {
+        r = r * (n - i)
+    }
+    return r
+}
+
+// 组合数 C(n, k); k < 0 或 k > n 返回 0。
+// 内部按 k = min(k, n-k) 迭代, 仅用整数乘除, 因此 n <= 62 也不会溢出
+// (C(62, 31) 仍在 64 位内); n < 0 返回 0
+function comb_choose(int n, int k) -> int {
+    if (n < 0 || k < 0 || k > n) { return 0 }
+    int kk = k
+    if (n - k < kk) { kk = n - k }
+    int r = 1
+    for (int i = 1; i <= kk; i = i + 1) {
+        r = idiv(r * (n - kk + i), i)
+    }
+    return r
+}
+
+// 卡特兰数 Cat(n) = C(2n, n) / (n + 1); n < 0 返回 0。
+// n <= 30 时精确 (Cat(30) = 3814986502092304); 更大的 n 会回绕
+function comb_catalan(int n) -> int {
+    if (n < 0) { return 0 }
+    return idiv(comb_choose(2 * n, n), n + 1)
+}
+
+// 斐波那契数列: F(0) = 0, F(1) = 1, F(n) = F(n-1) + F(n-2); n < 0 返回 0。
+// 迭代实现 (非递归), F(91) = 4660046610375530309 是 64 位内最后一个精确值,
+// F(92) 起自然回绕, 结果无意义
+function comb_fib(int n) -> int {
+    if (n < 0) { return 0 }
+    int a = 0
+    int b = 1
+    for (int i = 0; i < n; i = i + 1) {
+        int t = a + b
+        a = b
+        b = t
+    }
+    return a
+}
+
+// ---------------- 十进制数位工具 ----------------
+
+// 十进制数字和; 负数取绝对值 (comb_digit_sum(-123) = 6), 0 返回 0
+function comb_digit_sum(int n) -> int {
+    int x = abs(n)
+    int s = 0
+    while (x > 0) {
+        s = s + x % 10
+        x = idiv(x, 10)
+    }
+    return s
+}
+
+// 十进制位数; 负数取绝对值 (comb_digit_count(-1234) = 4), 0 记为 1 位
+function comb_digit_count(int n) -> int {
+    int x = abs(n)
+    int c = 1
+    while (x >= 10) {
+        x = idiv(x, 10)
+        c = c + 1
+    }
+    return c
+}
+
+// 整数倒序 (保留符号): comb_reverse_int(1230) = 321, comb_reverse_int(-120) = -21。
+// 结果可能溢出 (例 9000000000000000009), 溢出时为 64 位回绕值
+function comb_reverse_int(int n) -> int {
+    int neg = 0
+    int x = n
+    if (x < 0) {
+        neg = 1
+        x = -x
+    }
+    int r = 0
+    while (x > 0) {
+        r = r * 10 + x % 10
+        x = idiv(x, 10)
+    }
+    if (neg == 1) { return -r }
+    return r
+}
+
+// 回文数判定: 忽略符号 (comb_is_palindrome(-121) = 1);
+// 个位数与 0 都是回文 (comb_is_palindrome(0) = 1)
+function comb_is_palindrome(int n) -> int {
+    int x = abs(n)
+    if (x == comb_reverse_int(x)) { return 1 }
+    return 0
+}
+
+// 整数幂 (内部使用); exp < 0 返回 0
+function comb_int_pow(int base, int exp) -> int {
+    if (exp < 0) { return 0 }
+    int r = 1
+    for (int i = 0; i < exp; i = i + 1) {
+        r = r * base
+    }
+    return r
+}
+
+// 阿姆斯特朗数 (水仙花数): n 的每位数字的 (位数) 次幂之和等于 n 本身。
+// 负数取绝对值判定; 1..9 全部是, 10..99 全部不是;
+// 三位数例: 153, 370, 371, 407; 四位数例: 1634, 8208, 9474
+function comb_is_armstrong(int n) -> int {
+    int x = abs(n)
+    int k = comb_digit_count(x)
+    int t = x
+    int s = 0
+    while (t > 0) {
+        s = s + comb_int_pow(t % 10, k)
+        t = idiv(t, 10)
+    }
+    if (s == x) { return 1 }
+    return 0
+}
+
+// ---------------- 进制转换 ----------------
+
+// 整数 -> base 进制字符串 (大写字母, 2..36)。
+// 非法 base (base < 2 或 base > 36) 返回 ""; 负数带 "-" 前缀;
+// 0 返回 "0"。按绝对值转换 (不是补码), 例: comb_to_base(255, 16) = "FF"
+function comb_to_base(int n, int base) -> string {
+    if (base < 2 || base > 36) { return "" }
+    if (n == 0) { return "0" }
+    string digits = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    int x = n
+    string sign = ""
+    if (x < 0) {
+        sign = "-"
+        x = -x
+    }
+    string out = ""
+    while (x > 0) {
+        int d = x % base
+        out = substr(digits, d, 1) + out
+        x = idiv(x, base)
+    }
+    return sign + out
+}
+
+// base 进制字符串 -> 整数; 失败返回 0。
+//   - base 非法 (2..36 之外) -> 0
+//   - 空串 -> 0
+//   - 允许前导空白、允许一个前导 '+' / '-'
+//   - 允许 "0x"/"0X" 前缀 (仅 base == 16), 其余进制不识别前缀
+//   - 大小写字母都接受 (a-z / A-Z 表示 10..35)
+//   - 出现大于等于 base 的数字或非法字符 -> 立即返回 0 (不是部分结果)
+//   - 仅当整个字符串都是合法的 base 进制数字 (允许上述前后缀) 时才成功
+//   - 例: comb_from_base("-1F", 16) = -31, comb_from_base("12", 2) = 0 (含 '2')
+function comb_from_base(string s, int base) -> int {
+    if (base < 2 || base > 36) { return 0 }
+    int n = strlen(s)
+    int i = 0
+    while (i < n && (s[i] == 32 || s[i] == 9)) {
+        i = i + 1
+    }
+    int neg = 0
+    if (i < n && (s[i] == 45 || s[i] == 43)) {
+        if (s[i] == 45) { neg = 1 }
+        i = i + 1
+    }
+    if (base == 16 && i + 1 < n && s[i] == 48 && (s[i + 1] == 120 || s[i + 1] == 88)) {
+        i = i + 2
+    }
+    int v = 0
+    int got = 0
+    while (i < n) {
+        int ch = s[i]
+        int d = -1
+        if (ch >= 48 && ch <= 57) { d = ch - 48 }
+        if (ch >= 65 && ch <= 90) { d = ch - 55 }
+        if (ch >= 97 && ch <= 122) { d = ch - 87 }
+        if (d < 0 || d >= base) { return 0 }
+        v = v * base + d
+        got = 1
+        i = i + 1
+    }
+    if (got == 0) { return 0 }
+    if (neg == 1) { return -v }
+    return v
+}
+
+// ---------------- 整数小工具 ----------------
+
+// 快速幂取模: (base ^ exp) mod mod。
+// mod <= 0 返回 0; exp < 0 返回 0; exp == 0 返回 1 % mod (mod > 0)。
+// 中途乘法可能回绕, 因此只保证 mod <= 2^31 且 abs(base) < 2^31 时结果精确
+function comb_mod_pow(int base, int exp, int mod) -> int {
+    if (mod <= 0) { return 0 }
+    if (exp < 0) { return 0 }
+    int x = base % mod
+    if (x < 0) { x = x + mod }
+    int e = exp
+    int r = 1 % mod
+    while (e > 0) {
+        if (e % 2 == 1) { r = (r * x) % mod }
+        x = (x * x) % mod
+        e = idiv(e, 2)
+    }
+    return r
+}
+
+// 考拉兹 (3n+1) 步数: 从 n 到 1 的步数。
+// n <= 0 返回 0; n == 1 返回 0 (已在 1)。
+// 例: comb_collatz_steps(6) = 8, comb_collatz_steps(27) = 111
+function comb_collatz_steps(int n) -> int {
+    if (n <= 1) { return 0 }
+    int x = n
+    int c = 0
+    while (x != 1 && c < 1000000) {
+        if (x % 2 == 0) {
+            x = idiv(x, 2)
+        } else {
+            x = 3 * x + 1
+        }
+        c = c + 1
+    }
+    return c
+}
+
+// 完全数判定: n 等于其全部真因子 (不含自身) 之和。
+// n <= 1 返回 0; 已知完全数 6, 28, 496, 8128, 33550336
+function comb_is_perfect(int n) -> int {
+    if (n <= 1) { return 0 }
+    if (n == comb_divisor_sum(n) - n) { return 1 }
+    return 0
+}
+
+// 正因子个数 (含 1 与自身); n <= 0 返回 0。
+// 例: comb_divisor_count(12) = 6, comb_divisor_count(1) = 1
+function comb_divisor_count(int n) -> int {
+    if (n <= 0) { return 0 }
+    int c = 0
+    int d = 1
+    while (d <= idiv(n, d)) {
+        if (n % d == 0) {
+            c = c + 1
+            if (d != idiv(n, d)) { c = c + 1 }
+        }
+        d = d + 1
+    }
+    return c
+}
+
+// 正因子之和 (含 1 与自身); n <= 0 返回 0。
+// 例: comb_divisor_sum(12) = 28, comb_divisor_sum(1) = 1
+function comb_divisor_sum(int n) -> int {
+    if (n <= 0) { return 0 }
+    int s = 0
+    int d = 1
+    while (d <= idiv(n, d)) {
+        if (n % d == 0) {
+            s = s + d
+            int q = idiv(n, d)
+            if (d != q) { s = s + q }
+        }
+        d = d + 1
+    }
+    return s
+}

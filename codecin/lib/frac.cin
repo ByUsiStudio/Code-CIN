@@ -1,0 +1,252 @@
+// Code CIN 官方标准库: 有理数 (frac)
+// 用法: import "frac.cin"
+//
+// 表示: num / den, 两个字段都是 64 位 int。构造与每次运算后都会
+// **自动约分**并把分母规范化为正数: 3/-4 -> -3/4, 2/4 -> 1/2, 0/5 -> 0/1。
+// 零恒为 0/1, 分母恒 >= 1。
+//
+// 边界:
+//   * 分母为 0 (fr_make(x, 0) 或 fr_div(_, 0)) -> 结果规范化为 0/1,
+//     并把全局错误标志置 1 (fr_error() 查询 / fr_reset_error() 清除);
+//   * 加减乘除的中途乘法是原生 64 位整型运算, 分子分母的中间积可能回绕
+//     (例如 1/10^10 * 1/10^10 的分母 10^20 超出 int 范围), 本库不做大数处理;
+//   * 约分用 idiv 与 %, gcd 由 fr_gcd 自行实现, 不依赖其它库。
+//
+// 内存: Frac 只占 2 槽 = 16 字节, 每个"返回新值"的调用只分配 16 字节。
+
+struct Frac {
+    int num
+    int den
+}
+
+// 错误标志: 1 表示曾经发生过除以零等非法操作 (粘滞, 需要手动清除)
+int fr_err = 0
+
+// ---------------- 基础 ----------------
+
+// 是否发生过非法操作 (除以零等): 1 / 0
+function fr_error() -> int {
+    return fr_err
+}
+
+// 清除错误标志
+function fr_reset_error() -> void {
+    fr_err = 0
+}
+
+// 最大公约数 (对参数取绝对值; gcd(0, 0) = 0)
+function fr_gcd(int a, int b) -> int {
+    int x = a
+    int y = b
+    if (x < 0) { x = 0 - x }
+    if (y < 0) { y = 0 - y }
+    while (y != 0) {
+        int t = x % y
+        x = y
+        y = t
+    }
+    return x
+}
+
+// 规范化: 分母为 0 时置错误标志并归零; 分母转正; 约分; 零写作 0/1
+function fr_norm(Frac f) -> void {
+    if (f.den == 0) {
+        fr_err = 1
+        f.num = 0
+        f.den = 1
+        return
+    }
+    if (f.den < 0) {
+        f.num = 0 - f.num
+        f.den = 0 - f.den
+    }
+    if (f.num == 0) {
+        f.den = 1
+        return
+    }
+    int g = fr_gcd(f.num, f.den)
+    if (g > 1) {
+        f.num = idiv(f.num, g)
+        f.den = idiv(f.den, g)
+    }
+    // 防御: 分母为 -2^63 时 0-den 仍为负
+    if (f.den < 0) {
+        f.num = 0 - f.num
+        f.den = 0 - f.den
+    }
+}
+
+// ---------------- 构造与取字段 ----------------
+
+// 由分子分母构造并约分; d == 0 时返回 0/1 并置错误标志
+function fr_make(int n, int d) -> Frac {
+    Frac f
+    f.num = n
+    f.den = d
+    fr_norm(f)
+    return f
+}
+
+// 零 (0/1)
+function fr_zero() -> Frac {
+    Frac f
+    f.num = 0
+    f.den = 1
+    return f
+}
+
+// 分子
+function fr_num(Frac f) -> int {
+    return f.num
+}
+
+// 分母 (恒为正)
+function fr_den(Frac f) -> int {
+    return f.den
+}
+
+// ---------------- 算术 ----------------
+
+// a + b (先用 gcd 把分母降到 lcm, 减少中间积溢出的机会)
+function fr_add(Frac a, Frac b) -> Frac {
+    Frac r
+    int g = fr_gcd(a.den, b.den)
+    int da = a.den
+    int db = b.den
+    if (g > 1) {
+        da = idiv(a.den, g)
+        db = idiv(b.den, g)
+    }
+    r.num = a.num * db + b.num * da
+    r.den = da * b.den
+    fr_norm(r)
+    return r
+}
+
+// a - b
+function fr_sub(Frac a, Frac b) -> Frac {
+    Frac r
+    int g = fr_gcd(a.den, b.den)
+    int da = a.den
+    int db = b.den
+    if (g > 1) {
+        da = idiv(a.den, g)
+        db = idiv(b.den, g)
+    }
+    r.num = a.num * db - b.num * da
+    r.den = da * b.den
+    fr_norm(r)
+    return r
+}
+
+// a * b (先交叉约分)
+function fr_mul(Frac a, Frac b) -> Frac {
+    Frac r
+    int n1 = a.num
+    int d1 = a.den
+    int n2 = b.num
+    int d2 = b.den
+    int g1 = fr_gcd(n1, d2)
+    int g2 = fr_gcd(n2, d1)
+    if (g1 > 1) {
+        n1 = idiv(n1, g1)
+        d2 = idiv(d2, g1)
+    }
+    if (g2 > 1) {
+        n2 = idiv(n2, g2)
+        d1 = idiv(d1, g2)
+    }
+    r.num = n1 * n2
+    r.den = d1 * d2
+    fr_norm(r)
+    return r
+}
+
+// a / b; b 为 0 时返回 0/1 并置错误标志
+function fr_div(Frac a, Frac b) -> Frac {
+    Frac r
+    if (b.num == 0) {
+        fr_err = 1
+        r.num = 0
+        r.den = 1
+        return r
+    }
+    int n1 = a.num
+    int d1 = a.den
+    int n2 = b.num
+    int d2 = b.den
+    int g1 = fr_gcd(n1, n2)
+    int g2 = fr_gcd(d2, d1)
+    if (g1 > 1) {
+        n1 = idiv(n1, g1)
+        n2 = idiv(n2, g1)
+    }
+    if (g2 > 1) {
+        d2 = idiv(d2, g2)
+        d1 = idiv(d1, g2)
+    }
+    r.num = n1 * d2
+    r.den = d1 * n2
+    fr_norm(r)
+    return r
+}
+
+// -a (零的相反数仍为 0/1)
+function fr_neg(Frac a) -> Frac {
+    Frac r
+    r.num = 0 - a.num
+    r.den = a.den
+    fr_norm(r)
+    return r
+}
+
+// |a|
+function fr_abs(Frac a) -> Frac {
+    Frac r
+    r.num = a.num
+    r.den = a.den
+    if (r.num < 0) { r.num = 0 - r.num }
+    fr_norm(r)
+    return r
+}
+
+// ---------------- 比较与转换 ----------------
+
+// 与数学顺序一致的比较: -1 (a < b) / 0 / 1 (a > b)
+// 内部为交叉相乘, 极端数值下中间积可能回绕 (见文件头说明)
+function fr_cmp(Frac a, Frac b) -> int {
+    int l = a.num * b.den
+    int r = b.num * a.den
+    if (l < r) { return -1 }
+    if (l > r) { return 1 }
+    return 0
+}
+
+// 是否数值相等: 1 / 0
+function fr_equals(Frac a, Frac b) -> int {
+    if (fr_cmp(a, b) == 0) { return 1 }
+    return 0
+}
+
+// 是否为整数 (分母为 1): 1 / 0
+function fr_is_int(Frac a) -> int {
+    if (a.den == 1) { return 1 }
+    if (a.den != 0 && a.num % a.den == 0) { return 1 }
+    return 0
+}
+
+// 整数输出 "2", 否则输出 "3/4"
+function fr_to_str(Frac a) -> string {
+    fr_norm(a)
+    if (a.den == 1) { return int_to_str(a.num) }
+    return int_to_str(a.num) + "/" + int_to_str(a.den)
+}
+
+// 浮点近似 (分子/分母为 64 位 int; 分母为 0 时置错误标志并返回 0.0)
+function fr_to_float(Frac a) -> float {
+    if (a.den == 0) {
+        fr_err = 1
+        return 0.0
+    }
+    return a.num / a.den
+}

@@ -258,3 +258,70 @@ def test_exit_argument_count_checked():
         CINCompiler().compile_source(
             'function main() -> int { exit(); return 0 }')
     assert 'exit() expects exactly 1 argument' in str(ei.value)
+
+
+# --------------------------------------------------------------------------
+# 字符串字节语义 (R3-9): 解释器曾先做 UTF-8 解码, 非法字节序列被替换成 U+FFFD
+# --------------------------------------------------------------------------
+
+# "中" 的 UTF-8 是 E4 B8 AD, 从字节 1 / 2 处切片必然产生非法 UTF-8 序列。
+# 修复前: 解释器把每个非法字节变成 U+FFFD (3 字节), 于是 strlen 与原生 VM 不同。
+BYTE_SEMANTICS_CASES = [
+    # 修复前 解释器 6 / 原生 2
+    ('half_bytes_sum',
+     'function main() -> int {\n'
+     '    string a = substr("中", 2, 1)\n'
+     '    string b = substr("中", 1, 1)\n'
+     '    string c = a + b\n'
+     '    return strlen(c)\n'
+     '}', 2),
+    # 修复前 解释器 9 / 原生 3
+    ('two_then_one',
+     'function main() -> int {\n'
+     '    string c = substr("中", 1, 2) + substr("中", 2, 1)\n'
+     '    return strlen(c)\n'
+     '}', 3),
+    ('valid_utf8_unaffected',
+     'function main() -> int { return strlen("中") }', 3),
+    ('reassemble_after_slicing',
+     'function main() -> int {\n'
+     '    string s = "中"\n'
+     '    string r = substr(s, 0, 1) + substr(s, 1, 1) + substr(s, 2, 1)\n'
+     '    if (strlen(r) != 3) { return 1 }\n'
+     '    if (strcmp(r, "中") != 0) { return 2 }\n'
+     '    return 0\n'
+     '}', 0),
+    ('indexof_is_byte_index',
+     'function main() -> int {\n'
+     '    string s = "中x"\n'
+     '    return indexof(s, "x")\n'      # 字节下标 3 (不是字符下标 1)
+     '}', 3),
+    ('indexof_invalid_bytes',
+     'function main() -> int {\n'
+     '    string c = substr("中", 2, 1) + substr("中", 1, 1)\n'
+     '    return indexof(c, substr("中", 1, 1))\n'   # 第 2 个字节处 -> 1
+     '}', 1),
+    ('concat_then_strlen_chain',
+     'function main() -> int {\n'
+     '    string s = ""\n'
+     '    s += substr("中", 0, 1)\n'
+     '    s += substr("中", 1, 1)\n'
+     '    s += substr("中", 2, 1)\n'
+     '    return strlen(s)\n'
+     '}', 3),
+]
+
+
+@pytest.mark.parametrize('name,src,expected', BYTE_SEMANTICS_CASES,
+                         ids=[c[0] for c in BYTE_SEMANTICS_CASES])
+@pytest.mark.parametrize('use_native', PATHS, ids=PATH_IDS)
+def test_string_byte_semantics_match_across_paths(name, src, expected, use_native):
+    """字节级字符串内建必须两条路径同结果 (非法 UTF-8 序列也不例外)。"""
+    assert run_cin_source(src, use_native=use_native).regs.read(0) == expected
+
+
+@pytest.mark.parametrize('name,src,expected', BYTE_SEMANTICS_CASES,
+                         ids=[c[0] for c in BYTE_SEMANTICS_CASES])
+def test_string_byte_semantics_jit(name, src, expected):
+    assert run_cin_source(src, use_native=False,
+                          enable_jit=True).regs.read(0) == expected

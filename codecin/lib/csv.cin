@@ -1,0 +1,405 @@
+// Code CIN 官方标准库: 单行 CSV 解析与生成 (csv)
+// 用法: import "csv.cin"
+//
+// 纯 CIN 实现, 只使用非宿主能力内建 (strlen / substr / strcmp / indexof /
+// int_to_str / trim / atoi), 不依赖任何宿主能力, 解释器与 Go 原生 VM 行为一致。
+// 风格与 json.cin 相同: 面向"一行一条记录"的轻量场景, 不做完整语法解析。
+//
+// ===== 限制 (重要) =====
+//   * 本库是**单行解析器**: 以 ',' 为唯一分隔符, 不支持多行字段;
+//     引号内的换行 (RFC 4180 的多行记录) 不会被识别, 换行只会被当作普通字节;
+//   * 分隔符固定为 ',' (44), 需要别的分隔符请用 csv_raw_count / csv_raw_get
+//     (按单字节分隔符切分, 不做引号处理);
+//   * 字段转义规则与 RFC 4180 一致: 字段两端加双引号, 字段内部的 " 写成 "";
+//   * 所有长度都是**字节**语义 (strlen / substr / s[i]), UTF-8 等非 ASCII 按字节处理,
+//     但字节级处理不影响引号/逗号判定 (',' 与 '"' 都是单字节 ASCII, 不会出现在
+//     UTF-8 多字节序列内部);
+//   * 字符串拼接产生**不回收**的堆块, 不要在无界循环里反复拼接。
+//
+// ===== 全局状态 (全局数据段) =====
+//   csv_buf   : 行缓冲 (string 指针 1 槽), 由 csv_line_start / csv_line_add 维护
+//   csv_buf_n : 已累积的字段个数 (1 槽)
+//   合计 2 槽 = 16 字节; 缓冲内容在堆上, 上限 CSV_BUF_MAX = 1024 字节
+//   (csv_line_add 返回值 0 表示已满, 此时缓冲**不被修改**)。
+//
+// ===== 空行与尾随空字段约定 =====
+//   * csv_count("")     == 0   (空行 = 没有字段, 便于跳过空记录)
+//   * csv_count(",")    == 2   (两个空字段)
+//   * csv_count("a,")   == 2   (尾随空字段保留)
+//   * csv_count("a,,b") == 3   (中间空字段保留)
+//   * 因此 csv_get 返回 "" 不能区分"越界"与"空字段", 需要区分时先查 csv_has;
+//   * 推论: 只累积了一个空字段的行缓冲也是 "" (csv_line_get() 得到 ""),
+//     读回来会被当成 0 个字段; 需要区分时查 csv_line_count()。
+//
+// ===== 局部变量 =====
+//   本库所有局部变量都显式赋初值 (CIN 局部标量不自动清零)。
+
+// 全局行缓冲 (由 csv_line_start / csv_line_add 维护)
+string csv_buf = ""
+// 已累积的字段个数
+int csv_buf_n = 0
+
+// 全局行缓冲最多能累积的字节数
+function csv_buf_capacity() -> int {
+    return 1024
+}
+
+// ---------------- 内部辅助 ----------------
+
+// 内部: 跳过 ASCII 空白 (空格 / \t / \r / \n), 返回第一个非空白字节下标
+function csv_skip_ws(string s, int i) -> int {
+    int n = strlen(s)
+    while (i < n) {
+        int c = s[i]
+        if (c != 32 && c != 9 && c != 10 && c != 13) { return i }
+        i = i + 1
+    }
+    return i
+}
+
+// 内部: 若字段 (允许前导空白) 是引号字段, 返回开引号下标; 否则返回 -1
+function csv_quote_pos(string s, int start) -> int {
+    int n = strlen(s)
+    int i = csv_skip_ws(s, start)
+    if (i < n && s[i] == 34) { return i }
+    return -1
+}
+
+// 内部: 下一个字段的起始下标 (跳过当前字段与其后的 ','); 没有下一个返回 -1
+// 引号字段按 RFC 4180 扫描: "" 视为转义引号, 单个 " 结束字段
+function csv_next_start(string line, int start) -> int {
+    int n = strlen(line)
+    int i = start
+    int qp = csv_quote_pos(line, start)
+    if (qp >= 0) {
+        i = qp + 1
+        int closed = 0
+        while (i < n && closed == 0) {
+            if (line[i] == 34) {
+                if (i + 1 < n && line[i + 1] == 34) {
+                    i = i + 2
+                } else {
+                    closed = 1
+                    i = i + 1
+                }
+            } else {
+                i = i + 1
+            }
+        }
+    }
+    while (i < n && line[i] != 44) {
+        i = i + 1
+    }
+    if (i >= n) { return -1 }
+    return i + 1
+}
+
+// 内部: 解析 line 中从 start 开始的字段值 (去引号并还原 "" -> ")
+// 引号字段未闭合时取到行尾; 引号字段结束引号之后的字符被忽略
+function csv_val_at(string line, int start) -> string {
+    int n = strlen(line)
+    if (n == 0) { return "" }
+    int qp = csv_quote_pos(line, start)
+    if (qp < 0) {
+        int e = start
+        while (e < n && line[e] != 44) {
+            e = e + 1
+        }
+        return substr(line, start, e - start)
+    }
+    string out = ""
+    int i = qp + 1
+    int seg = i
+    while (i < n) {
+        if (line[i] == 34) {
+            if (i + 1 < n && line[i + 1] == 34) {
+                out = out + substr(line, seg, i - seg)
+                out = out + "\""
+                i = i + 2
+                seg = i
+            } else {
+                out = out + substr(line, seg, i - seg)
+                return out
+            }
+        } else {
+            i = i + 1
+        }
+    }
+    out = out + substr(line, seg, n - seg)
+    return out
+}
+
+// ---------------- 字段访问 ----------------
+
+// 字段数; 空行 ("") 返回 0; 尾随 ',' 产生的空字段计入
+function csv_count(string line) -> int {
+    if (strlen(line) == 0) { return 0 }
+    int c = 1
+    int i = csv_next_start(line, 0)
+    while (i >= 0) {
+        c = c + 1
+        i = csv_next_start(line, i)
+    }
+    return c
+}
+
+// 取第 idx 个字段 (0 起, 已去引号并还原转义); 越界或 idx < 0 返回 ""
+function csv_get(string line, int idx) -> string {
+    if (idx < 0) { return "" }
+    int n = strlen(line)
+    if (n == 0) { return "" }
+    int i = 0
+    int cur = 0
+    while (true) {
+        if (cur == idx) { return csv_val_at(line, i) }
+        i = csv_next_start(line, i)
+        if (i < 0) { return "" }
+        cur = cur + 1
+    }
+    return ""
+}
+
+// idx 是否是一个存在的字段 (存在时即使字段内容为空也返回 1)
+function csv_has(string line, int idx) -> int {
+    if (idx < 0) { return 0 }
+    if (idx < csv_count(line)) { return 1 }
+    return 0
+}
+
+// ---------------- 数值字段 ----------------
+
+// 内部: 去空白后是否为合法十进制整数 (可带 +/- 号, 至少一位数字)
+function csv_is_int(string s) -> int {
+    string t = trim(s)
+    int n = strlen(t)
+    if (n == 0) { return 0 }
+    int i = 0
+    if (t[0] == 43 || t[0] == 45) { i = 1 }
+    if (i >= n) { return 0 }
+    while (i < n) {
+        if (t[i] < 48 || t[i] > 57) { return 0 }
+        i = i + 1
+    }
+    return 1
+}
+
+// 整数字段; 越界 / 空 / 非法 (如 "12a") 返回 fallback
+function csv_get_int(string line, int idx, int fallback) -> int {
+    string s = csv_get(line, idx)
+    if (csv_is_int(s) == 0) { return fallback }
+    return atoi(trim(s))
+}
+
+// 内部: 去空白后是否为合法十进制小数 (可带 +/- 号, 至多一个小数点, 至少一位数字)
+// 不接受指数形式 (1e3 / 1.5E2); 小数点两侧允许缺数字, 因此 ".5" 与 "5." 都算合法,
+// 单独的 "." / "+" / "" 不合法
+function csv_is_float(string s) -> int {
+    string t = trim(s)
+    int n = strlen(t)
+    if (n == 0) { return 0 }
+    int i = 0
+    if (t[0] == 43 || t[0] == 45) { i = 1 }
+    int digits = 0
+    int dots = 0
+    while (i < n) {
+        int c = t[i]
+        if (c >= 48 && c <= 57) {
+            digits = digits + 1
+        } else if (c == 46) {
+            if (dots == 1) { return 0 }
+            dots = dots + 1
+        } else {
+            return 0
+        }
+        i = i + 1
+    }
+    if (digits == 0) { return 0 }
+    return 1
+}
+
+// 内部: 解析可选正负号 + 整数部分 + 可选小数部分 (不处理指数)
+function csv_parse_float(string s) -> float {
+    string t = trim(s)
+    int n = strlen(t)
+    int i = 0
+    int neg = 0
+    if (i < n && (t[i] == 43 || t[i] == 45)) {
+        if (t[i] == 45) { neg = 1 }
+        i = i + 1
+    }
+    float v = 0.0
+    while (i < n && t[i] >= 48 && t[i] <= 57) {
+        v = v * 10.0 + (t[i] - 48)
+        i = i + 1
+    }
+    if (i < n && t[i] == 46) {
+        i = i + 1
+        float scale = 0.1
+        while (i < n && t[i] >= 48 && t[i] <= 57) {
+            v = v + (t[i] - 48) * scale
+            scale = scale * 0.1
+            i = i + 1
+        }
+    }
+    if (neg == 1) { return -v }
+    return v
+}
+
+// 浮点字段; 越界 / 空 / 非法返回 fallback
+function csv_get_float(string line, int idx, float fallback) -> float {
+    string s = csv_get(line, idx)
+    if (csv_is_float(s) == 0) { return fallback }
+    return csv_parse_float(s)
+}
+
+// ---------------- 清洗 ----------------
+
+// 内部: 去掉一个字段原始文本两侧的空白; 引号字段保留引号内的原始内容
+function csv_cell_trim(string raw) -> string {
+    int n = strlen(raw)
+    int qp = csv_quote_pos(raw, 0)
+    if (qp < 0) { return trim(raw) }
+    int i = qp + 1
+    int closed = -1
+    while (i < n) {
+        if (raw[i] == 34) {
+            if (i + 1 < n && raw[i + 1] == 34) {
+                i = i + 2
+            } else {
+                closed = i
+                i = n
+            }
+        } else {
+            i = i + 1
+        }
+    }
+    if (closed >= 0) { return substr(raw, qp, closed - qp + 1) }
+    return substr(raw, qp, n - qp)
+}
+
+// 去掉每个字段两侧的空白并原样拼接 (不重新加引号, 引号字段内部不动)
+// csv_trim_cells(" a , b ")  -> "a,b"
+// csv_trim_cells(" \"a, b\" ") -> "\"a, b\""  (引号保留, 逗号仍在字段内)
+// 空行返回 ""; 结果长度不会超过输入长度
+function csv_trim_cells(string line) -> string {
+    int n = strlen(line)
+    if (n == 0) { return "" }
+    string out = ""
+    int i = 0
+    int first = 1
+    while (true) {
+        int nxt = csv_next_start(line, i)
+        int end = n
+        if (nxt >= 0) { end = nxt - 1 }
+        string cell = csv_cell_trim(substr(line, i, end - i))
+        if (first == 0) { out = out + "," }
+        out = out + cell
+        first = 0
+        if (nxt < 0) { break }
+        i = nxt
+    }
+    return out
+}
+
+// ---------------- 生成 ----------------
+
+// 只做转义: 字段内部的每个 " 写成 "" (不加外层引号)
+// csv_escape("a\"b") -> "a\"\"b"
+function csv_escape(string field) -> string {
+    int n = strlen(field)
+    string out = ""
+    int seg = 0
+    for (int i = 0; i < n; i = i + 1) {
+        if (field[i] == 34) {
+            out = out + substr(field, seg, i - seg)
+            out = out + "\"\""
+            seg = i + 1
+        }
+    }
+    out = out + substr(field, seg, n - seg)
+    return out
+}
+
+// 需要时加双引号并转义内部 " (否则原样返回)
+// 需要加引号的条件: 含 ',' 或 '"' 或换行, 或首尾是空白 (空格 / \t / \r / \n)
+// 空串返回 ""
+// csv_quote("a,b") -> "\"a,b\""; csv_quote("ab") -> "ab"
+function csv_quote(string field) -> string {
+    int n = strlen(field)
+    if (n == 0) { return "" }
+    int need = 0
+    for (int i = 0; i < n; i = i + 1) {
+        int c = field[i]
+        if (c == 44 || c == 34 || c == 10 || c == 13) { need = 1 }
+    }
+    if (field[0] == 32 || field[0] == 9) { need = 1 }
+    if (field[n - 1] == 32 || field[n - 1] == 9) { need = 1 }
+    if (need == 0) { return field }
+    return "\"" + csv_escape(field) + "\""
+}
+
+// 开始新的一行 (清空全局缓冲, 字段计数归零)
+function csv_line_start() -> void {
+    csv_buf = ""
+    csv_buf_n = 0
+}
+
+// 追加一个字段 (自动加前导分隔符并按需加引号)
+// 成功返回 1; 若追加后缓冲会超过 CSV_BUF_MAX = 1024 字节, 返回 0 且**不改动缓冲**
+function csv_line_add(string field) -> int {
+    string enc = csv_quote(field)
+    string piece = enc
+    if (csv_buf_n > 0) {
+        piece = "," + enc
+    }
+    if (strlen(csv_buf) + strlen(piece) > 1024) { return 0 }
+    csv_buf = csv_buf + piece
+    csv_buf_n = csv_buf_n + 1
+    return 1
+}
+
+// 取当前累积的行 (未调用 csv_line_start 前为空串)
+function csv_line_get() -> string {
+    return csv_buf
+}
+
+// 当前累积的字段个数 (区分"0 个字段"与"一个空字段"时使用)
+function csv_line_count() -> int {
+    return csv_buf_n
+}
+
+// ---------------- 自定义分隔符 (不做引号处理) ----------------
+
+// 按单字节分隔符 delim 切分的字段数; line 为空返回 0; delim <= 0 时整行算 1 个字段
+function csv_raw_count(string line, int delim) -> int {
+    int n = strlen(line)
+    if (n == 0) { return 0 }
+    int c = 1
+    if (delim <= 0) { return c }
+    for (int i = 0; i < n; i = i + 1) {
+        if (line[i] == delim) { c = c + 1 }
+    }
+    return c
+}
+
+// 按单字节分隔符 delim 取第 idx 个字段 (0 起, 原样返回, 不做引号处理)
+// 越界或 idx < 0 返回 ""; delim <= 0 时只有 idx == 0 命中整行
+function csv_raw_get(string line, int delim, int idx) -> string {
+    if (idx < 0) { return "" }
+    int n = strlen(line)
+    if (n == 0) { return "" }
+    if (delim <= 0) {
+        if (idx == 0) { return line }
+        return ""
+    }
+    int cur = 0
+    int start = 0
+    for (int i = 0; i <= n; i = i + 1) {
+        if (i == n || line[i] == delim) {
+            if (cur == idx) { return substr(line, start, i - start) }
+            cur = cur + 1
+            start = i + 1
+        }
+    }
+    return ""
+}

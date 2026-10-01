@@ -1274,9 +1274,10 @@ class CPU:
         elif call_id == Syscall.PRINT_STR:
             self._emit_text(self.memory.read_string(x0))
         elif call_id == Syscall.STR_CONCAT:
-            sa = self.memory.read_string(x0)
-            sb = self.memory.read_string(x1)
-            data = (sa + sb).encode('utf-8') + b'\x00'
+            # 字节级拼接: 不做 UTF-8 编解码, 否则非法字节序列会被替换成 U+FFFD
+            # (每个 3 字节), 与 Go 原生 VM 的 strlen 结果不一致。
+            data = (self.memory.read_cstr_bytes(x0)
+                    + self.memory.read_cstr_bytes(x1) + b'\x00')
             size = (len(data) + 15) & ~0xF
             ptr = self.heap_ptr
             self.heap_ptr += size
@@ -1295,15 +1296,16 @@ class CPU:
                                  else "Runtime abort")
         elif call_id == Syscall.SUBSTR:
             # substr(s, start, len): 按字节索引 (与 strlen / s[i] 一致), 越界自动裁剪
-            data = self.memory.read_string(x0).encode('utf-8')
+            data = self.memory.read_cstr_bytes(x0)
             n = len(data)
             start = 0 if x1 < 0 else (n if x1 > n else x1)
             length = 0 if x2 < 0 else x2
             self._set_reg(0, self._heap_dup_string(
                 data[start:start + length] + b'\x00'))
         elif call_id == Syscall.INDEXOF:
-            hay = self.memory.read_string(x0).encode('utf-8')
-            needle = self.memory.read_string(x1).encode('utf-8')
+            # 字节级查找 (与 Go 侧 strings.Index 一致): 返回字节下标, 找不到 -1
+            hay = self.memory.read_cstr_bytes(x0)
+            needle = self.memory.read_cstr_bytes(x1)
             self._set_reg(0, hay.find(needle))
         elif call_id == Syscall.TOUPPER:
             data = self.memory.read_string(x0)

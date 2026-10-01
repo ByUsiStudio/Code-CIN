@@ -316,6 +316,23 @@ class FastMemory:
             addr += 1
         return bytes(chars).decode('utf-8', errors='replace')
 
+    def read_cstr_bytes(self, addr: int, max_len: int = 4096) -> bytes:
+        """读 NUL 结尾的**原始字节** (不做 UTF-8 解码)。
+
+        CIN 的字符串是字节序列: `strlen` / `substr` / `s[i]` 都是字节语义。
+        用 ``read_string`` 再 ``encode`` 会经过一次 UTF-8 编解码, 非法字节序列
+        会被替换成 U+FFFD (每个 3 字节), 于是与 Go 原生 VM 的字节结果不一致。
+        需要字节级语义的地方一律用本方法。
+        """
+        chars = []
+        for _ in range(max_len):
+            b = self.read_byte(addr)
+            if b == 0:
+                break
+            chars.append(b)
+            addr += 1
+        return bytes(chars)
+
     def write_string(self, addr: int, text: str) -> int:
         data = text.encode('utf-8') + b'\x00'
         self.write_block(addr, data)

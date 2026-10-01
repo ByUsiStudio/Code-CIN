@@ -3,20 +3,20 @@
 //
 // 纯 CIN 实现, 不使用任何宿主能力内建, 也不做动态内存分配:
 // 所有 DP 表都是库内全局定长数组 (滚动数组), 容量上限如下:
-//   DP_STR_MAX    = 192   字符串类 DP (LCS / 编辑距离 / 回文) 处理的字节数上限
+//   DP_STR_MAX    = 128   字符串类 DP (LCS / 编辑距离 / 回文) 处理的字节数上限
 //   DP_KNAP_CAP   = 256   0/1 背包的容量上限
 //   DP_AMOUNT_MAX = 256   零钱问题的金额上限
-//   DP_LIS_MAX    = 256   最长递增子序列的元素个数上限
+//   DP_LIS_MAX    = 64    最长递增子序列的元素个数上限 (该算法是 O(n^2), 故意给小)
 //   DP_PATH_COLS  = 256   网格最小路径和的列数上限
 //   DP_FIB_CACHE  = 64    dp_fib_memo 的自建缓存容量
 //
 // 全局数据段占用 (每槽 8 字节):
-//   dp_row_prev[193] + dp_row_cur[193]                 = 386 槽
+//   dp_row_prev[129] + dp_row_cur[129]                 = 258 槽
 //   dp_amt[257]                                        = 257 槽
 //   dp_cap[257]                                        = 257 槽
 //   dp_fib_cache[64]                                   =  64 槽
 //   标量 (dp_fib_ready / dp_fib_hi)                     =   2 槽
-//   合计 966 槽 = 7728 字节, 小于默认 64 KiB 数据段。
+//   合计 838 槽 = 6704 字节, 小于默认 64 KiB 数据段。
 //
 // 语义说明与边界行为:
 //   * 容量超限一律**按上限截断**(与 heap_build 的做法一致), 不报错:
@@ -29,10 +29,10 @@
 //   * 库内只有一份全局实例, 上面那些滚动数组是**跨函数复用的内部暂存区**,
 //     调用方不要依赖它们在两次调用之间的内容, 也不要嵌套调用本库的不同函数。
 
-const int DP_STR_MAX = 192
+const int DP_STR_MAX = 128
 const int DP_KNAP_CAP = 256
 const int DP_AMOUNT_MAX = 256
-const int DP_LIS_MAX = 256
+const int DP_LIS_MAX = 64
 const int DP_PATH_COLS = 256
 const int DP_FIB_CACHE = 64
 

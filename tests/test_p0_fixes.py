@@ -12,6 +12,8 @@ r"""P0/P1 修复回归测试 (SUGGESTIONS_NEXT.md 第一批落地)。
 断言约定与 tests/test_cin_syntax_ext.py 一致。
 """
 
+import os
+
 import pytest
 
 from codecin import CPU, Config, native
@@ -118,17 +120,20 @@ function main() -> int {
 
 
 @pytest.mark.parametrize('use_native', PATHS, ids=PATH_IDS)
-def test_substr_indexof_byte_semantics(tmp_path, use_native):
+def test_substr_indexof_byte_semantics(workdir, use_native):
     # "héllo" 的 UTF-8 字节: h(0) é(1..2) l(3) l(4) o(5)
     # indexof("lo") = 4 (字节索引); substr(4, 2) = "lo" -> 400 + 1 = 401
-    path = tmp_path / 'str_bytes.cin'
-    path.write_text(STR_BYTES_SRC, encoding='utf-8')
-    cpu = run_cin_file(str(path), use_native=use_native)
+    # 注意: 用 workspace 内的 workdir 夹具而不是 tmp_path —— 受限沙箱下
+    # pytest 的 tmp_path 会在 setup 阶段就 PermissionError。
+    path = os.path.join(workdir, 'str_bytes.cin')
+    with open(path, 'w', encoding='utf-8') as f:
+        f.write(STR_BYTES_SRC)
+    cpu = run_cin_file(path, use_native=use_native)
     assert not cpu.execution_failed
     assert cpu.regs.read(0) == 401
 
 
-def test_substr_byte_semantics_interp_direct(tmp_path):
+def test_substr_byte_semantics_interp_direct(workdir):
     """非 ASCII 前缀下 substr 按字节取, 与 strlen 一致。"""
     src = '''
 import "str.cin"
@@ -136,9 +141,10 @@ function main() -> string {
     string s = "héllo"
     return substr(s, strlen(s) - 2, 2)
 }'''
-    path = tmp_path / 'str_sub.cin'
-    path.write_text(src, encoding='utf-8')
-    cpu = run_cin_file(str(path), use_native=False)
+    path = os.path.join(workdir, 'str_sub.cin')
+    with open(path, 'w', encoding='utf-8') as f:
+        f.write(src)
+    cpu = run_cin_file(path, use_native=False)
     assert not cpu.execution_failed
     # 返回的字符串指针 -> 读内存
     out = cpu.memory.read_string(cpu.regs.read(0))

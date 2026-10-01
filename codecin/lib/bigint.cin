@@ -132,14 +132,18 @@ function bi_is_saturated(BigInt a) -> int {
 // 零
 function bi_zero() -> BigInt {
     BigInt r
-    bi_clear(r)
+    r.d[0] = 0
+    r.n = 1
+    r.neg = 0
     return r
 }
 
 // 由 64 位整数构造 (int 最多 19 位十进制, 永远不会溢出)
 function bi_from_int(int v) -> BigInt {
     BigInt r
-    bi_clear(r)
+    r.d[0] = 0
+    r.n = 1
+    r.neg = 0
     int x = v
     int sgn = 1
     if (x < 0) { sgn = -1 }
@@ -157,6 +161,7 @@ function bi_from_int(int v) -> BigInt {
     }
     if (i == 0) { return r }
     r.n = i
+    r.neg = 0
     if (sgn < 0) { r.neg = 1 }
     bi_norm(r)
     return r
@@ -166,7 +171,9 @@ function bi_from_int(int v) -> BigInt {
 // (如 "12ab" -> 12, "abc" -> 0); 有效数字超过容量时饱和为 10^64 - 1
 function bi_from_str(string s) -> BigInt {
     BigInt r
-    bi_clear(r)
+    r.d[0] = 0
+    r.n = 1
+    r.neg = 0
     int len = strlen(s)
     int i = 0
     int neg = 0
@@ -200,6 +207,7 @@ function bi_from_str(string s) -> BigInt {
         k = k + 1
     }
     r.n = count
+    r.neg = 0
     if (neg == 1) { r.neg = 1 }
     bi_norm(r)
     return r
@@ -258,8 +266,8 @@ function bi_cmp(BigInt a, BigInt b) -> int {
 // ---------------- 加减核心 (无堆分配) ----------------
 
 // out = |a| + |b|; out 必须与 a、b 为不同的结构体
+// (只写 [0, n) 区间并显式设置 n, 因此不需要预先清零整块 64 位)
 function bi_add_mag_into(BigInt a, BigInt b, BigInt out) -> void {
-    bi_clear(out)
     int na = bi_digits(a)
     int nb = bi_digits(b)
     int n = na
@@ -283,12 +291,12 @@ function bi_add_mag_into(BigInt a, BigInt b, BigInt out) -> void {
         n = n + 1
     }
     out.n = n
+    out.neg = 0
     bi_norm(out)
 }
 
 // out = |a| - |b|, 要求 |a| >= |b|; out 必须与 a、b 为不同的结构体
 function bi_sub_mag_into(BigInt a, BigInt b, BigInt out) -> void {
-    bi_clear(out)
     int na = bi_digits(a)
     int nb = bi_digits(b)
     int borrow = 0
@@ -306,6 +314,7 @@ function bi_sub_mag_into(BigInt a, BigInt b, BigInt out) -> void {
         i = i + 1
     }
     out.n = na
+    out.neg = 0
     bi_norm(out)
 }
 
@@ -320,7 +329,9 @@ function bi_add_into(BigInt a, BigInt b, BigInt out) -> void {
     }
     int c = bi_cmp_mag(a, b)
     if (c == 0) {
-        bi_clear(out)
+        out.d[0] = 0
+        out.n = 1
+        out.neg = 0
         return
     }
     if (c > 0) {
@@ -348,7 +359,9 @@ function bi_sub_into(BigInt a, BigInt b, BigInt out) -> void {
     }
     int c = bi_cmp_mag(a, b)
     if (c == 0) {
-        bi_clear(out)
+        out.d[0] = 0
+        out.n = 1
+        out.neg = 0
         return
     }
     if (c > 0) {
@@ -388,11 +401,23 @@ function bi_mul_into(BigInt a, BigInt b, BigInt out) -> void {
     int sb = bi_sign(b)
     int na = a.n
     int nb = b.n
-    bi_clear(out)
-    if (sa == 0 || sb == 0) { return }
+    if (sa == 0 || sb == 0) {
+        out.d[0] = 0
+        out.n = 1
+        out.neg = 0
+        return
+    }
     if (na + nb - 1 > 64) {
         bi_saturate(out, sa * sb)
         return
+    }
+    // 只清零累加区间 [0, na+nb), 不必清整块 64 位
+    int lim = na + nb
+    if (lim > 64) { lim = 64 }
+    int z = 0
+    while (z < lim) {
+        out.d[z] = 0
+        z = z + 1
     }
     int i = 0
     while (i < na) {
@@ -418,6 +443,7 @@ function bi_mul_into(BigInt a, BigInt b, BigInt out) -> void {
         i = i + 1
     }
     out.n = 64
+    out.neg = 0
     bi_norm(out)
     if (bi_is_zero(out) == 0 && sa * sb < 0) { out.neg = 1 }
 }
@@ -433,8 +459,12 @@ function bi_mul_small_into(BigInt a, int k, BigInt out) -> void {
     }
     int sa = bi_sign(a)
     int na = a.n
-    bi_clear(out)
-    if (m == 0 || sa == 0) { return }
+    if (m == 0 || sa == 0) {
+        out.d[0] = 0
+        out.n = 1
+        out.neg = 0
+        return
+    }
     int carry = 0
     int i = 0
     while (i < na) {
@@ -454,6 +484,7 @@ function bi_mul_small_into(BigInt a, int k, BigInt out) -> void {
         p = p + 1
     }
     out.n = p
+    out.neg = 0
     bi_norm(out)
     if (bi_is_zero(out) == 0 && sa * sgn < 0) { out.neg = 1 }
 }
@@ -512,7 +543,6 @@ function bi_pow(BigInt a, int e) -> BigInt {
     if (k < 0) { k = 0 }
     bi_abs_into(a, base)
     if (a.neg != 0 && k % 2 == 1) { neg = 1 }
-    bi_clear(acc)
     acc.d[0] = 1
     acc.n = 1
     acc.neg = 0
@@ -545,7 +575,6 @@ function bi_pow(BigInt a, int e) -> BigInt {
 function bi_fact(int n) -> BigInt {
     BigInt acc
     BigInt tmp
-    bi_clear(acc)
     acc.d[0] = 1
     acc.n = 1
     acc.neg = 0

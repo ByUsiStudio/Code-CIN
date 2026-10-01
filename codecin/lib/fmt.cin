@@ -1,0 +1,325 @@
+// Code CIN 官方标准库: 排版与格式化输出 (fmt)
+// 用法: import "fmt.cin"
+//
+// 纯 CIN 实现, 只使用非宿主能力内建 (strlen / substr / strcmp / indexof /
+// int_to_str / float_to_str / floor / idiv / trim), 不依赖任何宿主能力,
+// 在解释器与 Go 原生 VM 两条路径上行为一致。
+//
+// 与 conv.cin 的分工: conv 提供进制转换与基础填充 (c_pad_left / c_pad_right /
+// c_pad_int / c_to_hex / c_to_bin), 本库面向"排版"再包一层: 定点小数、千位分隔、
+// 对齐/居中、比例条、表格单元格与边框。两者可同时导入, 互不依赖。
+//
+// 全局数据段: 本库**没有全局变量**, 不占用数据区。
+//
+// 统一约定 (重要, 也写在 .libdocs/fmt.md 里):
+//   * 所有函数返回新字符串 (新堆块, 不回收), 因此不要在无界循环里对超长串反复调用;
+//   * 字符串长度一律是**字节**语义 (strlen / substr / s[i] 均按字节), 非 ASCII
+//     (如 UTF-8 中文) 按字节计数与切断, 一个汉字算 3 个字节、宽度算 3 列;
+//   * 计数类参数统一钳制到 [0, 1024] (FMT_REPEAT_LIMIT), 宽度类参数各自钳制,
+//     避免一次调用就把 64 KiB 堆撑爆;
+//   * fmt_float_dec / fmt_float_pad 的 digits 钳制到 [0, 9];
+//   * fmt_float_dec 的 |v| >= 1e9 时退化为 float_to_str(v) (定点整数部分会溢出
+//     64 位整数槽), 该退化行为不做补零;
+//   * 局部标量变量不自动清零, 本库所有局部变量都显式赋值后再使用。
+
+// 重复次数上限 (fmt_repeat / fmt_repeat_char / fmt_bar 的 width)
+function fmt_repeat_limit() -> int {
+    return 1024
+}
+
+// ---------------- 内部辅助 ----------------
+
+// 内部: 可打印 ASCII 表, 下标 i 对应编码 32 + i (即 32..126), 共 95 字符
+function fmt_ascii_table() -> string {
+    return " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~"
+}
+
+// 编码 -> 单字符字符串
+// 支持 32..126 (可打印 ASCII) 与 9 / 10 / 13 (制表/换行/回车);
+// 其余编码返回 "" (含 0 与 > 255, 本库不做多字节编码)
+function fmt_chr(int ch) -> string {
+    if (ch == 9) { return "\t" }
+    if (ch == 10) { return "\n" }
+    if (ch == 13) { return "\r" }
+    if (ch < 32 || ch > 126) { return "" }
+    return substr(fmt_ascii_table(), ch - 32, 1)
+}
+
+// 内部: 把 s 重复 n 次; n 钳制到 [0, 1024], s 为空返回 ""
+// 用倍增法构造 (O(log n) 次拼接), 避免逐次拼接时 O(n^2) 的堆分配:
+// n = 1024 时逐次拼接要写约 50 万字节临时块, 足以撑爆默认 64 KiB 堆。
+function fmt_rep(string s, int n) -> string {
+    if (n <= 0) { return "" }
+    if (strlen(s) == 0) { return "" }
+    if (n > 1024) { n = 1024 }
+    string block = s
+    int reps = 1
+    while (reps * 2 <= n) {
+        block = block + block
+        reps = reps * 2
+    }
+    string out = ""
+    int left = n
+    while (left > 0) {
+        if (left >= reps) {
+            out = out + block
+            left = left - reps
+        } else {
+            reps = idiv(reps, 2)
+            block = substr(block, 0, idiv(strlen(block), 2))
+        }
+    }
+    return out
+}
+
+// ---------------- 整数排版 ----------------
+
+// 整数右对齐到 width 列 (左侧补空格); width 不足时原样返回, 负数保留 '-' 号
+// width <= 0 时原样返回
+function fmt_int_width(int v, int width) -> string {
+    string s = int_to_str(v)
+    int n = strlen(s)
+    if (width <= n) { return s }
+    return fmt_rep(" ", width - n) + s
+}
+
+// 整数补前导 0 到 width 列 (含符号, 即总宽度); width 不足时原样返回
+// fmt_int_zero(-42, 5) -> "-0042"
+function fmt_int_zero(int v, int width) -> string {
+    string s = int_to_str(v)
+    int n = strlen(s)
+    if (width <= n) { return s }
+    if (v < 0) {
+        return "-" + fmt_rep("0", width - n) + substr(s, 1, n - 1)
+    }
+    return fmt_rep("0", width - n) + s
+}
+
+// 千位分隔 (每 3 位一个逗号), 负数保留 '-' 号
+// fmt_thousands(1234567) -> "1,234,567"; 0 -> "0"; 100 -> "100"; -1000 -> "-1,000"
+function fmt_thousands(int v) -> string {
+    string s = int_to_str(v)
+    string sign = ""
+    if (s[0] == 45) {
+        sign = "-"
+        s = substr(s, 1, strlen(s) - 1)
+    }
+    int n = strlen(s)
+    string out = ""
+    for (int i = 0; i < n; i = i + 1) {
+        if (i > 0 && (n - i) % 3 == 0) {
+            out = out + ","
+        }
+        out = out + substr(s, i, 1)
+    }
+    return sign + out
+}
+
+// ---------------- 浮点排版 ----------------
+
+// 定点小数: 四舍五入到 digits 位并补足尾随 0, digits 钳制到 [0, 9]
+// fmt_float_dec(3.14159, 2) -> "3.14"; fmt_float_dec(2.0, 3) -> "2.000"
+// fmt_float_dec(9.999, 2)   -> "10.00" (进位贯穿整数部分)
+// fmt_float_dec(3.14159, 0) -> "3" (digits == 0 时不含小数点)
+// 负号在圆整前剥掉, 因此按"绝对值四舍五入"再补符号 (-0.005, 2 -> "-0.01")
+// |v| >= 1e9 时退化为 float_to_str(v), 不做定点补零
+function fmt_float_dec(float v, int digits) -> string {
+    if (digits < 0) { digits = 0 }
+    if (digits > 9) { digits = 9 }
+    string sign = ""
+    float mag = v
+    if (v < 0.0) {
+        sign = "-"
+        mag = -v
+    }
+    if (mag >= 1000000000.0) {
+        return float_to_str(v)
+    }
+    int scale = 1
+    for (int i = 0; i < digits; i = i + 1) {
+        scale = scale * 10
+    }
+    int scaled = floor(mag * scale + 0.5)
+    int ip = idiv(scaled, scale)
+    int fp = scaled % scale
+    string out = sign + int_to_str(ip)
+    if (digits > 0) {
+        string fs = int_to_str(fp)
+        out = out + "." + fmt_rep("0", digits - strlen(fs)) + fs
+    }
+    return out
+}
+
+// 定点小数并把**整数部分**补前导 0 到 int_width 位 (不含符号与小数部分)
+// fmt_float_pad(3.14159, 6, 2) -> "000003.14"
+// fmt_float_pad(-3.5, 4, 1)    -> "-0003.5"
+// dec_digits 钳制到 [0, 9]; int_width <= 数字位数时不补
+function fmt_float_pad(float v, int int_width, int dec_digits) -> string {
+    string fixed = fmt_float_dec(v, dec_digits)
+    string sign = ""
+    string body = fixed
+    if (fixed[0] == 45) {
+        sign = "-"
+        body = substr(fixed, 1, strlen(fixed) - 1)
+    }
+    string ipart = body
+    string rest = ""
+    int dot = indexof(body, ".")
+    if (dot >= 0) {
+        ipart = substr(body, 0, dot)
+        rest = substr(body, dot, strlen(body) - dot)
+    }
+    return sign + fmt_rep("0", int_width - strlen(ipart)) + ipart + rest
+}
+
+// 比例 -> 百分数字符串 (四舍五入到 digits 位小数, digits 钳制到 [0, 9])
+// fmt_percent(0.1234, 1) -> "12.3%"; fmt_percent(1.0, 0) -> "100%"
+// fmt_percent(-0.25, 1)  -> "-25.0%"
+function fmt_percent(float ratio, int digits) -> string {
+    return fmt_float_dec(ratio * 100.0, digits) + "%"
+}
+
+// ---------------- 对齐与重复 ----------------
+
+// 对齐到 width 列: mode 0 左对齐 / 1 右对齐 / 2 居中;
+// 其余取值 (含负数) 一律按左对齐处理; 居中时余出的 1 列补在右侧
+// 字符串已 >= width 时原样返回
+function fmt_align(string s, int width, int mode) -> string {
+    int n = strlen(s)
+    if (width <= n) { return s }
+    int pad = width - n
+    if (mode == 1) {
+        return fmt_rep(" ", pad) + s
+    }
+    if (mode == 2) {
+        int left = idiv(pad, 2)
+        return fmt_rep(" ", left) + s + fmt_rep(" ", pad - left)
+    }
+    return s + fmt_rep(" ", pad)
+}
+
+// 居中到 width 列 (等价于 fmt_align(s, width, 2))
+function fmt_center(string s, int width) -> string {
+    return fmt_align(s, width, 2)
+}
+
+// 字符串重复 n 次; n 钳制到 [0, 1024], n <= 0 或 s 为空返回 ""
+function fmt_repeat(string s, int n) -> string {
+    return fmt_rep(s, n)
+}
+
+// 同一个字符重复 n 次; ch 见 fmt_chr (非法编码返回 "")
+function fmt_repeat_char(int ch, int n) -> string {
+    return fmt_rep(fmt_chr(ch), n)
+}
+
+// ---------------- 图形化 ----------------
+
+// 比例条: 用 '#' 填充已用部分, '-' 填充剩余部分, 共 width 列
+// ratio 钳制到 [0, 1]; width <= 0 返回 ""; width > 1024 钳制为 1024
+// 填充长度 = round(ratio * width) (四舍五入)
+// fmt_bar(0.5, 10) -> "#####-----"
+function fmt_bar(float ratio, int width) -> string {
+    if (width <= 0) { return "" }
+    if (width > 1024) { width = 1024 }
+    if (ratio < 0.0) { ratio = 0.0 }
+    if (ratio > 1.0) { ratio = 1.0 }
+    int filled = floor(ratio * width + 0.5)
+    if (filled < 0) { filled = 0 }
+    if (filled > width) { filled = width }
+    return fmt_rep("#", filled) + fmt_rep("-", width - filled)
+}
+
+// ---------------- 表格 ----------------
+
+// 表格单元格: 正好 width 列
+// 内容不足右补空格; 内容 >= width 时**按字节截断**到 width (不做省略号提示)
+// width <= 0 返回 ""
+function fmt_cell(string s, int width) -> string {
+    if (width <= 0) { return "" }
+    int n = strlen(s)
+    if (n >= width) { return substr(s, 0, width) }
+    return s + fmt_rep(" ", width - n)
+}
+
+// 水平分隔线: width 个 '-' 字符; width <= 0 返回 ""
+function fmt_sep(int width) -> string {
+    return fmt_rep("-", width)
+}
+
+// 表格边框线: cols 列、每列 col_width 宽, 形如 "+----+----+"
+// cols <= 0 返回 ""; cols 与 col_width 各自钳制到 [0, 256]
+// fmt_border(3, 4) -> "+----+----+----+"
+function fmt_border(int cols, int col_width) -> string {
+    if (cols <= 0) { return "" }
+    if (cols > 256) { cols = 256 }
+    if (col_width < 0) { col_width = 0 }
+    if (col_width > 256) { col_width = 256 }
+    string out = "+"
+    for (int i = 0; i < cols; i = i + 1) {
+        out = out + fmt_rep("-", col_width) + "+"
+    }
+    return out
+}
+
+// ---------------- 进制与布尔 ----------------
+
+// 整数 -> 大写十六进制字符串, 前导 0 补到 width 位
+// v == 0 输出 "0"; 负数按 64 位补码展开 (16 位十六进制)
+// width 钳制到 [0, 64]; width 不超过实际位数时不补
+// fmt_hex(255, 4) -> "00FF"; fmt_hex(-1, 0) -> "FFFFFFFFFFFFFFFF"
+function fmt_hex(int v, int width) -> string {
+    if (width < 0) { width = 0 }
+    if (width > 64) { width = 64 }
+    string out = ""
+    if (v == 0) {
+        out = "0"
+    } else {
+        string digits = "0123456789ABCDEF"
+        int x = v
+        while (x != 0) {
+            int d = x & 15
+            out = substr(digits, d, 1) + out
+            x = (x >> 4) & 0x0FFFFFFFFFFFFFFF
+        }
+    }
+    if (width > strlen(out)) {
+        out = fmt_rep("0", width - strlen(out)) + out
+    }
+    return out
+}
+
+// 整数 -> 二进制字符串, 前导 0 补到 width 位
+// v == 0 输出 "0"; 负数按 64 位补码展开 (64 位二进制)
+// width 钳制到 [0, 64]
+// fmt_bin(10, 8) -> "00001010"
+function fmt_bin(int v, int width) -> string {
+    if (width < 0) { width = 0 }
+    if (width > 64) { width = 64 }
+    string out = ""
+    if (v == 0) {
+        out = "0"
+    } else {
+        int x = v
+        while (x != 0) {
+            if ((x & 1) == 1) {
+                out = "1" + out
+            } else {
+                out = "0" + out
+            }
+            x = (x >> 1) & 0x7FFFFFFFFFFFFFFF
+        }
+    }
+    if (width > strlen(out)) {
+        out = fmt_rep("0", width - strlen(out)) + out
+    }
+    return out
+}
+
+// 布尔 -> "true" / "false"
+// 本库选定与内建 bool_to_str 及打印输出一致的拼写 (不是 "yes"/"no");
+// 零值为 false, 非零为 true
+function fmt_bool(bool b) -> string {
+    if (b) { return "true" }
+    return "false"
+}

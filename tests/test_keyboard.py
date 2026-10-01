@@ -10,6 +10,8 @@ r"""键盘输入监听 (SYS 116..118 / key.cin) 回归测试。
 断言约定与 tests/test_p0_fixes.py 一致。
 """
 
+import os
+
 import pytest
 
 from codecin import CPU, Config, native
@@ -120,10 +122,12 @@ function main() -> int {
 
 @pytest.mark.parametrize('use_native', (False, True),
                          ids=('interp', 'native'))
-def test_key_lib_constants_and_helpers(tmp_path, use_native):
+def test_key_lib_constants_and_helpers(workdir, use_native):
     # 纯常量与计算, 无宿主调用, 两条路径均可执行
-    path = tmp_path / 'key_lib.cin'
-    path.write_text(KEY_LIB_SRC, encoding='utf-8')
-    cpu = run_cin_file(str(path), use_native=use_native)
+    # 注意: workdir (workspace 内) 而不是 tmp_path —— 受限沙箱下 tmp_path 不可用。
+    path = os.path.join(workdir, 'key_lib.cin')
+    with open(path, 'w', encoding='utf-8') as f:
+        f.write(KEY_LIB_SRC)
+    cpu = run_cin_file(path, use_native=use_native)
     assert not cpu.execution_failed
     assert cpu.regs.read(0) == 0

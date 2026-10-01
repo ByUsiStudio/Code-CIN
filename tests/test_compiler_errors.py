@@ -93,13 +93,6 @@ function main() -> int {
     println(int_to_str(x[0]))
     return 0
 }'''),
-    ('string_compound_assign', '''
-function main() -> int {
-    string s = "a"
-    s += "b"
-    println(s)
-    return 0
-}'''),
     ('struct_no_such_field', '''
 struct P { int x }
 function main() -> int {
@@ -207,6 +200,14 @@ function f(int a, int b) -> int {
 }
 function main() -> int {
     return f(1)
+}'''),
+    # 字符串 += 现在是合法特性 (原先被列在 REJECT 里, 本轮实现后移到 ACCEPT)
+    ('string_compound_assign_ok', '''
+function main() -> int {
+    string s = "a"
+    s += "b"
+    println(s)
+    return 0
 }'''),
 ]
 
