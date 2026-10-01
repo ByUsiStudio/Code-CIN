@@ -66,6 +66,10 @@ jobs:
         with:
           go-version-file: codecin/native/go.mod
           cache: true
+          # Go 模块在 codecin/native/ 下 (仓库根没有 go.mod), 不指定这一项时
+          # setup-go 会在仓库根找不到依赖文件, 每次运行都报
+          # "Restore cache failed: Dependencies file is not found ..." 并跳过缓存。
+          cache-dependency-path: codecin/native/go.mod
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
@@ -98,6 +102,10 @@ jobs:
         with:
           go-version-file: codecin/native/go.mod
           cache: true
+          # Go 模块在 codecin/native/ 下 (仓库根没有 go.mod), 不指定这一项时
+          # setup-go 会在仓库根找不到依赖文件, 每次运行都报
+          # "Restore cache failed: Dependencies file is not found ..." 并跳过缓存。
+          cache-dependency-path: codecin/native/go.mod
       - name: Install build tooling
         run: |
           python -m pip install --upgrade pip
@@ -161,6 +169,10 @@ jobs:
         with:
           go-version-file: codecin/native/go.mod
           cache: true
+          # Go 模块在 codecin/native/ 下 (仓库根没有 go.mod), 不指定这一项时
+          # setup-go 会在仓库根找不到依赖文件, 每次运行都报
+          # "Restore cache failed: Dependencies file is not found ..." 并跳过缓存。
+          cache-dependency-path: codecin/native/go.mod
       - name: Build all Go packages (Go 侧不含 CLI 入口)
         run: go build ./...
         working-directory: codecin/native

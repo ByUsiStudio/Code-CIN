@@ -114,6 +114,9 @@ jobs:
         with:
           go-version-file: codecin/native/go.mod
           cache: true
+          # 同 ci.yml: Go 模块在 codecin/native/ 下, 必须显式指明依赖文件,
+          # 否则 setup-go 在仓库根找不到 go.mod/go.sum 并跳过缓存。
+          cache-dependency-path: codecin/native/go.mod
       - name: 记录 runner 架构
         shell: bash
         run: |
@@ -171,6 +174,9 @@ jobs:
         with:
           go-version-file: codecin/native/go.mod
           cache: true
+          # 同 ci.yml: Go 模块在 codecin/native/ 下, 必须显式指明依赖文件,
+          # 否则 setup-go 在仓库根找不到 go.mod/go.sum 并跳过缓存。
+          cache-dependency-path: codecin/native/go.mod
       - run: python -m pip install --upgrade build twine
       - name: Build sdist + 纯 Python wheel
         env:
