@@ -1,0 +1,374 @@
+// Code CIN 官方标准库: 多字位集合 (bitset)
+// 用法: import "bitset.cin"
+//
+// 纯 CIN 实现, 不使用任何宿主能力内建, 也不做动态内存分配:
+// 位集合以定长全局数组 bs_data[16] 保存 (2 个槽 x 8 个 64 位字)。
+// 与 bits.cin 的单字 (64 位) 运算互补: 本库把一整套 512 位的位集合
+// 放在全局状态里, 提供置位 / 计数 / 查找 / 集合运算 / 整体位移。
+//
+// 容量常量:
+//   BS_WORDS = 8   (每个位集合 8 个 64 位字)
+//   BS_BITS  = 512 (每个位集合 512 位, 合法下标 0..511)
+//   BS_SLOTS = 2   (槽号 0 / 1)
+//
+// 全局数据段占用 (每槽 8 字节):
+//   bs_data[16]                                  =  16 槽
+//   标量 (bs_cur)                                =   1 槽
+//   合计 17 槽 = 136 字节, 远小于默认 64 KiB 数据段。
+//
+// 槽位模型 (重要):
+//   * 库内有两个互相独立的位集合槽: 槽 0 与槽 1;
+//   * bs_cur 记录"当前槽", 所有单槽操作 (bs_set / bs_count / bs_not /
+//     bs_shift_left / bs_from_int / ...) 都只作用于当前槽;
+//   * bs_select(which) 把当前槽切换为 which (0 或 1);
+//     初始当前槽为 0, bs_reset() 会把当前槽复位为 0;
+//   * bs_and / bs_or / bs_xor / bs_equals 的参数 other 是"另一操作数槽"的
+//     槽号, 读的是那个槽; 三个逻辑运算把结果**写回当前槽**(原地), 另一个
+//     槽保持不变; bs_equals 只比较, 不改动任何槽。
+//
+// 边界约定:
+//   * 位下标越界 (i < 0 或 i > 511): bs_test 返回 0; bs_set / bs_clear /
+//     bs_toggle 返回 0 且**不写内存**; bs_next_set 返回 -1;
+//   * 槽号越界 (不在 0..1): bs_select / bs_copy_from / bs_clear_slot /
+//     bs_and / bs_or / bs_xor / bs_equals 返回 0 且不改变任何状态;
+//   * bs_count_word(w) 的 w 越界返回 -1 (合法的字内计数是 0..64);
+//     bs_get_word(w) 的 w 越界返回 0 (64 位字的取值本身就是任意整数,
+//     没有无歧义的失败值); bs_set_word(w, v) 的 w 越界返回 0 无操作;
+//   * 位移量 k < 0 视为非法: 无操作; k == 0 无操作;
+//     k >= BS_BITS (512) 时当前槽整体清零;
+//   * bs_not() 严格按 BS_BITS = 512 位取反 (逐字与 64 位全 1 掩码异或,
+//     不使用 `~` 直接取反 64 位字), 因此空集取反得到满集 (512 位全 1)。
+
+int bs_data[16]
+int bs_cur = 0
+
+// ---------------- 常量 ----------------
+
+// 总位数 BS_BITS = 512
+function bs_bits() -> int {
+    return 512
+}
+
+// 每个位集合的字数 BS_WORDS = 8
+function bs_words() -> int {
+    return 8
+}
+
+// 可用的槽数 BS_SLOTS = 2
+function bs_slots() -> int {
+    return 2
+}
+
+// 内部辅助: 槽号是否合法 (0 或 1)
+function bs_valid(int which) -> int {
+    if (which < 0 || which > 1) { return 0 }
+    return 1
+}
+
+// 内部辅助: 一个 64 位字的 popcount (含符号位)
+function bs_popcount_word(int x) -> int {
+    int n = 0
+    int v = x
+    while (v != 0) {
+        n = n + (v & 1)
+        v = (v >> 1) & 0x7FFFFFFFFFFFFFFF
+    }
+    return n
+}
+
+// 内部辅助: 一个非零 64 位字的最低置位下标 (0..63); x == 0 时行为未定义
+function bs_ctz_word(int x) -> int {
+    int n = 0
+    int v = x
+    while ((v & 1) == 0) {
+        n = n + 1
+        v = v >> 1
+    }
+    return n
+}
+
+// 内部辅助: 一个非零 64 位字的最高置位下标 (0..63); x == 0 时返回 -1
+function bs_high_bit(int x) -> int {
+    int b = 63
+    while (b >= 0 && ((x >> b) & 1) == 0) {
+        b = b - 1
+    }
+    return b
+}
+
+// ---------------- 槽管理 ----------------
+
+// 把当前槽切换为 which; 1 成功, 0 表示槽号非法 (当前槽不变)
+function bs_select(int which) -> int {
+    if (bs_valid(which) == 0) { return 0 }
+    bs_cur = which
+    return 1
+}
+
+// 当前槽号 (0 或 1)
+function bs_selected() -> int {
+    return bs_cur
+}
+
+// 清空两个槽, 并把当前槽复位为 0 (库初始化用)
+function bs_reset() -> void {
+    for (int w = 0; w < 16; w = w + 1) {
+        bs_data[w] = 0
+    }
+    bs_cur = 0
+}
+
+// 清空当前槽的全部 512 位
+function bs_clear_all() -> void {
+    for (int w = 0; w < 8; w = w + 1) {
+        bs_data[bs_cur * 8 + w] = 0
+    }
+}
+
+// 清空指定槽 which 的全部 512 位; 1 成功, 0 表示槽号非法
+function bs_clear_slot(int which) -> int {
+    if (bs_valid(which) == 0) { return 0 }
+    for (int w = 0; w < 8; w = w + 1) {
+        bs_data[which * 8 + w] = 0
+    }
+    return 1
+}
+
+// 把槽 src 整体复制到当前槽; 1 成功, 0 表示槽号非法
+function bs_copy_from(int src) -> int {
+    if (bs_valid(src) == 0) { return 0 }
+    for (int w = 0; w < 8; w = w + 1) {
+        bs_data[bs_cur * 8 + w] = bs_data[src * 8 + w]
+    }
+    return 1
+}
+
+// ---------------- 单字访问 ----------------
+
+// 读取当前槽第 w 个 64 位字; w 越界返回 0
+function bs_get_word(int w) -> int {
+    if (w < 0 || w > 7) { return 0 }
+    return bs_data[bs_cur * 8 + w]
+}
+
+// 写入当前槽第 w 个 64 位字; 1 成功, 0 表示 w 越界 (无操作)
+function bs_set_word(int w, int v) -> int {
+    if (w < 0 || w > 7) { return 0 }
+    bs_data[bs_cur * 8 + w] = v
+    return 1
+}
+
+// 当前槽第 w 个字里 1 的个数; w 越界返回 -1
+function bs_count_word(int w) -> int {
+    if (w < 0 || w > 7) { return -1 }
+    return bs_popcount_word(bs_data[bs_cur * 8 + w])
+}
+
+// ---------------- 单位操作 ----------------
+
+// 置位第 i 位; 1 成功, 0 表示 i 越界 (无操作)
+function bs_set(int i) -> int {
+    if (i < 0 || i > 511) { return 0 }
+    int idx = bs_cur * 8 + idiv(i, 64)
+    bs_data[idx] = bs_data[idx] | (1 << (i % 64))
+    return 1
+}
+
+// 清位第 i 位; 1 成功, 0 表示 i 越界 (无操作); 该位本来为 0 也返回 1
+function bs_clear(int i) -> int {
+    if (i < 0 || i > 511) { return 0 }
+    int idx = bs_cur * 8 + idiv(i, 64)
+    int bit = 1 << (i % 64)
+    bs_data[idx] = bs_data[idx] & (bit ^ 0xFFFFFFFFFFFFFFFF)
+    return 1
+}
+
+// 反转第 i 位; 1 成功, 0 表示 i 越界 (无操作)
+function bs_toggle(int i) -> int {
+    if (i < 0 || i > 511) { return 0 }
+    int idx = bs_cur * 8 + idiv(i, 64)
+    bs_data[idx] = bs_data[idx] ^ (1 << (i % 64))
+    return 1
+}
+
+// 测试第 i 位; 返回 0 / 1, i 越界返回 0
+function bs_test(int i) -> int {
+    if (i < 0 || i > 511) { return 0 }
+    return (bs_data[bs_cur * 8 + idiv(i, 64)] >> (i % 64)) & 1
+}
+
+// 当前槽整 512 位取反 (原地); 结果仍然只占 BS_BITS 位
+function bs_not() -> void {
+    for (int w = 0; w < 8; w = w + 1) {
+        int i = bs_cur * 8 + w
+        bs_data[i] = bs_data[i] ^ 0xFFFFFFFFFFFFFFFF
+    }
+}
+
+// ---------------- 查询 ----------------
+
+// 当前槽中 1 的总个数 (0..512)
+function bs_count() -> int {
+    int n = 0
+    for (int w = 0; w < 8; w = w + 1) {
+        n = n + bs_popcount_word(bs_data[bs_cur * 8 + w])
+    }
+    return n
+}
+
+// 是否至少有一位为 1; 1/0
+function bs_any() -> int {
+    for (int w = 0; w < 8; w = w + 1) {
+        if (bs_data[bs_cur * 8 + w] != 0) { return 1 }
+    }
+    return 0
+}
+
+// 是否一位都没有 (空集); 1/0
+function bs_none() -> int {
+    if (bs_any() == 1) { return 0 }
+    return 1
+}
+
+// 最小置位下标; 空集返回 -1
+function bs_first_set() -> int {
+    for (int w = 0; w < 8; w = w + 1) {
+        int v = bs_data[bs_cur * 8 + w]
+        if (v != 0) { return w * 64 + bs_ctz_word(v) }
+    }
+    return -1
+}
+
+// 最大置位下标; 空集返回 -1
+function bs_last_set() -> int {
+    int w = 7
+    while (w >= 0) {
+        int v = bs_data[bs_cur * 8 + w]
+        if (v != 0) { return w * 64 + bs_high_bit(v) }
+        w = w - 1
+    }
+    return -1
+}
+
+// 大于等于 from 的下一个置位下标; 没有则返回 -1; from 越界返回 -1
+function bs_next_set(int from) -> int {
+    if (from < 0 || from > 511) { return -1 }
+    int i = from
+    while (i < 512) {
+        if (bs_test(i) == 1) { return i }
+        i = i + 1
+    }
+    return -1
+}
+
+// ---------------- 逻辑运算 (结果写回当前槽) ----------------
+
+// 当前槽 &= 槽 other; 1 成功, 0 表示 other 非法 (无操作)
+function bs_and(int other) -> int {
+    if (bs_valid(other) == 0) { return 0 }
+    for (int w = 0; w < 8; w = w + 1) {
+        bs_data[bs_cur * 8 + w] = bs_data[bs_cur * 8 + w] & bs_data[other * 8 + w]
+    }
+    return 1
+}
+
+// 当前槽 |= 槽 other; 1 成功, 0 表示 other 非法 (无操作)
+function bs_or(int other) -> int {
+    if (bs_valid(other) == 0) { return 0 }
+    for (int w = 0; w < 8; w = w + 1) {
+        bs_data[bs_cur * 8 + w] = bs_data[bs_cur * 8 + w] | bs_data[other * 8 + w]
+    }
+    return 1
+}
+
+// 当前槽 ^= 槽 other; 1 成功, 0 表示 other 非法 (无操作)
+function bs_xor(int other) -> int {
+    if (bs_valid(other) == 0) { return 0 }
+    for (int w = 0; w < 8; w = w + 1) {
+        bs_data[bs_cur * 8 + w] = bs_data[bs_cur * 8 + w] ^ bs_data[other * 8 + w]
+    }
+    return 1
+}
+
+// 当前槽是否与槽 other 完全相同; 1/0; other 非法返回 0
+function bs_equals(int other) -> int {
+    if (bs_valid(other) == 0) { return 0 }
+    for (int w = 0; w < 8; w = w + 1) {
+        if (bs_data[bs_cur * 8 + w] != bs_data[other * 8 + w]) { return 0 }
+    }
+    return 1
+}
+
+// ---------------- 整体位移 ----------------
+
+// 当前槽整体左移 k 位 (下标 i -> i + k), 移出 511 的位丢弃;
+// k < 0 或 k == 0 无操作; k >= 512 时当前槽清零
+function bs_shift_left(int k) -> void {
+    if (k < 0) { return }
+    if (k >= 512) {
+        bs_clear_all()
+        return
+    }
+    if (k == 0) { return }
+    int ws = idiv(k, 64)
+    int bits = k % 64
+    int w = 7
+    while (w >= 0) {
+        int src = w - ws
+        int val = 0
+        if (src >= 0) {
+            val = bs_data[bs_cur * 8 + src] << bits
+            if (bits > 0 && src - 1 >= 0) {
+                int lo = (bs_data[bs_cur * 8 + src - 1] >> (64 - bits)) & ((1 << bits) - 1)
+                val = val | lo
+            }
+        }
+        bs_data[bs_cur * 8 + w] = val
+        w = w - 1
+    }
+}
+
+// 当前槽整体右移 k 位 (下标 i -> i - k), 移出 0 以下的位丢弃;
+// k < 0 或 k == 0 无操作; k >= 512 时当前槽清零
+function bs_shift_right(int k) -> void {
+    if (k < 0) { return }
+    if (k >= 512) {
+        bs_clear_all()
+        return
+    }
+    if (k == 0) { return }
+    int ws = idiv(k, 64)
+    int bits = k % 64
+    int w = 0
+    while (w < 8) {
+        int src = w + ws
+        int val = 0
+        if (src < 8) {
+            if (bits == 0) {
+                val = bs_data[bs_cur * 8 + src]
+            } else {
+                val = (bs_data[bs_cur * 8 + src] >> bits) & ((1 << (64 - bits)) - 1)
+                if (src + 1 < 8) {
+                    val = val | (bs_data[bs_cur * 8 + src + 1] << (64 - bits))
+                }
+            }
+        }
+        bs_data[bs_cur * 8 + w] = val
+        w = w + 1
+    }
+}
+
+// ---------------- 与整数互转 (只涉及低 64 位) ----------------
+
+// 当前槽 = v 的低 64 位 (其余 448 位清零)
+function bs_from_int(int v) -> void {
+    bs_data[bs_cur * 8] = v
+    for (int w = 1; w < 8; w = w + 1) {
+        bs_data[bs_cur * 8 + w] = 0
+    }
+}
+
+// 当前槽的低 64 位 (第 0 个字); 高位被丢弃
+function bs_to_int() -> int {
+    return bs_data[bs_cur * 8]
+}

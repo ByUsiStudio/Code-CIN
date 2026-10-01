@@ -1,0 +1,269 @@
+// Code CIN 官方标准库: 整数集合 (set)
+// 用法: import "set.cin"
+//
+// 纯 CIN 实现, 不使用任何宿主能力内建, 也不做动态内存分配:
+// 集合以位图形式存放在库内全局定长数组 set_data[6] 里
+// (3 个槽 x 2 个 64 位字), 单个槽容纳 128 位。
+//
+// 元素范围 0..SET_MAX-1, 容量常量 SET_MAX = 128。
+//
+// 全局数据段占用 (每槽 8 字节):
+//   set_data[6]                                  =   6 槽
+//   合计 6 槽 = 48 字节, 远小于默认 64 KiB 数据段。
+//
+// 槽位模型 (所有接口的 which 只能是 0 / 1 / 2):
+//   which = 0 -> 集合 A
+//   which = 1 -> 集合 B
+//   which = 2 -> 集合 C (备用 / 结果槽)
+//   A 与 B 是两个互相独立的集合, C 给 set_*_into 存放中间结果。
+//   调用 set_reset_all() 之前全局数据区已由运行时清零, 三个槽都是空集。
+//
+// 边界约定:
+//   * which 非法 (不在 0..2): 数值查询 (set_size / set_min / set_max_value /
+//     set_count_range / set_is_empty) 返回 -1; 布尔查询 (set_contains /
+//     set_is_subset / set_equals / set_is_full) 返回 0; 写入类
+//     (set_add / set_remove / set_reset / set_clear / set_fill /
+//     set_copy_into / set_union_into / set_intersect_into / set_diff_into)
+//     返回 0, 且绝不写内存;
+//   * 元素 v 非法 (v < 0 或 v >= 128): set_add / set_remove / set_contains
+//     返回 0, 不写内存;
+//   * 空集: set_size 为 0, set_is_empty 为 1, set_is_full 为 0,
+//     set_min / set_max_value 为 -1, set_count_range 为 0,
+//     set_to_str 为 "{}";
+//   * 非法 which 的 set_to_str 返回空串 "";
+//   * set_clear(which) 与 set_reset(which) 完全等价 (清空单个槽)。
+
+int set_data[6]
+
+// ---------------- 常量与内部辅助 ----------------
+
+// 最大合法元素值 (SET_MAX - 1)
+function set_max() -> int {
+    return 127
+}
+
+// 容量上限 SET_MAX (元素个数上限)
+function set_capacity() -> int {
+    return 128
+}
+
+// 可用槽数 (which 的合法取值个数)
+function set_slots() -> int {
+    return 3
+}
+
+// 内部辅助: which 是否合法 (0..2)
+function set_valid(int which) -> int {
+    if (which < 0 || which > 2) { return 0 }
+    return 1
+}
+
+// 内部辅助: 一个 64 位字的 popcount (含符号位)
+function set_popcount64(int x) -> int {
+    int n = 0
+    int v = x
+    while (v != 0) {
+        n = n + (v & 1)
+        v = (v >> 1) & 0x7FFFFFFFFFFFFFFF
+    }
+    return n
+}
+
+// 内部辅助: 读取 which 的第 v 位; 调用前必须保证 which 合法且 0 <= v < 128
+function set_raw_test(int which, int v) -> int {
+    return (set_data[which * 2 + idiv(v, 64)] >> (v % 64)) & 1
+}
+
+// ---------------- 生命周期 ----------------
+
+// 清空槽 which; 1 成功, 0 表示 which 非法 (无操作)
+function set_reset(int which) -> int {
+    if (set_valid(which) == 0) { return 0 }
+    set_data[which * 2] = 0
+    set_data[which * 2 + 1] = 0
+    return 1
+}
+
+// 清空全部 3 个槽
+function set_reset_all() -> void {
+    for (int w = 0; w < 6; w = w + 1) {
+        set_data[w] = 0
+    }
+}
+
+// set_reset 的别名 (按"清空集合"语义书写); 1 成功, 0 表示 which 非法
+function set_clear(int which) -> int {
+    return set_reset(which)
+}
+
+// 把槽 which 置满 (全部 128 个元素); 1 成功, 0 表示 which 非法
+function set_fill(int which) -> int {
+    if (set_valid(which) == 0) { return 0 }
+    set_data[which * 2] = 0xFFFFFFFFFFFFFFFF
+    set_data[which * 2 + 1] = 0xFFFFFFFFFFFFFFFF
+    return 1
+}
+
+// 把 src 槽整体复制到 dst 槽 (允许 dst == src); 1 成功, 0 表示有非法槽
+function set_copy_into(int dst, int src) -> int {
+    if (set_valid(dst) == 0 || set_valid(src) == 0) { return 0 }
+    for (int w = 0; w < 2; w = w + 1) {
+        set_data[dst * 2 + w] = set_data[src * 2 + w]
+    }
+    return 1
+}
+
+// ---------------- 增删查 ----------------
+
+// 加入元素 v; 成功 1; v 越界 / which 非法 / 已存在 均返回 0
+function set_add(int which, int v) -> int {
+    if (set_valid(which) == 0) { return 0 }
+    if (v < 0 || v > 127) { return 0 }
+    int idx = which * 2 + idiv(v, 64)
+    int bit = 1 << (v % 64)
+    if ((set_data[idx] & bit) != 0) { return 0 }
+    set_data[idx] = set_data[idx] | bit
+    return 1
+}
+
+// 删除元素 v; 真正删掉返回 1; v 越界 / which 非法 / 本来不存在 返回 0
+function set_remove(int which, int v) -> int {
+    if (set_valid(which) == 0) { return 0 }
+    if (v < 0 || v > 127) { return 0 }
+    int idx = which * 2 + idiv(v, 64)
+    int bit = 1 << (v % 64)
+    if ((set_data[idx] & bit) == 0) { return 0 }
+    set_data[idx] = set_data[idx] ^ bit
+    return 1
+}
+
+// 是否包含元素 v; 1/0; which 非法或 v 越界返回 0
+function set_contains(int which, int v) -> int {
+    if (set_valid(which) == 0) { return 0 }
+    if (v < 0 || v > 127) { return 0 }
+    return set_raw_test(which, v)
+}
+
+// ---------------- 统计 ----------------
+
+// 元素个数; which 非法返回 -1
+function set_size(int which) -> int {
+    if (set_valid(which) == 0) { return -1 }
+    return set_popcount64(set_data[which * 2]) + set_popcount64(set_data[which * 2 + 1])
+}
+
+// 空集返回 1, 非空返回 0; which 非法返回 -1
+function set_is_empty(int which) -> int {
+    if (set_valid(which) == 0) { return -1 }
+    if (set_data[which * 2] == 0 && set_data[which * 2 + 1] == 0) { return 1 }
+    return 0
+}
+
+// 满集 (128 个元素全在) 返回 1, 否则 0; which 非法返回 0
+function set_is_full(int which) -> int {
+    if (set_valid(which) == 0) { return 0 }
+    if (set_data[which * 2] == 0xFFFFFFFFFFFFFFFF && set_data[which * 2 + 1] == 0xFFFFFFFFFFFFFFFF) { return 1 }
+    return 0
+}
+
+// 最小元素; 空集或 which 非法返回 -1
+function set_min(int which) -> int {
+    if (set_valid(which) == 0) { return -1 }
+    for (int i = 0; i < 128; i = i + 1) {
+        if (set_raw_test(which, i) == 1) { return i }
+    }
+    return -1
+}
+
+// 最大元素; 空集或 which 非法返回 -1
+function set_max_value(int which) -> int {
+    if (set_valid(which) == 0) { return -1 }
+    int i = 127
+    while (i >= 0) {
+        if (set_raw_test(which, i) == 1) { return i }
+        i = i - 1
+    }
+    return -1
+}
+
+// 落在闭区间 [lo, hi] 内的元素个数;
+// lo / hi 自动钳制到 [0, 127]; 钳制后 hi < lo 返回 0; which 非法返回 -1
+function set_count_range(int which, int lo, int hi) -> int {
+    if (set_valid(which) == 0) { return -1 }
+    int a = lo
+    int b = hi
+    if (a < 0) { a = 0 }
+    if (b > 127) { b = 127 }
+    if (b < a) { return 0 }
+    int n = 0
+    for (int i = a; i <= b; i = i + 1) {
+        if (set_raw_test(which, i) == 1) { n = n + 1 }
+    }
+    return n
+}
+
+// ---------------- 集合运算 ----------------
+
+// dst = a | b; 1 成功, 0 表示有非法槽 (dst 与 a / b 可以是同一个槽)
+function set_union_into(int dst, int a, int b) -> int {
+    if (set_valid(dst) == 0 || set_valid(a) == 0 || set_valid(b) == 0) { return 0 }
+    for (int w = 0; w < 2; w = w + 1) {
+        set_data[dst * 2 + w] = set_data[a * 2 + w] | set_data[b * 2 + w]
+    }
+    return 1
+}
+
+// dst = a & b; 1 成功, 0 表示有非法槽
+function set_intersect_into(int dst, int a, int b) -> int {
+    if (set_valid(dst) == 0 || set_valid(a) == 0 || set_valid(b) == 0) { return 0 }
+    for (int w = 0; w < 2; w = w + 1) {
+        set_data[dst * 2 + w] = set_data[a * 2 + w] & set_data[b * 2 + w]
+    }
+    return 1
+}
+
+// dst = a - b (差集); 1 成功, 0 表示有非法槽
+function set_diff_into(int dst, int a, int b) -> int {
+    if (set_valid(dst) == 0 || set_valid(a) == 0 || set_valid(b) == 0) { return 0 }
+    for (int w = 0; w < 2; w = w + 1) {
+        int m = set_data[b * 2 + w] ^ 0xFFFFFFFFFFFFFFFF
+        set_data[dst * 2 + w] = set_data[a * 2 + w] & m
+    }
+    return 1
+}
+
+// a 是否为 b 的子集 (空集是任何集合的子集); 1/0; 有非法槽返回 0
+function set_is_subset(int a, int b) -> int {
+    if (set_valid(a) == 0 || set_valid(b) == 0) { return 0 }
+    for (int w = 0; w < 2; w = w + 1) {
+        int extra = set_data[a * 2 + w] & (set_data[b * 2 + w] ^ 0xFFFFFFFFFFFFFFFF)
+        if (extra != 0) { return 0 }
+    }
+    return 1
+}
+
+// a 与 b 是否完全相同; 1/0; 有非法槽返回 0
+function set_equals(int a, int b) -> int {
+    if (set_valid(a) == 0 || set_valid(b) == 0) { return 0 }
+    for (int w = 0; w < 2; w = w + 1) {
+        if (set_data[a * 2 + w] != set_data[b * 2 + w]) { return 0 }
+    }
+    return 1
+}
+
+// ---------------- 输出 ----------------
+
+// 集合的字符串形式, 形如 "{1, 3, 5}"; 空集为 "{}"; which 非法返回 ""
+function set_to_str(int which) -> string {
+    if (set_valid(which) == 0) { return "" }
+    string out = "{"
+    int n = 0
+    for (int v = 0; v < 128; v = v + 1) {
+        if (set_raw_test(which, v) == 1) {
+            if (n > 0) { out = out + ", " }
+            out = out + int_to_str(v)
+            n = n + 1
+        }
+    }
+    return out + "}"
+}
