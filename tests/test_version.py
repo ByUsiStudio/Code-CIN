@@ -389,25 +389,30 @@ def test_bump_version_full_run_in_repo_copy(workdir):
         pytest.skip(f'副本 codecin 包不可导入 (并行编辑中?): {probe.stderr[-200:]}')
 
     before_real = _snapshot(ROOT, BUMP_OWNED)
-    r = _bump('--root', repo, '--date', '2030-01-02', '5.7.0')
+    # 目标版本必须**严格大于**当前版本, 所以由当前版本推导而不是写死 —— 写死会在
+    # 每次提升版本后失效 (例如 5.7.0 在版本升到 5.7.4 之后就不再是合法目标)。
+    cur = tuple(int(x) for x in codecin.__version__.split('.'))
+    target = f'{cur[0]}.{cur[1]}.{cur[2] + 1}'
+    r = _bump('--root', repo, '--date', '2030-01-02', target)
     assert r.returncode == 0, r.stdout + r.stderr
 
     with open(os.path.join(repo, 'codecin', '__init__.py'), encoding='utf-8') as f:
         init_text = f.read()
-    assert re.search(r'^__version__ = "5\.7\.0"$', init_text, re.MULTILINE), init_text[:200]
+    escaped = target.replace('.', r'\.')
+    assert re.search(rf'^__version__ = "{escaped}"$', init_text, re.MULTILINE), init_text[:200]
 
     with open(os.path.join(repo, 'codecin', 'native', 'engine', 'version_gen.go'),
               encoding='utf-8') as f:
         go_text = f.read()
-    assert 'const BuildVersion = "5.7.0"' in go_text, go_text
+    assert f'const BuildVersion = "{target}"' in go_text, go_text
 
     with open(os.path.join(repo, 'CHANGELOG.md'), 'rb') as f:
         changelog_bytes = f.read()
     assert b'\r\n' not in changelog_bytes, 'CHANGELOG 换行风格被改成了 CRLF'
     changelog = changelog_bytes.decode('utf-8')          # UTF-8 中文不得损坏
-    assert '## [5.7.0] - 2030-01-02' in changelog
+    assert f'## [{target}] - 2030-01-02' in changelog
     assert '### 修复 (Fixed)' in changelog
-    assert changelog.index('[5.7.0]') < changelog.index(f'[{codecin.__version__}]')
+    assert changelog.index(f'[{target}]') < changelog.index(f'[{codecin.__version__}]')
 
     # 副本里的 Go 生成物必须仍然自洽 (CI 的 --check 门禁)
     check = subprocess.run(

@@ -5,6 +5,68 @@
 
 ---
 
+## [5.7.4] - 2026-09-28
+
+一次「静默错误清零 + 标准库扩容」的发布：修掉一族会**静默破坏内存/静默给错结果**的
+struct 缺陷与两处**同一程序两条路径结论不同**的分歧，并把官方标准库从 20 个扩到 36 个。
+
+### 新增 (Added)
+
+- **标准库 20 → 36 个**（全部为纯 CIN，只调用语言内建，三条执行路径一致）：
+  - 数据结构与算法：`tree.cin`（`tree_`）、`unionfind.cin`（`uf_`）、`heap.cin`（`heap_`）、
+    `graph.cin`（`graph_`）、`dp.cin`（`dp_`）、`set.cin`（`set_`）、`bitset.cin`（`bs_`）
+  - 文本与格式化：`text.cin`（`txt_`）、`token.cin`（`tok_`）、`fmt.cin`（`fmt_`）、`csv.cin`（`csv_`）
+  - 数值与科学计算：`bigint.cin`（`bi_`，任意精度）、`frac.cin`（`fr_`，有理数）、
+    `combin.cin`（`comb_`，数论与组合）
+  - 工程与系统：`path.cin`（`path_`，纯字符串路径）、`codec.cin`（`codec_`，十六进制/URL/
+    Base64/RLE/摩尔斯/XOR）
+- **`const` 命名常量**：`const int N = 4`（全局与局部），支持 `int/float/bool/string`，
+  纯编译期、不占数据段，可用于**数组维度**与任意表达式；可被同名局部变量遮蔽。
+- **数组维度接受整型常量表达式**：`int a[N]`、`int a[2 + 3]`、`int a[enumMember + 1]`。
+- **struct 聚合初始化**：`P p = {3, 4}`、`P ps[2] = {{1,2},{3,4}}`、嵌套 `Out o = {{5,6},7}`；
+  未列出的字段取默认值，初始化器过多是编译期错误。
+- **`string +=`**：右侧任意可字符串化的值。
+- **`exit(code)`**：立即结束程序，三条路径与 AOT 产物一致。
+- **版本设施**：`codecin/version.py`（`version_info()` / `compare()` / `build_info()` 等，
+  `build_info()` 永不抛异常）、CLI 新增 `--build-info` 与 `--build-info --json`、
+  `script/bump_version.py`（改真源 → 重生成 Go 版本常量 → 插 CHANGELOG 骨架，含回滚与 `--dry-run`）。
+
+### 修复 (Fixed)
+
+- **struct 聚合初始化写穿指针槽**：`P p = {3, 4}` 会把第 2 个字面量写到 `FP + 0`，
+  **覆盖保存的帧指针**；全局 `P o = {3,4}` 覆盖对象指针。现按字段写入堆对象。
+- **struct 数组成员访问写到绝对地址 0 / 8**：元素槽被当成指针解引用，
+  `ps[0].y = 1` 会**静默破坏数据段**（字符串字面量所在处）。现统一为
+  「槽里存对象指针」模型，每个元素各有对象。
+- **初始化器过多时两条路径结论不同**：解释器越界写后返回残值、原生 VM 抛
+  `Address out of bounds`。现为编译期错误 `Too many initializers for struct P`。
+- **struct 整体赋值是指针别名**：`P b = a; b.x = 7` 会改到 `a.x`，与文档承诺的
+  「值拷贝」不符。现按槽逐字拷贝（**传参仍保持文档规定的「引用可见」**）。
+- **嵌套 struct 字段只按 1 槽推进**：`struct Out { In i; int c }` 的 `c` 压在 `i.b` 上；
+  且成员取值会把内嵌字段当指针解引用。两处均已修正。
+- **`parse_array_literal` 静默丢弃尾部平铺元素**：`{{5, 6}, 7}` 里的 `7` 消失。
+- **字符串字节语义分歧**：解释器侧 `+` / `substr` / `indexof` 先做 UTF-8 解码，
+  非法字节序列被替换成 U+FFFD，实测 `strlen(substr("中",2,1)+substr("中",1,1))`
+  解释器 9 / 原生 3。现全部改为字节级。
+- **用户函数与内建同名时永远不会被调用**：`--no-native` 报宿主能力错误、原生路径
+  静默走宿主实现（两条路径结论不同）。现用户函数优先于同名内建。
+- **局部 struct 字段默认值**：`MALLOC` 并不清零，此前「全零」只是堆恰好干净；
+  现于函数序言显式清零。
+- **AOT 临时目录**：清理失败不再静默（记 warning 并给出残留绝对路径与手动删除命令）；
+  每次构建前清扫超过 6 小时的 `.aotbuild-*` / `.aotprobe-*`；
+  新增 `[tool.setuptools.exclude-package-data]` 使残留不再进 wheel。
+
+### 变更 (Changed)
+
+- **无法自洽的 struct 写法改为编译期报错**（原先静默算错）：多维 struct 数组
+  `P ps[2][3]`、struct 数组字段 `struct Bag { P items[3] }`、跨 struct 类型赋值
+  `P p; Q q; p = q;`、把 struct 写进标量槽 `int a[2]; a[0] = p;`。
+- `tests/test_keyboard.py`、`tests/test_p0_fixes.py` 由 `tmp_path` 改用 `workdir` 夹具，
+  受限沙箱下不再出现 5 个 setup 阶段 `ERROR`。
+- 新增跨库集成护栏 `tests/test_all_libs_together.py`：31 个纯 CIN 库同时 import 并各调用一个接口。
+
+---
+
 ## [5.6.0] - 2026-09-27
 
 一次以「静默错误清零 + 安全加固」为主的修复发布，落地 `docs/SUGGESTIONS_NEXT.md`
