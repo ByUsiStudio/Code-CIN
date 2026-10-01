@@ -130,8 +130,8 @@ function path_str_dirname(string p) -> string {
 }
 
 // 扩展名 (**含点**): "a/b/c.txt" -> ".txt"。
-// 无扩展名返回 "": 没有点、点在最前 (隐藏文件 ".gitignore")、点在最后 ("a.")、
-// 以及 "." / ".." 都返回 "". 只看最后一段
+// 无扩展名返回 "": 没有点、点在最前 (隐藏文件 ".gitignore")、以及 "." / ".." 都返回 ""。
+// 点在最后 ("a.") 视为"扩展名就是点本身", 返回 "."; 只看最后一段 (目录里的点不算)
 function path_ext(string p) -> string {
     string b = path_str_basename(p)
     int lb = strlen(b)

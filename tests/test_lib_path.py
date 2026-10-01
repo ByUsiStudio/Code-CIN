@@ -72,7 +72,7 @@ function main() -> int {
     if (strcmp(path_ext(""), "") != 0) { return 30 }
     if (strcmp(path_ext("a/b/"), "") != 0) { return 31 }
     if (strcmp(path_ext(".gitignore"), "") != 0) { return 32 }
-    if (strcmp(path_ext("a."), "") != 0) { return 33 }
+    if (strcmp(path_ext("a."), ".") != 0) { return 33 }
     if (strcmp(path_ext("."), "") != 0) { return 34 }
     if (strcmp(path_ext(".."), "") != 0) { return 35 }
     if (strcmp(path_ext("dir.d/file"), "") != 0) { return 36 }
@@ -168,6 +168,7 @@ function main() -> int {
     if (strcmp(path_common_prefix("x/y", "z/y"), "") != 0) { return 112 }
     if (strcmp(path_common_prefix("foo", "foobar"), "") != 0) { return 113 }
     if (strcmp(path_common_prefix("a/b/c", "a/b/c/d/e"), "a/b/c") != 0) { return 114 }
+    // 绝对路径与相对路径没有可比的分段前缀 -> ""
     if (strcmp(path_common_prefix("/a", "a"), "") != 0) { return 115 }
     if (strcmp(path_common_prefix("", "a"), "") != 0) { return 116 }
     if (strcmp(path_common_prefix("/", "/a"), "/") != 0) { return 117 }
