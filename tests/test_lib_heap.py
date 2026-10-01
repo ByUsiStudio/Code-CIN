@@ -150,7 +150,7 @@ function main() -> int {
     if (heap_is_valid() != 1) { return 83 }
 
     // ---- heap_sort: 就地升序 ----
-    int s[8] = {5, 3, 8, 1, 9, 2, 7, 4}
+    int s[8] = {5, 3, 8, 1, 6, 2, 7, 4}
     heap_sort(s, 8)
     for (int i = 0; i < 8; i = i + 1) {
         if (s[i] != i + 1) { return 84 }
@@ -207,7 +207,7 @@ function main() -> int {
     if (tree_insert(2) != 1) { return 1 }
     if (tree_insert(1) != 1) { return 2 }
     if (tree_insert(3) != 1) { return 3 }
-    if (tree_inorder_str() != "1 2 3") { return 4 }
+    if (strcmp(tree_inorder_str(), "1 2 3") != 0) { return 4 }
     if (tree_size() != 3) { return 5 }
 
     uf_reset(4)

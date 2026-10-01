@@ -42,7 +42,10 @@ __pycache__/
 
 # ==================== AOT 构建产物 ====================
 aotout/
+# AOT 临时构建目录: build() 正常会删掉, 删不掉时至少不能污染 git 状态。
+# (.aotprobe-* 是历史遗留前缀, 一并忽略; codecin/native/.gitignore 只覆盖该目录)
 .aotbuild-*
+.aotprobe-*
 /aotcheck/
 
 # ====================== Log ======================

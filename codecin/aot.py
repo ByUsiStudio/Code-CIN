@@ -26,7 +26,7 @@ import secrets
 import shutil
 import subprocess
 import time
-from typing import List, NamedTuple, Optional, Tuple
+from typing import List, NamedTuple, Optional
 
 #: 仓库内 codecin-native 模块目录 (含 go.mod)。
 _NATIVE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'native')
@@ -152,6 +152,156 @@ def _run_go_build(cmd, mod, env, logger):
     return proc, detail
 
 
+class SweepResult(NamedTuple):
+    """:func:`sweep_stale_build_dirs` 的结果 (两个绝对路径列表)。"""
+
+    #: 成功删除的目录
+    removed: List[str]
+    #: 判定为残留但删除/读取失败的目录 (调用方应提示用户手动处理)
+    failed: List[str]
+
+
+def _warn(logger, message: str) -> None:
+    """记一条 warning; 没有 logger 时退回模块级 stdlib logger (绝不静默)。
+
+    日志本身出问题不能掩盖构建结果 (本函数常在 ``finally`` 里被调用),
+    因此这里再包一层兜底。
+    """
+    try:
+        if logger is not None:
+            logger.warning(message)
+        else:
+            _LOGGER.warning(message)
+    except Exception:                     # noqa: BLE001 - 日志失败不得影响构建
+        pass
+
+
+def _debug(logger, message: str) -> None:
+    """记一条 debug (同样带兜底)。"""
+    try:
+        if logger is not None:
+            logger.debug(message)
+        else:
+            _LOGGER.debug(message)
+    except Exception:                     # noqa: BLE001
+        pass
+
+
+def _manual_removal_hint(path: str) -> str:
+    """给用户的「怎么手动删掉它」提示 (Windows + POSIX 各一条)。"""
+    return (f'请手动删除该目录 —— Windows PowerShell: '
+            f'Remove-Item -LiteralPath "{path}" -Recurse -Force ; '
+            f'Linux/macOS: rm -rf "{path}"')
+
+
+def _is_temp_dir_name(name: str) -> bool:
+    """名字是否是本模块自己产生的临时目录名 (只认前缀, 不做任何路径解析)。
+
+    显式拒绝 ``.``/``..``、含路径分隔符的名字以及绝对路径 —— 这些都不可能是
+    ``secrets.token_hex`` 的产物, 一旦出现就说明有人往我们手里塞了别的东西。
+    """
+    if not name or name in ('.', '..'):
+        return False
+    if name != os.path.basename(name):          # 含 / 或 \ -> 不是直接子项
+        return False
+    if os.sep in name or (os.altsep and os.altsep in name):
+        return False
+    if os.path.isabs(name):
+        return False
+    return name.startswith(TEMP_DIR_PREFIXES)
+
+
+def sweep_stale_build_dirs(max_age_seconds: float = DEFAULT_STALE_AGE_SECONDS,
+                           logger=None) -> SweepResult:
+    """删除 ``codecin/native/`` 下**陈旧**的 AOT 临时构建目录。
+
+    只处理 ``codecin/native/`` 的**直接子目录** (不递归), 名字必须带
+    ``.aotbuild-`` / ``.aotprobe-`` 前缀, 且 mtime 早于 ``max_age_seconds``;
+    符号链接与普通文件一律跳过。任何失败都不会抛异常, 只记录日志并把路径
+    放进 :attr:`SweepResult.failed`。
+
+    :param max_age_seconds: 容忍时长 (默认 6 小时)。``0`` 表示删除所有匹配目录
+        —— 并发构建时不要这么做。
+    :param logger: 可选 logger; 缺省时用模块级 stdlib logger。
+    :return: 被删除的路径与清理失败的路径
+    """
+    removed: List[str] = []
+    failed: List[str] = []
+
+    root = os.path.abspath(_NATIVE_DIR)
+    try:
+        names = os.listdir(root)
+    except OSError as e:                  # 目录不存在 / 不可读: 尽力而为
+        _warn(logger, f'AOT: 无法扫描临时目录所在位置 {root} ({e}); 跳过清理')
+        return SweepResult(removed, failed)
+
+    try:
+        max_age = max(0.0, float(max_age_seconds))
+    except (TypeError, ValueError):
+        max_age = float(DEFAULT_STALE_AGE_SECONDS)
+
+    now = time.time()
+    for name in names:
+        if not _is_temp_dir_name(name):
+            continue
+        path = os.path.join(root, name)
+        # 双保险: 解析后必须仍然是 root 的直接子项 (防 '..' / 绝对路径混入)
+        if os.path.dirname(os.path.abspath(path)) != root:
+            _warn(logger, f'AOT: 跳过可疑的临时目录路径: {path}')
+            continue
+        if os.path.islink(path) or not os.path.isdir(path):
+            _debug(logger, f'AOT: 跳过非普通目录的临时项: {path}')
+            continue
+
+        try:
+            age = now - os.path.getmtime(path)
+        except OSError as e:
+            failed.append(path)
+            _warn(logger, f'AOT: 无法读取残留临时目录的时间戳: {path} ({e}); '
+                          f'{_manual_removal_hint(path)}')
+            continue
+
+        if age < max_age:
+            _debug(logger, f'AOT: 临时目录仍然新鲜, 保留: {path} '
+                           f'({age / 3600:.1f} 小时前)')
+            continue
+
+        try:
+            shutil.rmtree(path)
+        except OSError as e:
+            failed.append(path)
+            _warn(logger, f'AOT: 残留临时目录清理失败: {path} '
+                          f'({age / 3600:.1f} 小时前, {e}); '
+                          f'{_manual_removal_hint(path)}')
+            continue
+
+        removed.append(path)
+        _debug(logger, f'AOT: 已清理陈旧临时目录: {path} '
+                       f'({age / 3600:.1f} 小时前)')
+
+    if removed:
+        _debug(logger, f'AOT: 陈旧临时目录清理完成, 共 {len(removed)} 个')
+    return SweepResult(removed, failed)
+
+
+def _remove_temp_dir(tmp: str, logger) -> None:
+    """删除本次构建的临时目录; 失败时告警而不是静默吞掉 (§3.3)。
+
+    ``shutil.rmtree(ignore_errors=True)`` 会让「删不掉」完全静默, 于是残留
+    在受限环境 (沙箱 / 异常 ACL) 里不断累积, 最终让任何遍历仓库的工具报
+    Access is denied。这里改为: 失败 -> warning (含绝对路径与手动删除提示)。
+    """
+    try:
+        shutil.rmtree(tmp)
+    except FileNotFoundError:
+        pass                              # 目录已不存在: 目的已达成
+    except Exception as e:                # noqa: BLE001 - rmtree 正常只抛 OSError,
+        # 但这里处于 finally, 任何异常都不能掩盖构建结果, 一律降级为 warning。
+        _warn(logger, f'AOT: 临时构建目录清理失败, 残留目录: '
+                      f'{os.path.abspath(tmp)} (原因: {e}); '
+                      f'{_manual_removal_hint(tmp)}')
+
+
 def build(bytecode: bytes,
           mem_image: bytes,
           out: str,
@@ -171,6 +321,14 @@ def build(bytecode: bytes,
         raise AotError('字节码为空')
     goos, goarch = parse_target(target) if target else parse_target(host_target())
     mod = module_dir()
+
+    # 先清掉上一次留下的陈旧残留 (默认 > 6 小时), 再建新目录: 受限环境下
+    # rmtree 可能失败, 没有这一步残留就会无限累积。
+    # 清理是尽力而为 —— 任何异常都必须吞掉, 绝不能因此让构建失败。
+    try:
+        sweep_stale_build_dirs(logger=logger)
+    except Exception as e:                # noqa: BLE001
+        _debug(logger, f'AOT: 陈旧临时目录清理跳过 ({e})')
 
     # 注意: 这里用 os.makedirs 而不是 tempfile.mkdtemp —— mkdtemp 会创建 0700
     # 目录, 在受限环境 (沙箱 / 部分 CI 安全策略) 下随后向其中写文件会被拒绝。
@@ -221,7 +379,7 @@ def build(bytecode: bytes,
             if logger:
                 logger.info(f'AOT 临时目录保留: {tmp}')
         else:
-            shutil.rmtree(tmp, ignore_errors=True)
+            _remove_temp_dir(tmp, logger)
 
 
 def program_dependencies(program_file: str) -> List[str]:

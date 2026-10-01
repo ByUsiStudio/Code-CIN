@@ -69,6 +69,34 @@ def _type_slots(t) -> int:
     return 1  # 标量/struct指针/ptrarray 均为 1 槽
 
 
+def _has_struct(t) -> bool:
+    """类型内部是否含 struct (数组元素递归)。"""
+    if _is_struct(t):
+        return True
+    if _is_fixed_array(t):
+        return _has_struct(t[1])
+    return False
+
+
+def _struct_slots(t, structs) -> int:
+    """struct **字段**占用的 qword 槽数。
+
+    与 :func:`_type_slots` 不同: 变量槽里的 struct 值是指针(1 槽), 而结构体
+    内部的嵌套 struct 字段是**按值内嵌**的, 必须按内层对象大小推进偏移。
+    此前这里误用 1 槽, 导致 `struct Out { In i; int c }` 的 `c` 压到 `i.b` 上。
+    """
+    if _is_fixed_array(t):
+        return t[2] * _struct_slots(t[1], structs)
+    if _is_struct(t):
+        sd = structs.get(t[1])
+        if sd is None:
+            raise CompilerError(
+                f"Struct field of unknown type '{t[1]}'; the nested struct "
+                f"must be defined before it is used as a field type")
+        return sd.size_slots
+    return 1
+
+
 def _trunc_div(a: int, b: int) -> int:
     """向零截断的整数除法 (与字节码 DIV 语义一致)。"""
     q = abs(a) // abs(b)
@@ -880,9 +908,14 @@ class Parser:
             t = ftype
             for d in reversed(dims):
                 t = ('array', t, d) if d else ('ptrarray', t)
+            if _is_fixed_array(t) and _has_struct(t[1]):
+                raise CompilerError(
+                    f'struct array field {name}.{fname} is not supported '
+                    f'(elements would need separate objects); use a fixed '
+                    f'array of struct variables instead')
             sd.fields.append((fname, t))
             sd.offsets[fname] = off
-            off += _type_slots(t)
+            off += _struct_slots(t, structs)
             self.accept('SEMI')
             self.skip_nl()
         self.expect('RBRACE')
@@ -954,7 +987,13 @@ class Parser:
             if not self.accept('COMMA'):
                 break
         self.expect('RBRACE')
-        return rows if rows else current
+        if rows:
+            # 混合写法 {{1, 2}, 7}: 尾部的平铺元素也必须保留, 否则会被静默丢弃
+            # (旧实现 `return rows if rows else current` 让 7 凭空消失)。
+            if current:
+                rows.append(current)
+            return rows
+        return current
 
     # ---------------- 语句 ----------------
 
@@ -2066,11 +2105,7 @@ class CodeGen:
 
     def _contains_struct(self, t) -> bool:
         """类型内部是否含 struct (数组元素递归)。"""
-        if _is_struct(t):
-            return True
-        if _is_fixed_array(t):
-            return self._contains_struct(t[1])
-        return False
+        return _has_struct(t)
 
     def _alloc_struct_slot(self, t, loff: int) -> None:
         """为 struct 槽分配堆对象、清零, 并把对象指针写入槽。
@@ -2468,6 +2503,12 @@ class CodeGen:
             if foff:
                 self.emit('ADDI', self.reg(0), self.reg(0), self.imm(foff * 8))
             return self._decay(ftype)
+        if _is_struct(ftype):
+            # 嵌套 struct 按值内嵌在父对象里: 值 = 字段地址 (不是解引用)。
+            # 旧实现会 LD 该槽, 把内嵌字段的前 8 字节当成指针用。
+            if foff:
+                self.emit('ADDI', self.reg(0), self.reg(0), self.imm(foff * 8))
+            return ftype
         self.emit('MOV', self.reg(1), self.reg(0))
         if foff:
             self.emit('ADDI', self.reg(1), self.reg(1), self.imm(foff * 8))

@@ -4,13 +4,15 @@
   * 产物可独立运行, 输出与解释器/Go CLI 一致;
   * 交叉编译能产出目标平台产物;
   * Linux 产物是静态链接 (ELF 无 PT_INTERP), 即不依赖 libc/动态库;
-  * 目标解析与错误处理 (非法 --target 报 AotError)。
+  * 目标解析与错误处理 (非法 --target 报 AotError);
+  * 临时构建目录的生命周期 (清理失败必须告警、陈旧残留会被 sweep、不误删)。
 """
 
 import os
 import shutil
 import struct
 import subprocess
+import time
 
 import pytest
 
@@ -18,6 +20,7 @@ from codecin import aot
 from codecin.errors import CompilerError
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+NATIVE_DIR = os.path.join(ROOT, 'codecin', 'native')
 
 #: 构建需要 Go 工具链
 needs_go = pytest.mark.skipif(shutil.which('go') is None,
@@ -204,3 +207,227 @@ def test_build_reports_compile_error(workdir):
     src = _write(workdir, 'bad.cin', 'function main() -> int { return foo() }')
     with pytest.raises((CompilerError, aot.AotError)):
         aot.build_program(src, out=os.path.join(workdir, 'bad'))
+
+
+# ---------------- 临时构建目录的生命周期 (§3.3) ----------------
+#
+# 说明: 不用 tmp_path (本机沙箱下 pytest 的 tmp_path 会 PermissionError), 全部
+# 走 conftest 的 workdir 夹具。真正的 codecin/native/ 在本机沙箱下**不可写**
+# (建/删目录都被拒), 因此 build()/sweep() 的用例把 aot._NATIVE_DIR 指向
+# workdir 内的假 native/; 另有一条例行的「仓库守卫」只读地检查真目录。
+
+STALE = 99 * 3600            # 远超默认 6 小时
+FRESH = 0.0                  # mtime = 现在
+
+
+class _RecordingLogger:
+    """最小 logger 替身: 记录 (level, message)。"""
+
+    def __init__(self):
+        self.records = []
+
+    def _add(self, level, msg):
+        self.records.append((level, msg))
+
+    def debug(self, msg):
+        self._add('debug', msg)
+
+    def info(self, msg):
+        self._add('info', msg)
+
+    def warning(self, msg):
+        self._add('warning', msg)
+
+    def error(self, msg):
+        self._add('error', msg)
+
+    def warnings(self):
+        return [m for lvl, m in self.records if lvl == 'warning']
+
+
+class _Proc:
+    """subprocess.CompletedProcess 的替身。"""
+
+    def __init__(self, returncode=0, stdout='', stderr=''):
+        self.returncode = returncode
+        self.stdout = stdout
+        self.stderr = stderr
+
+
+@pytest.fixture()
+def fake_native(workdir, monkeypatch):
+    """把 aot 的模块目录指向 workdir 内带 go.mod 的假 native/。"""
+    d = os.path.join(workdir, 'native')
+    os.makedirs(d, exist_ok=True)
+    _write(d, 'go.mod', 'module codecin-native\n')
+    monkeypatch.setattr(aot, '_NATIVE_DIR', d)
+    return d
+
+
+def _make_temp_dir(root, name, age_seconds=FRESH):
+    """在 root 下造一个临时目录, 用 os.utime 把 mtime 调旧 (不等待)。"""
+    path = os.path.join(root, name)
+    os.makedirs(path, exist_ok=True)
+    _write(path, 'main.go', 'package main\n')
+    if age_seconds:
+        stamp = time.time() - age_seconds
+        os.utime(path, (stamp, stamp))
+    return path
+
+
+def _fake_go_build():
+    """_run_go_build 替身: 不调用 go, 直接按 -o 参数写出一个假产物。"""
+    def _run(cmd, mod, env, logger):
+        out = cmd[cmd.index('-o') + 1]
+        with open(out, 'wb') as f:
+            f.write(b'fake-exe')
+        return _Proc(0), ''
+    return _run
+
+
+def _temp_entries(root):
+    return sorted(n for n in os.listdir(root)
+                  if n.startswith(aot.TEMP_DIR_PREFIXES))
+
+
+def test_repo_native_has_no_aot_leftovers():
+    """仓库守卫: codecin/native/ 下不得有 .aotbuild-* / .aotprobe-* 残留。"""
+    left = _temp_entries(NATIVE_DIR)
+    assert left == [], f'codecin/native/ 存在 AOT 残留目录: {left}'
+
+
+@pytest.mark.parametrize('name', ['.aotbuild-abc123', '.aotprobe-abc123'])
+def test_is_temp_dir_name_accepts_own_prefixes(name):
+    assert aot._is_temp_dir_name(name)
+
+
+@pytest.mark.parametrize('name', [
+    '', '.', '..', 'aotbuild-abc123', '.aotbuildX-abc123',
+    '../evil', '..\\evil', 'sub/.aotbuild-x', 'sub\\.aotbuild-x',
+    'C:\\evil\\.aotbuild-x', '/tmp/.aotbuild-x',
+])
+def test_is_temp_dir_name_rejects_traversal_and_foreign_names(name):
+    """只认自己的前缀, 且显式拒绝 .. / 路径分隔符 / 绝对路径。"""
+    assert not aot._is_temp_dir_name(name)
+
+
+def test_sweep_removes_stale_dirs(fake_native):
+    """陈旧目录 (含历史遗留的 .aotprobe-) 会被删除。"""
+    stale = _make_temp_dir(fake_native, '.aotbuild-deadbeef', age_seconds=STALE)
+    probe = _make_temp_dir(fake_native, '.aotprobe-cafe01', age_seconds=STALE)
+    log = _RecordingLogger()
+
+    res = aot.sweep_stale_build_dirs(max_age_seconds=6 * 3600, logger=log)
+
+    assert set(res.removed) == {stale, probe}
+    assert res.failed == []
+    assert not os.path.exists(stale) and not os.path.exists(probe)
+    assert _temp_entries(fake_native) == []
+
+
+def test_sweep_keeps_fresh_dirs(fake_native):
+    """刚建的目录是并发构建的, 绝不能被误删。"""
+    fresh = _make_temp_dir(fake_native, '.aotbuild-fresh01', age_seconds=FRESH)
+    log = _RecordingLogger()
+
+    res = aot.sweep_stale_build_dirs(max_age_seconds=6 * 3600, logger=log)
+
+    assert res.removed == [] and res.failed == []
+    assert os.path.isdir(fresh)
+
+
+def test_sweep_only_touches_own_direct_children(fake_native, workdir):
+    """前缀不符 / 不是目录 / 不在本目录下的一律不动。"""
+    log = _RecordingLogger()
+    plain_file = os.path.join(fake_native, '.aotbuild-i-am-a-file')
+    with open(plain_file, 'w', encoding='utf-8') as f:
+        f.write('not a dir')
+    other_prefix = _make_temp_dir(fake_native, 'aotbuild-nodot', age_seconds=STALE)
+    no_dash = _make_temp_dir(fake_native, '.aotbuildX-old', age_seconds=STALE)
+    outside = _make_temp_dir(workdir, '.aotbuild-outside', age_seconds=STALE)
+
+    res = aot.sweep_stale_build_dirs(max_age_seconds=6 * 3600, logger=log)
+
+    assert res.removed == [] and res.failed == []
+    assert os.path.isfile(plain_file)
+    assert os.path.isdir(other_prefix)
+    assert os.path.isdir(no_dash)
+    assert os.path.isdir(outside), 'sweep 越界删除了 native/ 之外的目录'
+
+
+def test_sweep_reports_undeletable_dir_without_raising(fake_native, monkeypatch):
+    """删不掉的目录: 不抛异常, 记 warning 并出现在 failed 里。"""
+    stale = _make_temp_dir(fake_native, '.aotbuild-locked', age_seconds=STALE)
+    log = _RecordingLogger()
+
+    def _denied(path, *args, **kwargs):
+        raise PermissionError(5, 'Access is denied')
+
+    monkeypatch.setattr(aot.shutil, 'rmtree', _denied)
+    res = aot.sweep_stale_build_dirs(max_age_seconds=6 * 3600, logger=log)
+
+    assert res.removed == []
+    assert res.failed == [stale]
+    assert os.path.isdir(stale)
+    warns = log.warnings()
+    assert any(stale in m for m in warns), warns
+    assert any('Remove-Item' in m and 'rm -rf' in m for m in warns), warns
+
+
+def test_sweep_missing_root_is_reported_not_raised(workdir, monkeypatch):
+    """扫描根不存在: 不抛异常, 但要有告警 (不静默)。"""
+    monkeypatch.setattr(aot, '_NATIVE_DIR', os.path.join(workdir, 'nope'))
+    log = _RecordingLogger()
+
+    res = aot.sweep_stale_build_dirs(logger=log)
+
+    assert res.removed == [] and res.failed == []
+    assert log.warnings(), '扫描失败被静默吞掉了'
+
+
+def test_build_leaves_no_temp_dir(fake_native, monkeypatch, workdir):
+    """构建结束后 native/ 里不残留本次的 .aotbuild-* 目录。"""
+    out = os.path.join(workdir, 'prog_exe')
+    monkeypatch.setattr(aot, '_run_go_build', _fake_go_build())
+
+    built = aot.build(b'\x01\x02\x03', b'\x00' * 16, out,
+                      logger=_RecordingLogger())
+
+    assert built == os.path.abspath(out)
+    assert os.path.isfile(built)
+    assert _temp_entries(fake_native) == []
+    assert os.listdir(fake_native) == ['go.mod']
+
+
+def test_build_sweeps_stale_leftover_first(fake_native, monkeypatch, workdir):
+    """build() 在创建新临时目录之前会清掉陈旧残留。"""
+    stale = _make_temp_dir(fake_native, '.aotbuild-veryold', age_seconds=STALE)
+    out = os.path.join(workdir, 'prog_exe2')
+    monkeypatch.setattr(aot, '_run_go_build', _fake_go_build())
+
+    aot.build(b'\x01\x02', b'\x00' * 8, out, logger=_RecordingLogger())
+
+    assert not os.path.exists(stale)
+    assert _temp_entries(fake_native) == []
+
+
+def test_build_warns_when_cleanup_fails(fake_native, monkeypatch, workdir):
+    """rmtree 失败必须 warning (含绝对路径 + 手动删除提示), 且不掩盖构建结果。"""
+    out = os.path.join(workdir, 'prog_exe3')
+
+    def _denied(path, *args, **kwargs):
+        raise PermissionError(5, 'Access is denied')
+
+    monkeypatch.setattr(aot, '_run_go_build', _fake_go_build())
+    monkeypatch.setattr(aot.shutil, 'rmtree', _denied)
+    log = _RecordingLogger()
+
+    built = aot.build(b'\x01', b'\x00' * 8, out, logger=log)
+
+    assert built == os.path.abspath(out)
+    warns = [m for m in log.warnings() if '.aotbuild-' in m]
+    assert warns, log.records
+    msg = warns[-1]
+    assert fake_native in msg, f'告警里没有残留目录的绝对路径: {msg}'
+    assert 'Remove-Item' in msg and 'rm -rf' in msg, msg
+    assert _temp_entries(fake_native), 'rmtree 失败后目录本应仍在'

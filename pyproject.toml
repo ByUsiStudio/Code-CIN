@@ -46,6 +46,9 @@ version = { attr = "codecin.__version__" }
 "codecin.lib"    = ["*.cin"]
 "codecin.native" = ["**/*"]
 
+[tool.setuptools.exclude-package-data]
+"codecin.native" = [".aotbuild-*", ".aotprobe-*"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra"

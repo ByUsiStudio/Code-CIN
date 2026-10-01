@@ -42,6 +42,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument('--version', '-V', action='version',
                    version=f'Code CIN {__version__}',
                    help='显示版本号并退出')
+    p.add_argument('--build-info', action='store_true', dest='build_info',
+                   help='显示构建/运行环境信息 (版本、解释器、平台、原生库、JIT、'
+                        '包路径) 后退出; 与 --json 合用输出机器可读 JSON')
+    p.add_argument('--json', action='store_true', dest='json_output',
+                   help='配合 --build-info 输出 JSON (需与 --build-info 同时使用)')
 
     # 执行路径
     p.add_argument('--no-native', action='store_true',
@@ -235,6 +240,19 @@ def main(argv: Optional[List[str]] = None) -> int:
     except SystemExit as e:
         # argparse 错误 (未知选项/非法数值): 已打印 usage, 返回其退出码
         return int(e.code) if e.code is not None else 2
+
+    # 版本设施 (workstream C): --build-info 不需要程序文件, 输出后立刻退出。
+    # 用 sys.stdout 直写: JSON 必须机器可读, 不能混入 rich 的 ANSI 装饰。
+    if ns.json_output and not ns.build_info:
+        sys.stderr.write("--json 只能与 --build-info 一起使用。\n")
+        return 2
+    if ns.build_info:
+        from .version import build_info_json, format_build_info
+        if ns.json_output:
+            sys.stdout.write(build_info_json() + "\n")
+        else:
+            sys.stdout.write(format_build_info() + "\n")
+        return 0
 
     if ns.program is None:
         console.print(Panel("No program file specified.\n"
