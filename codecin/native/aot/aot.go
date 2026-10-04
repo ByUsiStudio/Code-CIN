@@ -44,7 +44,7 @@ func Main(bytecode, memImage []byte) int {
 		fmt.Fprintln(os.Stderr, "runtime error: no result")
 		return 1
 	}
-	consoleInit() // Windows: 终端输出 VT/UTF-8 兼容 (其他平台空操作)
+	consoleInit()
 	fmt.Print(res.Output)
 	if res.Status == engine.StatusError ||
 		res.Status == engine.StatusUnsupported {

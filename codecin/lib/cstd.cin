@@ -1,0 +1,236 @@
+// Code CIN 官方标准库: C 语言兼容层 (cstd)
+// 用法: import "cstd.cin"
+//
+// 语义对齐 <ctype.h> / <string.h> / <stdlib.h> / <math.h> / <stdio.h>,
+// 让 C 程序员以惯用的名字与约定操作 CIN 的内置类型。类型对应:
+//   C int/size_t/ssize_t -> int     C char -> int (字符码 0..127)
+//   C char* / const char* -> string C float/double -> float
+//   C bool -> int (0/1)             C NULL -> 0 / C EOF -> -1
+// 差异: CIN 字符串是堆字符串且无裸指针, 因此 "写入 dst" 类 API 返回新串、
+// strchr 返回下标 (C 返回指针); 数组一律以引用传递并显式带长度。
+
+// ==================== <ctype.h> ====================
+
+// isdigit: '0'..'9' (48..57)
+function libc_isdigit(int ch) -> int {
+    if (ch >= 48 && ch <= 57) { return 1 }
+    return 0
+}
+
+// islower: 'a'..'z' (97..122)
+function libc_islower(int ch) -> int {
+    if (ch >= 97 && ch <= 122) { return 1 }
+    return 0
+}
+
+// isupper: 'A'..'Z' (65..90)
+function libc_isupper(int ch) -> int {
+    if (ch >= 65 && ch <= 90) { return 1 }
+    return 0
+}
+
+// isalpha
+function libc_isalpha(int ch) -> int {
+    if (libc_islower(ch) == 1 || libc_isupper(ch) == 1) { return 1 }
+    return 0
+}
+
+// isalnum
+function libc_isalnum(int ch) -> int {
+    if (libc_isdigit(ch) == 1 || libc_isalpha(ch) == 1) { return 1 }
+    return 0
+}
+
+// isspace: ' ' 与 \t \n \v \f \r (9..13)
+function libc_isspace(int ch) -> int {
+    if (ch == 32) { return 1 }
+    if (ch >= 9 && ch <= 13) { return 1 }
+    return 0
+}
+
+// isprint: 可打印 ASCII (32..126)
+function libc_isprint(int ch) -> int {
+    if (ch >= 32 && ch <= 126) { return 1 }
+    return 0
+}
+
+// isxdigit: 十六进制数字
+function libc_isxdigit(int ch) -> int {
+    if (libc_isdigit(ch) == 1) { return 1 }
+    if (ch >= 65 && ch <= 70) { return 1 }
+    if (ch >= 97 && ch <= 102) { return 1 }
+    return 0
+}
+
+// toupper
+function libc_toupper(int ch) -> int {
+    if (libc_islower(ch) == 1) { return ch - 32 }
+    return ch
+}
+
+// tolower
+function libc_tolower(int ch) -> int {
+    if (libc_isupper(ch) == 1) { return ch + 32 }
+    return ch
+}
+
+// ==================== <string.h> ====================
+
+// strlen
+function libc_strlen(string s) -> int {
+    return strlen(s)
+}
+
+// strcmp: <0 / 0 / >0
+function libc_strcmp(string a, string b) -> int {
+    return strcmp(a, b)
+}
+
+// strdup: 复制字符串 (返回新堆串)
+function libc_strdup(string s) -> string {
+    return s
+}
+
+// strcat: 拼接 (C 需要预分配 dst, CIN 直接返回新串)
+function libc_strcat(string a, string b) -> string {
+    return a + b
+}
+
+// strstr: 子串首现下标 (C 返回指针; 未找到 NULL -> 这里 -1)
+function libc_strstr(string hay, string needle) -> int {
+    return indexof(hay, needle)
+}
+
+// strchr: 字符首现下标 (未找到 -1)
+function libc_strchr(string s, int ch) -> int {
+    int n = strlen(s)
+    for (int i = 0; i < n; i = i + 1) {
+        if (atoi(substr(s, i, 1)) == ch) { return i }
+    }
+    return -1
+}
+
+// strrchr: 字符末现下标 (未找到 -1)
+function libc_strrchr(string s, int ch) -> int {
+    int n = strlen(s)
+    int found = -1
+    for (int i = 0; i < n; i = i + 1) {
+        if (atoi(substr(s, i, 1)) == ch) { found = i }
+    }
+    return found
+}
+
+// strrev (POSIX 常见扩展): 反转字符串
+function libc_strrev(string s) -> string {
+    string out = ""
+    int i = strlen(s)
+    while (i > 0) {
+        i = i - 1
+        out = out + substr(s, i, 1)
+    }
+    return out
+}
+
+// memcpy / memmove: 复制 n 个 int 槽 (CIN 数组即引用, 原地写 dst)
+function libc_memcpy(int[] dst, int[] src, int n) -> void {
+    for (int i = 0; i < n; i = i + 1) { dst[i] = src[i] }
+}
+
+// memset: 用 v 填充 n 个槽
+function libc_memset(int[] dst, int v, int n) -> void {
+    for (int i = 0; i < n; i = i + 1) { dst[i] = v }
+}
+
+// memcmp: 逐槽比较 (同 strcmp 三态)
+function libc_memcmp(int[] a, int[] b, int n) -> int {
+    for (int i = 0; i < n; i = i + 1) {
+        if (a[i] < b[i]) { return -1 }
+        if (a[i] > b[i]) { return 1 }
+    }
+    return 0
+}
+
+// ==================== <stdlib.h> ====================
+
+// abs
+function libc_abs(int x) -> int {
+    if (x < 0) { return -x }
+    return x
+}
+
+// atoi (非数字前缀按 0, 与内建一致)
+function libc_atoi(string s) -> int {
+    return atoi(s)
+}
+
+// max / min (C 无标准 max, 这里按 POSIX 风格补齐)
+function libc_max(int a, int b) -> int {
+    if (a > b) { return a }
+    return b
+}
+
+function libc_min(int a, int b) -> int {
+    if (a < b) { return a }
+    return b
+}
+
+// qsort 升序 (原地; C 的函数指针比较器以"固定升序"简化)
+function libc_qsort_asc(int[] a, int n) -> void {
+    for (int i = 0; i < n - 1; i = i + 1) {
+        for (int j = 0; j < n - 1 - i; j = j + 1) {
+            if (a[j] > a[j + 1]) {
+                int t = a[j]
+                a[j] = a[j + 1]
+                a[j + 1] = t
+            }
+        }
+    }
+}
+
+// ==================== <math.h> ====================
+
+// fabs
+function libc_fabs(float x) -> float {
+    if (x < 0.0) { return -x }
+    return x
+}
+
+// sqrt / pow / floor / ceil (转发内建, 三路径一致)
+function libc_sqrt(float x) -> float {
+    return sqrt(x)
+}
+
+function libc_pow(float x, float y) -> float {
+    return pow(x, y)
+}
+
+function libc_floor(float x) -> float {
+    return floor(x)
+}
+
+function libc_ceil(float x) -> float {
+    return ceil(x)
+}
+
+// fmod: C 语义 (商向零截断, 结果符号随被除数)
+function libc_fmod(float a, float b) -> float {
+    if (b == 0.0) { return 0.0 }
+    float q = a / b
+    float tq = floor(q)
+    if (q < 0.0) { tq = ceil(q) }
+    return a - tq * b
+}
+
+// ==================== <stdio.h> ====================
+
+// puts: 输出并换行 (成功返回非负)
+function libc_puts(string s) -> int {
+    println(s)
+    return 0
+}
+
+// fputs / printf 的无格式替身 (CIN 无变参; 用字符串拼接表达格式化)
+function libc_print(string s) -> int {
+    print(s)
+    return 0
+}
