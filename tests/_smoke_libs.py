@@ -1,14 +1,11 @@
-"""烟测: 三兼容层新增函数 (解释路径); 退出码为失败项编号, 0 = 全过。"""
-import io
+"""烟测: 三兼容层新增函数 (解释路径); 退出码 0 = 全过 (非 0 为失败项编号)。"""
 import os
 import sys
 import tempfile
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from codecin.cin import CINCompiler
-from codecin.cpu import CPU
-from codecin.config import Config
+from tests.helpers import run_cin_file
 
 SRC = '''\
 import "cstd.cin"
@@ -82,21 +79,13 @@ function main() -> int {
 '''
 
 def main():
-    res = CINCompiler().compile_source(SRC)
-    cfg = Config(interactive_mode=False, log_level='ERROR', use_native=False)
-    cpu = CPU(cfg)
-    cpu.instructions = res.instructions
-    cpu.labels = res.labels
-    cpu.data_labels = res.data_labels
-    for addr, data in res.data_writes:
-        cpu.memory.write_block(addr, data)
-    cpu.entry_pc = 0
-    cpu.pc = 0
-    cpu._capture_output = True
-    cpu.run()
-    out = cpu.out.getvalue() if hasattr(cpu, 'out') else ''
+    workdir = tempfile.mkdtemp(prefix='smoke_libs_')
+    path = os.path.join(workdir, 'prog.cin')
+    with open(path, 'w', encoding='utf-8') as f:
+        f.write(SRC)
+    cpu = run_cin_file(path, use_native=False)
     code = cpu.regs.read(0)
-    print(f"exit={code} output={out!r}")
+    print(f"exit={code}")
     return 0 if (code == 0 and not cpu.execution_failed) else 1
 
 if __name__ == '__main__':
