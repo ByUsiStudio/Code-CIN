@@ -260,11 +260,13 @@ class NativeEngine:
         mem_buf = ctypes.create_string_buffer(bytes(mem), len(mem))
         in_buf = ctypes.create_string_buffer(input_data) if input_data else None
 
-        # 命令行参数注入 (arg_count/arg 的数据源); 旧库无此导出时跳过
-        if args and self._set_args is not None:
-            arr = (ctypes.c_char_p * len(args))(
-                *[a.encode('utf-8') for a in args])
-            self._set_args(arr, len(args))
+        # 命令行参数注入 (arg_count/arg 的数据源)。每次运行都注入 (空列表
+        # 即清空), 避免同一进程内多次运行时上一次的参数残留; 旧库无此导出
+        # 时跳过 (arg_count 恒 0)。
+        if self._set_args is not None:
+            enc = [a.encode('utf-8') for a in (args or [])]
+            arr = (ctypes.c_char_p * len(enc))(*enc)
+            self._set_args(arr, len(enc))
 
         ptr = self.lib.codecin_run(
             ctypes.cast(bc_buf, ctypes.c_void_p), len(bytecode),
