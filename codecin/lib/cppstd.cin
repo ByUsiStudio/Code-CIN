@@ -260,3 +260,159 @@ function stl_sort(int[] v, int len) -> void {
         }
     }
 }
+
+// ==================== std::string 扩展 ====================
+
+// starts_with / ends_with (C++20)
+function stl_str_starts_with(string s, string prefix) -> int {
+    int pl = strlen(prefix)
+    if (pl == 0) { return 1 }
+    if (pl > strlen(s)) { return 0 }
+    if (strcmp(substr(s, 0, pl), prefix) == 0) { return 1 }
+    return 0
+}
+
+function stl_str_ends_with(string s, string suffix) -> int {
+    int fl = strlen(suffix)
+    int sl = strlen(s)
+    if (fl == 0) { return 1 }
+    if (fl > sl) { return 0 }
+    if (strcmp(substr(s, sl - fl, fl), suffix) == 0) { return 1 }
+    return 0
+}
+
+// find_first_of: chars 中任一字符在 s 的首现下标 (npos 以 -1 表示)
+function stl_str_find_first_of(string s, string chars) -> int {
+    int n = strlen(s)
+    for (int i = 0; i < n; i = i + 1) {
+        if (indexof(chars, substr(s, i, 1)) >= 0) { return i }
+    }
+    return -1
+}
+
+// find_last_of: chars 中任一字符在 s 的末现下标 (npos 以 -1 表示)
+function stl_str_find_last_of(string s, string chars) -> int {
+    int i = strlen(s) - 1
+    while (i >= 0) {
+        if (indexof(chars, substr(s, i, 1)) >= 0) { return i }
+        i = i - 1
+    }
+    return -1
+}
+
+// at(i): 字符码 (越界返回 0; C++ 此处抛 std::out_of_range)
+function stl_str_at(string s, int i) -> int {
+    if (i >= 0 && i < strlen(s)) { return s[i] }
+    return 0
+}
+
+// front() / back(): 首末字符码 (空串返回 0)
+function stl_str_front(string s) -> int {
+    if (strlen(s) > 0) { return s[0] }
+    return 0
+}
+
+function stl_str_back(string s) -> int {
+    int n = strlen(s)
+    if (n > 0) { return s[n - 1] }
+    return 0
+}
+
+// insert(pos, sub): 在下标 pos 前插入 (pos 越界时裁剪到 0 / 末尾)
+function stl_str_insert(string s, int pos, string sub) -> string {
+    int n = strlen(s)
+    if (pos < 0) { pos = 0 }
+    if (pos > n) { pos = n }
+    return substr(s, 0, pos) + sub + substr(s, pos, n)
+}
+
+// erase(pos, len): 删除 [pos, pos+len) (越界裁剪; len<0 视为 0)
+function stl_str_erase(string s, int pos, int len) -> string {
+    int n = strlen(s)
+    if (pos < 0) { pos = 0 }
+    if (pos >= n) { return s }
+    if (len < 0) { len = 0 }
+    return substr(s, 0, pos) + substr(s, pos + len, n)
+}
+
+// replace(pos, len, sub): 把 [pos, pos+len) 替换为 sub (越界裁剪)
+function stl_str_replace(string s, int pos, int len, string sub) -> string {
+    int n = strlen(s)
+    if (pos < 0) { pos = 0 }
+    if (pos >= n) { return s }
+    if (len < 0) { len = 0 }
+    return substr(s, 0, pos) + sub + substr(s, pos + len, n)
+}
+
+// ==================== std::vector<int> 扩展 ====================
+
+// 查找首个等于 x 的下标 (无则 -1)
+function stl_vec_find(int[] v, int len, int x) -> int {
+    for (int i = 0; i < len; i = i + 1) {
+        if (v[i] == x) { return i }
+    }
+    return -1
+}
+
+// 统计等于 x 的元素个数
+function stl_vec_count(int[] v, int len, int x) -> int {
+    int total = 0
+    for (int i = 0; i < len; i = i + 1) {
+        if (v[i] == x) { total = total + 1 }
+    }
+    return total
+}
+
+// insert(i, x): 在下标 i 处插入, 整体后移 (调用方保证 len < 容量);
+// 返回新长度; i 越界时视为尾部追加
+function stl_vec_insert(int[] v, int len, int i, int x) -> int {
+    if (i < 0 || i > len) { i = len }
+    int j = len
+    while (j > i) {
+        v[j] = v[j - 1]
+        j = j - 1
+    }
+    v[i] = x
+    return len + 1
+}
+
+// erase(i): 删除下标 i, 整体前移; 返回新长度 (i 越界时长度不变)
+function stl_vec_erase(int[] v, int len, int i) -> int {
+    if (i < 0 || i >= len) { return len }
+    while (i < len - 1) {
+        v[i] = v[i + 1]
+        i = i + 1
+    }
+    return len - 1
+}
+
+// ==================== <algorithm> 扩展 ====================
+
+// std::sort 降序 (CIN 无函数指针, 固定降序)
+function stl_sort_desc(int[] v, int len) -> void {
+    for (int i = 0; i < len - 1; i = i + 1) {
+        for (int j = 0; j < len - 1 - i; j = j + 1) {
+            if (v[j] < v[j + 1]) {
+                int t = v[j]
+                v[j] = v[j + 1]
+                v[j + 1] = t
+            }
+        }
+    }
+}
+
+// std::find / std::count
+function stl_find(int[] v, int len, int x) -> int {
+    return stl_vec_find(v, len, x)
+}
+
+function stl_count(int[] v, int len, int x) -> int {
+    return stl_vec_count(v, len, x)
+}
+
+// std::clamp (C++17): 把 x 限制到 [lo, hi]
+function stl_clamp(int x, int lo, int hi) -> int {
+    if (x < lo) { return lo }
+    if (x > hi) { return hi }
+    return x
+}

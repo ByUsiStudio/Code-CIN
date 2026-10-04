@@ -238,3 +238,169 @@ function go_os_args_len() -> int {
 function go_os_args_get(int i) -> string {
     return arg(i)
 }
+
+// ==================== strings 扩展 ====================
+
+// strings.LastIndex: 末现下标 (未找到 -1)
+function go_strings_last_index(string s, string sub) -> int {
+    int sl = strlen(s)
+    int nl = strlen(sub)
+    if (nl == 0) { return sl }
+    int pos = sl - nl
+    while (pos >= 0) {
+        if (strcmp(substr(s, pos, nl), sub) == 0) { return pos }
+        pos = pos - 1
+    }
+    return -1
+}
+
+// strings.IndexAny: chars 中任一字符在 s 的首现下标 (未找到 -1)
+function go_strings_index_any(string s, string chars) -> int {
+    int n = strlen(s)
+    for (int i = 0; i < n; i = i + 1) {
+        if (indexof(chars, substr(s, i, 1)) >= 0) { return i }
+    }
+    return -1
+}
+
+// strings.TrimLeft: 去掉前导的 cutset 内字符 (空 cutset 原样返回)
+function go_strings_trim_left(string s, string cutset) -> string {
+    if (strlen(cutset) == 0) { return s }
+    int n = strlen(s)
+    int i = 0
+    while (i < n) {
+        if (indexof(cutset, substr(s, i, 1)) < 0) { break }
+        i = i + 1
+    }
+    return substr(s, i, n)
+}
+
+// strings.TrimRight: 去掉尾部的 cutset 内字符 (空 cutset 原样返回)
+function go_strings_trim_right(string s, string cutset) -> string {
+    if (strlen(cutset) == 0) { return s }
+    int i = strlen(s) - 1
+    while (i >= 0) {
+        if (indexof(cutset, substr(s, i, 1)) < 0) { break }
+        i = i - 1
+    }
+    return substr(s, 0, i + 1)
+}
+
+// strings.TrimPrefix: 有前缀则去掉 (无则原样)
+function go_strings_trim_prefix(string s, string prefix) -> string {
+    if (go_strings_has_prefix(s, prefix) == 1) {
+        return substr(s, strlen(prefix), strlen(s))
+    }
+    return s
+}
+
+// strings.TrimSuffix: 有后缀则去掉 (无则原样)
+function go_strings_trim_suffix(string s, string suffix) -> string {
+    if (go_strings_has_suffix(s, suffix) == 1) {
+        return substr(s, 0, strlen(s) - strlen(suffix))
+    }
+    return s
+}
+
+// ==================== strconv 扩展 ====================
+
+// strconv.FormatInt: base 2..36 (越界按 10); 负数带 - 前缀。
+// int64 最小值取负溢出的极端场景不保证 (CIN int 为 64 位补码)
+function go_format_int(int v, int base) -> string {
+    if (base < 2 || base > 36) { base = 10 }
+    if (v == 0) { return "0" }
+    string digits = "0123456789abcdefghijklmnopqrstuvwxyz"
+    int neg = 0
+    int x = v
+    if (x < 0) { neg = 1 }
+    string out = ""
+    while (x != 0) {
+        int d = x % base
+        if (d < 0) { d = -d }
+        out = substr(digits, d, 1) + out
+        x = idiv(x, base)
+    }
+    if (neg == 1) { out = "-" + out }
+    return out
+}
+
+// strconv.ParseInt 简化版: 允许可选 - 前缀, 数字 0-9 / a-z / A-Z,
+// base 2..36 (越界按 10); 非法字符停在非法处 (与 conv.cin 风格一致, 非全有全无)
+function go_parse_int(string s, int base) -> int {
+    if (base < 2 || base > 36) { base = 10 }
+    int n = strlen(s)
+    int i = 0
+    int neg = 0
+    if (i < n && s[i] == 45) { neg = 1; i = i + 1 }   // '-'
+    int v = 0
+    while (i < n) {
+        int c = s[i]
+        int d = -1
+        if (c >= 48 && c <= 57) {
+            d = c - 48
+        } else if (c >= 97 && c <= 122) {
+            d = c - 87
+        } else if (c >= 65 && c <= 90) {
+            d = c - 55
+        }
+        if (d < 0 || d >= base) { break }
+        v = v * base + d
+        i = i + 1
+    }
+    if (neg == 1) { v = -v }
+    return v
+}
+
+// ==================== math 扩展 ====================
+
+// math.Round: 半值远离零 (与内建 round 的 floor(x+0.5) 在负半值上不同:
+// go_math_round(-2.5) = -3, round(-2.5) = -2)
+function go_math_round(float x) -> float {
+    if (x >= 0.0) { return floor(x + 0.5) }
+    return ceil(x - 0.5)
+}
+
+// math.Trunc: 向零截断
+function go_math_trunc(float x) -> float {
+    if (x >= 0.0) { return floor(x) }
+    return ceil(x)
+}
+
+// ==================== slices 扩展 ====================
+
+// slices.LastIndex: 末现下标 (未找到 -1)
+function go_slices_last_index(int[] a, int n, int x) -> int {
+    int i = n - 1
+    while (i >= 0) {
+        if (a[i] == x) { return i }
+        i = i - 1
+    }
+    return -1
+}
+
+// slices.Equal: 前 n 个元素逐一相等
+function go_slices_equal(int[] a, int[] b, int n) -> int {
+    for (int i = 0; i < n; i = i + 1) {
+        if (a[i] != b[i]) { return 0 }
+    }
+    return 1
+}
+
+// slices.Clone 的定长替身: 拷入调用方提供的 dst (CIN 无动态数组), 返回 n
+function go_slices_clone(int[] dst, int[] src, int n) -> int {
+    for (int i = 0; i < n; i = i + 1) { dst[i] = src[i] }
+    return n
+}
+
+// slices.Sort (升序; CIN 无比较器参数, 固定升序)
+function go_slices_sort(int[] a, int n) -> void {
+    for (int i = 0; i < n - 1; i = i + 1) {
+        for (int j = 0; j < n - 1 - i; j = j + 1) {
+            if (a[j] > a[j + 1]) {
+                int t = a[j]
+                a[j] = a[j + 1]
+                a[j + 1] = t
+            }
+        }
+    }
+}
