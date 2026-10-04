@@ -254,6 +254,12 @@ HOST_BUILTINS = {
     # 音频扩展 (播放进度与蜂鸣合成)
     'audio_pos': (Syscall.AUDIOPOS, 0, 'int'),
     'beep': (Syscall.AUDIOBEEP, 2, 'int'),
+    # 音频控制增强 (查询 / 暂停恢复 / 音量读取)
+    'audio_duration': (Syscall.AUDIODUR, 0, 'int'),
+    'audio_playing': (Syscall.AUDIOPLAYING, 0, 'int'),
+    'audio_pause': (Syscall.AUDIOPAUSE, 0, 'int'),
+    'audio_resume': (Syscall.AUDIORESUME, 0, 'int'),
+    'audio_level': (Syscall.AUDIOLEVEL, 0, 'int'),
     # 命令行参数与行输入 (跨平台一致)
     'arg_count': (Syscall.ARGC, 0, 'int'),
     'arg': (Syscall.ARGV, 1, 'string'),

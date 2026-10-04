@@ -24,6 +24,8 @@ var (
 	procWaveOutReset     = winmm.NewProc("waveOutReset")
 	procWaveOutClose     = winmm.NewProc("waveOutClose")
 	procWaveOutSetVolume = winmm.NewProc("waveOutSetVolume")
+	procWaveOutPause     = winmm.NewProc("waveOutPause")
+	procWaveOutResume    = winmm.NewProc("waveOutResume")
 )
 
 const (
@@ -160,4 +162,29 @@ func setVolumePlatform(level int) {
 	if h != 0 {
 		procWaveOutSetVolume.Call(h, vol)
 	}
+}
+
+// pausePlatform 暂停播放 (waveOutPause; WAVERR_STILLPLAYING=已暂停 也视为成功)。
+// 设备已清理 (播完/停止) 时失败, 与"暂停成功"可区分。
+func pausePlatform() bool {
+	waveMu.Lock()
+	h := waveHandle
+	waveMu.Unlock()
+	if h == 0 {
+		return false
+	}
+	r, _, _ := procWaveOutPause.Call(h)
+	return r == 0 || r == 33
+}
+
+// resumePlatform 恢复播放 (waveOutResume)。
+func resumePlatform() bool {
+	waveMu.Lock()
+	h := waveHandle
+	waveMu.Unlock()
+	if h == 0 {
+		return false
+	}
+	r, _, _ := procWaveOutResume.Call(h)
+	return r == 0
 }

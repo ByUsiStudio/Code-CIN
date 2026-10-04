@@ -123,6 +123,12 @@ var hostBuiltins = map[string]hostBuiltin{
 	// 音频扩展 (播放进度与蜂鸣合成)
 	"audio_pos": {SysAUDIOPOS, 0, kInt},
 	"beep":      {SysAUDIOBEEP, 2, kInt},
+	// 音频控制增强 (查询 / 暂停恢复 / 音量读取)
+	"audio_duration": {SysAUDIODUR, 0, kInt},
+	"audio_playing":  {SysAUDIOPLAYING, 0, kInt},
+	"audio_pause":    {SysAUDIOPAUSE, 0, kInt},
+	"audio_resume":   {SysAUDIORESUME, 0, kInt},
+	"audio_level":    {SysAUDIOLEVEL, 0, kInt},
 	// 命令行参数与行输入 (跨平台一致)
 	"arg_count": {SysARGC, 0, kInt},
 	"arg":       {SysARGV, 1, kString},
