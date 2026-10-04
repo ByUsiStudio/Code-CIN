@@ -206,7 +206,8 @@ function main() -> int {
     if (stl_min(3, 9) != 3) { return 61 }
     if (stl_abs(-4) != 4) { return 62 }
     stl_swap(v, 0, 1)
-    if (stl_vec_at(v, n, 0) + stl_vec_at(v, n, 1) != 7) { return 63 }
+    // 此前 fill(v, n, 7) -> 两元素都是 7, swap 后求和不变
+    if (stl_vec_at(v, n, 0) + stl_vec_at(v, n, 1) != 14) { return 63 }
     int w[4] = {5, 2, 8, 1}
     stl_sort(w, 4)
     if (w[0] != 1 || w[3] != 8) { return 64 }
