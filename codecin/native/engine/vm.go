@@ -24,16 +24,12 @@ import (
 	"time"
 )
 
-// 执行状态码 (与 c-shared 桥接层 / Python native.py 一致)。
 const (
 	StatusOK          = 0
 	StatusDone        = 1
 	StatusUnsupported = 2
 	StatusError       = 3
 )
-
-// 操作数种类/操作码/SYS 功能号常量由 isa_gen.go 提供 (单一事实来源:
-// python script/gen_native_isa.py 自 codecin/isa.py 生成, 请勿在此重复定义)。
 
 const mask64 = uint64(0xFFFFFFFFFFFFFFFF)
 
@@ -73,9 +69,6 @@ type vmState struct {
 // maxOutputBytes 限制单次运行的输出总量: 程序用无限打印不能把宿主 OOM。
 const maxOutputBytes = 16 << 20 // 16 MiB
 
-// outWrite 追加输出; 超过上限则截断并标记 outOver。
-// 键盘监听激活 (outDirect, 真实终端) 时直写 stdout 保证顺序实时显示;
-// 否则进缓冲, 程序结束后随 Result.Output 一次性回传 (管道/测试路径不变)。
 func (vm *vmState) outWrite(s string) {
 	if vm.outOver {
 		return
