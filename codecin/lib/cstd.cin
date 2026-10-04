@@ -182,7 +182,7 @@ function libc_abs(int x) -> int {
     return x
 }
 
-// atoi (非数字前缀按 0, 与内建一致)
+// atoi (非整数字符串按 0, 与内建一致; 非 C 的前缀解析)
 function libc_atoi(string s) -> int {
     return atoi(s)
 }

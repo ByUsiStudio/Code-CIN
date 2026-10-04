@@ -102,7 +102,9 @@ function main() -> int {
     // ---- stdlib ----
     if (libc_abs(-7) != 7) { return 40 }
     if (libc_abs(7) != 7) { return 41 }
-    if (libc_atoi("42x") != 42) { return 42 }
+    if (libc_atoi("42") != 42) { return 42 }
+    // 与内建 atoi 一致: 非整数字符串 (含 "42x") 按 0, 非 C 前缀解析
+    if (libc_atoi("42x") != 0) { return 42 }
     if (libc_max(3, 9) != 9) { return 43 }
     if (libc_min(3, 9) != 3) { return 44 }
     int a[4] = {3, 1, 4, 1}
