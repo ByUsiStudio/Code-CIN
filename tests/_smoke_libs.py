@@ -1,4 +1,4 @@
-"""烟测: 三兼容层新增函数 (解释路径); 退出码 0 = 全过 (非 0 为失败项编号)。"""
+"""烟测: 三兼容层新增函数 (解释/原生路径, 传 --native 走原生); 退出码 0 = 全过 (非 0 为失败项编号)。"""
 import os
 import sys
 import tempfile
@@ -83,7 +83,8 @@ def main():
     path = os.path.join(workdir, 'prog.cin')
     with open(path, 'w', encoding='utf-8') as f:
         f.write(SRC)
-    cpu = run_cin_file(path, use_native=False)
+    use_native = '--native' in sys.argv[1:]
+    cpu = run_cin_file(path, use_native=use_native)
     code = cpu.regs.read(0)
     print(f"exit={code}")
     return 0 if (code == 0 and not cpu.execution_failed) else 1
