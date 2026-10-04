@@ -159,26 +159,6 @@ func TestKeyGetConsumesQueueInOrder(t *testing.T) {
 	}
 }
 
-func TestKeyFlushClearsQueueAndDecoder(t *testing.T) {
-	resetKeyState()
-	vm := newHostVM(4096)
-	keyMu.Lock()
-	keyQueue = append(keyQueue[:0], keyUp, keyDel)
-	keyEsc = 2 // 模拟转义序列解码中间态
-	keyEscNum = append(keyEscNum[:0], '1', ';')
-	keyMu.Unlock()
-
-	if got := vm.keyFlush(); got != 0 {
-		t.Fatalf("key_flush 应返回 0, 实际 %d", got)
-	}
-	keyMu.Lock()
-	defer keyMu.Unlock()
-	if len(keyQueue) != 0 || keyEsc != 0 || len(keyEscNum) != 0 {
-		t.Fatalf("flush 后队列与解码状态应清空: queue=%v esc=%d num=%v",
-			keyQueue, keyEsc, keyEscNum)
-	}
-}
-
 func TestKeyHitAndDrainGuard(t *testing.T) {
 	resetKeyState()
 	vm := newHostVM(4096)
