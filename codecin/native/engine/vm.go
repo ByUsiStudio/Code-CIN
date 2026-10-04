@@ -280,14 +280,9 @@ func opcodeSupported(op uint8) bool {
 	return false
 }
 
-// syscallSupported: 原生 VM 已实现的 SYS 功能号。
-// 现已在 Go 侧实现全部宿主调用 (0..sysKEYFLUSH), 供原生路径与前向兼容使用;
-// 新增 SYS 号必须同步 here, 否则原生 VM 会以 unsupported 回退到解释器。
 func syscallSupported(id uint64) bool {
-	return id <= sysKEYFLUSH
+	return id <= sysGUIACTIVE
 }
-
-// ---------------- 操作数/寄存器/内存 ----------------
 
 func (vm *vmState) reg(n int) uint64 {
 	if n == 32 {
@@ -341,7 +336,6 @@ func (vm *vmState) val(op operand) (uint64, bool) {
 		}
 		return 0, true
 	case kindVec, kindVecLane:
-		// CIN 不生成向量操作数; 向量指令整体不支持
 		return 0, false
 	}
 	return 0, false
@@ -370,8 +364,6 @@ func (vm *vmState) writeQ(addr, v uint64) string {
 }
 
 func toSigned(v uint64) int64 { return int64(v) }
-
-// ---------------- 条件标志 ----------------
 
 func (vm *vmState) condition(code uint8) bool {
 	n, z, c, v := vm.flags.N, vm.flags.Z, vm.flags.C, vm.flags.V
@@ -422,8 +414,6 @@ func (vm *vmState) setFlagsSub(a, b uint64) {
 	vm.flags.V = sr > math.MaxInt64 || sr < math.MinInt64
 }
 
-// ---------------- 栈 ----------------
-
 func (vm *vmState) push(v uint64) string {
 	vm.sp = (vm.sp - 8) & mask64
 	if vm.sp < vm.heapPtr+4096 {
@@ -444,12 +434,9 @@ func (vm *vmState) pop() (uint64, string) {
 	return v, ""
 }
 
-// ---------------- 浮点辅助 ----------------
-
 func bitsToF(b uint64) float64 { return math.Float64frombits(b) }
 func fToBits(f float64) uint64 { return math.Float64bits(f) }
 
-// formatFloat 与 Python _format_float 对齐 (repr 最短表示 + 去尾零)
 func formatFloat(f float64) string {
 	if math.IsNaN(f) {
 		return "NaN"
@@ -485,14 +472,11 @@ func (vm *vmState) writeString(addr uint64, s string) string {
 	return ""
 }
 
-// sysBuffer 轮转静态缓冲 (与 Python 一致: heap+2048+idx*64)
 func (vm *vmState) sysBuffer() uint64 {
 	idx := vm.sysIdx % 8
 	vm.sysIdx++
 	return vm.heapPtr + 2048 + uint64(idx)*64
 }
-
-// ---------------- 指令执行 ----------------
 
 func (vm *vmState) execute(ins instruction) (bool, string) {
 	args := ins.args
@@ -1104,6 +1088,28 @@ func (vm *vmState) doSyscall(id uint64) string {
 		vm.setReg(0, vm.canvasSave(vm.readCString(x0)))
 	case sysCANVASSHOW:
 		vm.setReg(0, vm.canvasShow())
+	// GUI 窗口 (Windows Win32 / Linux X11 / 其他平台优雅失败)
+	case sysGUINEW:
+		vm.setReg(0, vm.guiNew(x0, x1, vm.readCString(vm.reg(2))))
+	case sysGUIUPDATE:
+		vm.setReg(0, vm.guiUpdate())
+	case sysGUICLOSE:
+		vm.setReg(0, vm.guiClose())
+	case sysGUICLOSED:
+		vm.setReg(0, vm.guiClosedQ())
+	case sysMOUSEX:
+		vm.setReg(0, vm.mouseX())
+	case sysMOUSEY:
+		vm.setReg(0, vm.mouseY())
+	case sysMOUSEBTN:
+		vm.setReg(0, vm.mouseBtn())
+	case sysGUIACTIVE:
+		vm.setReg(0, vm.guiActiveQ())
+	// 音频扩展 (播放进度与蜂鸣合成)
+	case sysAUDIOPOS:
+		vm.setReg(0, vm.audioPos())
+	case sysAUDIOBEEP:
+		vm.setReg(0, vm.audioBeep(x0, x1))
 	// 系统原生交互 (文件/进程/环境/系统信息)
 	case sysFILEREAD:
 		vm.setReg(0, vm.fileRead(vm.readCString(x0)))
