@@ -1,0 +1,22 @@
+// Code CIN 命令行参数与行输入演示 (SYS 129..131, 跨平台一致)
+// 运行: python cpu.py examples/args_demo.cin -- alice 42
+//       codecin examples/args_demo.cin -- alice 42
+// 参数在 `--` 之后传给 CIN 程序; AOT 产物直接取进程 os.Args[1:]。
+// 另见 stdlib: gostd.cin 的 go_os_args_len() / go_os_args_get(i)。
+
+function main() -> int {
+    int n = arg_count()
+    println("参数个数:", n)
+    for (int i = 0; i < n; i = i + 1) {
+        println("arg(", i, ") =", arg(i))
+    }
+
+    print("你的名字: ")
+    string name = input_str()
+    if (strcmp(name, "") == 0) {
+        println("没有输入, 使用 arg(0) 兜底")
+        name = arg(0)
+    }
+    println("你好,", name, "! 你传了", n, "个参数")
+    return 0
+}
