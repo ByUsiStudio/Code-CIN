@@ -1,17 +1,27 @@
-// Code CIN 官方标准库: GUI 窗口封装 (gui)
+// Code CIN 官方标准库: GUI 窗口 + 画布绘图助手 (gui)
 // 用法: import "gui.cin"
+//
+// ============ 一、窗口 (5.8.0 新增, 依赖原生 Go 运行时) ============
 //
 // 依赖原生 Go 运行时 (Windows 用 Win32, Linux 用 X11); 其他平台与
 // --no-native / --sandbox 下 gui_new 返回 -1, 所有函数优雅失败不崩溃。
 //
 // 绘图模型: g_new 成功后, 画布内建 (set_color / fill_rect / fill_circle /
 // draw_line / draw_text) 直接画进窗口后备缓冲, 每次调用 g_update() 才呈现。
-// **窗口打开期间不要再调用 canvas()** —— 它会把画布重新绑定为离屏画布,
-// 窗口从此不再更新; g_clear / g_clear_rect 已用 g_active() 做了防护。
+// **窗口打开期间不要再调用 canvas() 与本库的图表助手** —— 它们会把画布
+// 重新绑定为离屏画布, 窗口从此不再更新; g_clear 已用 g_active() 做防护。
 //
 // 事件模型: 键盘事件与终端共用同一键码队列 (get_key / key_hit, 见 key.cin),
 // 窗口获得焦点时按键会进入该队列; 关闭请求 (点 X / Alt+F4 / WM 删除协议)
 // 由 g_closed() 报告, 主循环需主动检查。
+//
+// ============ 二、离屏绘图助手 (历史 API, 5.7.x 起) ============
+//
+// 依赖画布内建 (canvas / save_png / show_canvas 等, 原生能力), 用于
+// 离屏绘制图表并导出 PNG / 弹窗预览; 不打开交互窗口, 与窗口 API 互不影响
+// (除非窗口打开期间调用, 见上面的警告)。
+
+// ==================== 一、窗口 ====================
 
 // 窗口尺寸 (g_new 成功后记录, 供 g_clear 与离屏回退使用)
 int g_w = 0
@@ -23,7 +33,8 @@ const int G_BTN_RIGHT = 2
 const int G_BTN_MIDDLE = 4
 
 // 打开窗口 (w/h 自动钳制到 1..4096); 成功返回 0, 失败 (无显示服务 /
-// 平台不支持 / 已有窗口) 返回 -1。成功后画布内建直画窗口。
+// 平台不支持) 返回 -1。成功后画布内建直画窗口。
+// (5.8.0 起签名变更: 旧的无窗口 g_new(w, h) 请直接使用 canvas(w, h))
 function g_new(int w, int h, string title) -> int {
     int r = gui_new(w, h, title)
     if (r == 0) {
@@ -107,4 +118,89 @@ function g_mouse_middle() -> int {
     if (g_active() == 0) { return 0 }
     if ((mouse_button() & G_BTN_MIDDLE) != 0) { return 1 }
     return 0
+}
+
+// ==================== 二、离屏绘图助手 ====================
+
+// 打包 RGB 颜色 (0xRRGGBB)
+function g_rgb(int r, int g, int b) -> int {
+    return ((r & 255) << 16) | ((g & 255) << 8) | (b & 255)
+}
+
+// 画一个矩形边框 (线宽 1)
+function g_rect_outline(int x, int y, int w, int h, int rgb) -> void {
+    set_color(rgb)
+    draw_line(x, y, x + w - 1, y)
+    draw_line(x, y + h - 1, x + w - 1, y + h - 1)
+    draw_line(x, y, x, y + h - 1)
+    draw_line(x + w - 1, y, x + w - 1, y + h - 1)
+}
+
+// 柱状图 (自动按最大值缩放; 深蓝柱子; 离屏画布)
+function g_bar_chart(int[] values, int n, int w, int h) -> void {
+    canvas(w, h)
+    set_color(g_rgb(255, 255, 255))
+    fill_rect(0, 0, w, h)
+    if (n <= 0) { return }
+    int maxv = 1
+    for (int i = 0; i < n; i = i + 1) {
+        if (values[i] > maxv) { maxv = values[i] }
+    }
+    int bw = idiv(w, n)
+    if (bw < 1) { bw = 1 }
+    for (int i = 0; i < n; i = i + 1) {
+        int bh = idiv(values[i] * h, maxv)
+        set_color(g_rgb(60, 120, 200))
+        fill_rect(i * bw, h - bh, bw - 1, bh)
+    }
+    g_rect_outline(0, 0, w, h, g_rgb(0, 0, 0))
+}
+
+// 网格 (浅灰)
+function g_grid(int w, int h, int step) -> void {
+    set_color(g_rgb(200, 200, 200))
+    int x = 0
+    while (x < w) {
+        draw_line(x, 0, x, h - 1)
+        x = x + step
+    }
+    int y = 0
+    while (y < h) {
+        draw_line(0, y, w - 1, y)
+        y = y + step
+    }
+}
+
+// 折线图 (深红; 离屏画布)
+function g_line_chart(int[] values, int n, int w, int h) -> void {
+    canvas(w, h)
+    set_color(g_rgb(255, 255, 255))
+    fill_rect(0, 0, w, h)
+    if (n <= 1) { return }
+    int maxv = 1
+    for (int i = 0; i < n; i = i + 1) {
+        if (values[i] > maxv) { maxv = values[i] }
+    }
+    int stepx = idiv(w - 1, n - 1)
+    if (stepx < 1) { stepx = 1 }
+    set_color(g_rgb(200, 40, 40))
+    int px = 0
+    int py = h - 1 - idiv(values[0] * (h - 1), maxv)
+    for (int i = 1; i < n; i = i + 1) {
+        int cx = i * stepx
+        int cy = h - 1 - idiv(values[i] * (h - 1), maxv)
+        draw_line(px, py, cx, cy)
+        px = cx
+        py = cy
+    }
+}
+
+// 导出 PNG (0 成功 / -1 失败)
+function g_save(string path) -> int {
+    return save_png(path)
+}
+
+// 调用系统查看器弹出窗口
+function g_show() -> int {
+    return show_canvas()
 }
