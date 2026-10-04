@@ -210,6 +210,8 @@ HOST_BUILTINS = {
     'chdir': (Syscall.CHDIR, 1, 'int'),
     # 时间与系统信息
     'time_ms': (Syscall.TIMEMS, 0, 'int'),
+    'time_us': (Syscall.TIMEUS, 0, 'int'),
+    'time_ns': (Syscall.TIMENS, 0, 'int'),
     'sleep_ms': (Syscall.SLEEPMS, 1, 'int'),
     'cpu_count': (Syscall.CPUCOUNT, 0, 'int'),
     'arch_name': (Syscall.ARCHNAME, 0, 'string'),
@@ -953,7 +955,11 @@ class Parser:
                 return ('int', self.enums[node[1]])
             raise CompilerError(
                 f"Constant expression uses non-constant name '{node[1]}' "
-                f"at {self._loc()}")
+                f"at {self._loc()} "
+                "(hint: array lengths must be compile-time constants; "
+                f"declare it as `const int {node[1]} = ...`; "
+                "variable-length arrays are not supported — use a fixed-size "
+                "array plus a count variable)")
         if kind == 'neg':
             ctype, value = self._const_value_ast(node[1])
             if ctype == 'string':
@@ -1996,12 +2002,15 @@ class CodeGen:
             self.locals[pname] = (ptype, poff, False)
 
         self.label(f.name)
-        # prologue: 保存调用方 FP, 建立帧指针, 分配局部空间
+        # prologue: 保存调用方 FP, 建立帧指针, 分配局部空间。
+        # 帧分配走 SYS ALLOCFRAME (带栈溢出防护): 此前直接 ADDI SP 减帧长,
+        # 局部大数组会把 SP 推到负地址 —— 轻则报晦涩的越界地址
+        # (如 address ffff...c6f8), 重则静默覆盖全局/堆内存。
         self.emit('PUSH', self.reg(29))
         self.emit('MOV', self.reg(29), self.reg(32))   # FP = SP
         if self.frame_bytes:
-            self.emit('ADDI', self.reg(0), self.reg(32), self.imm(-self.frame_bytes))
-            self.emit('MOV', self.reg(32), self.reg(0))
+            self.emit('MOV', self.reg(0), self.imm(self.frame_bytes))
+            self.emit('SYS', self.imm(Syscall.ALLOCFRAME))
 
         # struct 局部变量: 堆分配对象 (槽里存对象指针, 与全局 struct 同一模型)
         for _name, (t, loff, _is_block) in list(self.locals.items()):
@@ -3543,6 +3552,18 @@ class CodeGen:
                       'rtrim': Syscall.RTRIM}[name]
             self.emit('SYS', self.imm(sys_id))
             return 'string'
+        if name in ('to_int', 'to_float'):
+            # 显式类型转换: to_int(x) 向零截断 (与 int x = 1.9 一致),
+            # to_float(x) 整数提升为浮点。参数类型静态已知, 非数值报编译错。
+            t = self.gen_value(args[0])
+            target = 'int' if name == 'to_int' else 'float'
+            if t not in ('int', 'float', 'bool'):
+                raise CompilerError(
+                    f"{name}() expects a numeric argument, got {t} "
+                    f"at {self._loc()}"
+                    + (f" (hint: use atoi() to parse a string)" if t == 'string' else ""))
+            self._convert(t, target)
+            return target
         if name == 'atoi':
             self.gen_value(args[0])
             self.emit('SYS', self.imm(Syscall.ATOI))
@@ -3562,6 +3583,12 @@ class CodeGen:
             return 'int'
 
         # 用户函数 (已在 _gen_call 开头优先分派; 走到这里说明名字未知)
+        if name in ('int', 'float'):
+            # 常见迁移习惯: C/Python 风格的显式转换函数。给出可操作的替代写法。
+            raise CompilerError(
+                f"Unknown function: {name} (hint: use "
+                f"to_{name}(x) for explicit conversion, or rely on implicit "
+                "promotion in mixed int/float expressions)")
         raise CompilerError(f"Unknown function: {name}")
 
     @staticmethod

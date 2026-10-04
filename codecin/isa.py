@@ -275,6 +275,10 @@ class Syscall(IntEnum):
     AUDIOPAUSE = 134  # audio_pause() -> 0 成功 / -1 (无播放或已暂停)
     AUDIORESUME = 135 # audio_resume() -> 0 成功 / -1 (无暂停可恢复)
     AUDIOLEVEL = 136  # audio_level() -> 当前音量 0..100 (audio_volume 设置值)
+    # ---- 核心 VM 机制 (非宿主能力: 解释器/沙箱/原生三路径都可用) ----
+    ALLOCFRAME = 137  # alloc_frame(x0=字节数): SP -= x0; 低于堆警戒线则中止
+    TIMEUS = 138    # time_us() -> 单调微秒计时 (高精度基准测试用)
+    TIMENS = 139    # time_ns() -> 单调纳秒计时 (time_us 的高分辨率版本)
 
 
 class Cond:

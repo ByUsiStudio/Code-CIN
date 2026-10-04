@@ -76,7 +76,11 @@ function main() -> int {
 
 
 def test_audio_controls_builtins_compile_without_native():
-    """5 个音频控制内建可编译并映射到 SYS 调用。"""
+    """5 个音频控制内建可编译并映射到 SYS 调用。
+
+    只统计音频 SYS (132..136): 帧分配 ALLOCFRAME (137) 等核心机制
+    也会产生 SYS 指令, 不属于本测试的关注点。
+    """
     src = '''
 function main() -> int {
     int a = audio_duration()
@@ -87,9 +91,15 @@ function main() -> int {
     return a + b + c + d + e
 }'''
     from codecin.cin import CINCompiler
+    from codecin.isa import Syscall
     res = CINCompiler().compile_source(src)
     assert res is not None
-    assert sum(1 for i in res.instructions if i[0] == 'SYS') == 5
+    audio_ids = {Syscall.AUDIODUR, Syscall.AUDIOPLAYING, Syscall.AUDIOPAUSE,
+                 Syscall.AUDIORESUME, Syscall.AUDIOLEVEL}
+    sys_ids = [i[1][0][1] for i in res.instructions
+               if i[0] == 'SYS' and i[1] and i[1][0][0] == 'imm']
+    assert set(sys_ids) <= audio_ids | {Syscall.ALLOCFRAME}
+    assert sum(1 for x in sys_ids if x in audio_ids) == 5
 
 
 def test_host_builtins_error_includes_install_hint():

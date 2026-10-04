@@ -79,6 +79,8 @@ var hostBuiltins = map[string]hostBuiltin{
 	"chdir":         {SysCHDIR, 1, kInt},
 	// 时间与系统信息
 	"time_ms":    {SysTIMEMS, 0, kInt},
+	"time_us":    {SysTIMEUS, 0, kInt},
+	"time_ns":    {SysTIMENS, 0, kInt},
 	"sleep_ms":   {SysSLEEPMS, 1, kInt},
 	"cpu_count":  {SysCPUCOUNT, 0, kInt},
 	"arch_name":  {SysARCHNAME, 0, kString},
@@ -342,9 +344,11 @@ func (c *compiler) genFunctionBody(f *FuncDef) {
 	c.label(f.name)
 	c.emit("PUSH", c.reg(29))
 	c.emit("MOV", c.reg(29), c.reg(32))
+	// 帧分配走 SYS ALLOCFRAME (带栈溢出防护), 与 Python 编译器逐字节一致:
+	// 此前直接 ADDI SP 减帧长, 局部大数组会把 SP 推到负地址 (越界/静默破坏内存)。
 	if c.frameBytes != 0 {
-		c.emit("ADDI", c.reg(0), c.reg(32), c.imm(int64(-c.frameBytes)))
-		c.emit("MOV", c.reg(32), c.reg(0))
+		c.emit("MOV", c.reg(0), c.imm(int64(c.frameBytes)))
+		c.emit("SYS", c.imm(SysALLOCFRAME))
 	}
 
 	// struct 局部变量: 堆分配对象
@@ -1923,6 +1927,25 @@ func (c *compiler) genCall(name string, args []*Node) *Type {
 		c.emit("SYS", c.imm(SysATOI))
 		return scalarT(kInt)
 	}
+	if name == "to_int" || name == "to_float" {
+		// 显式类型转换: to_int 向零截断 (与 int x = 1.9 一致), to_float 提升。
+		// 与 Python 编译器 (cin.py) 的同名内建语义逐一致。
+		argT := c.genValue(args[0])
+		target := scalarT(kInt)
+		if name == "to_float" {
+			target = scalarT(kFloat)
+		}
+		if argT == nil || (argT.Kind != kInt && argT.Kind != kFloat && argT.Kind != kBool) {
+			got := "void"
+			if argT != nil {
+				got = typeName(argT)
+			}
+			c.failf("%s() expects a numeric argument, got %s", name, got)
+			return nil
+		}
+		c.convert(argT, target)
+		return target
+	}
 
 	// 宿主能力 (表驱动): 音频 / 画布 / 系统交互 / Termux API
 	if hb, ok := hostBuiltins[name]; ok {
@@ -1946,6 +1969,12 @@ func (c *compiler) genCall(name string, args []*Node) *Type {
 	// 用户函数
 	fdef := c.functions[name]
 	if fdef == nil {
+		if name == "int" || name == "float" {
+			c.failf("Unknown function: %s (hint: use to_%s(x) for explicit "+
+				"conversion, or rely on implicit promotion in mixed "+
+				"int/float expressions)", name, name)
+			return nil
+		}
 		c.failf("Unknown function: %s", name)
 		return nil
 	}

@@ -179,9 +179,14 @@ class FastMemory:
 
     def _check_bounds(self, addr: int, size: int = 1) -> None:
         if not 0 <= addr <= self._size - size:
+            hint = ""
+            if addr >= (1 << 63):
+                # 按位模 2^64 后为负数: 典型成因是栈溢出 (SP 被推到负地址)
+                # 或野指针。可读性提示, 与 Go 引擎 vm.go 的文案保持一致。
+                hint = " (negative address: stack overflow or bad pointer?)"
             raise MemoryAccessError(
                 f"Address 0x{addr:x} out of bounds (memory size 0x{self._size:x}, "
-                f"access width {size})")
+                f"access width {size}){hint}")
 
     def _check_protection(self, addr: int, access: str) -> None:
         if not self.check_access(addr, access):

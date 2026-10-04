@@ -17,7 +17,11 @@ from .console import Colors, Console, Panel
 HELP_INTRO = f"""{Colors.colorize(f'Code CIN v{__version__}', Colors.CYAN, True)}
 
 {Colors.colorize('Usage:', Colors.YELLOW)}
-  codecin <program.[cin|pl|asm|bin]> [options]
+  codecin [options] <program.[cin|pl|asm|bin]> [args...]
+
+{Colors.colorize('Program arguments:', Colors.YELLOW)}
+  program 之后的裸参数原样传给 CIN 程序 (arg_count()/arg(i) 读取);
+  CLI 选项放在 program 之前或之后均可识别, 形如选项的参数请用 `--` 显式分隔。
 
 {Colors.colorize('Supported formats:', Colors.YELLOW)}
   .cin   CIN 高级语言 (函数/struct/数组/浮点/字符串)
@@ -219,6 +223,43 @@ def _run_aot_build(ns: argparse.Namespace, console, program_file: str,
     return 0
 
 
+def _extract_program_args(args: List[str], parser: argparse.ArgumentParser):
+    """把程序文件之后的裸参数透传给 CIN 程序 (arg_count()/arg(i))。
+
+    规则 (向后兼容): 第一个非选项 token 是程序文件; 此后遇到已知 CLI 选项
+    (及其取值) 仍归 CLI 解析, 其余裸 token 归程序参数。`--` 分隔的参数已在
+    main 里摘出, 优先级更高。返回 (cli_args, program_args)。
+    """
+    takes_value = {}
+    for act in parser._actions:  # noqa: SLF001 - argparse 无公开枚举接口
+        for s in getattr(act, 'option_strings', []):
+            takes_value[s] = getattr(act, 'nargs', None) != 0
+    cli_args: List[str] = []
+    prog_args: List[str] = []
+    seen_prog = False
+    i, n = 0, len(args)
+    while i < n:
+        tok = args[i]
+        # --opt=value 形式按其选项名识别
+        optname = tok.split('=', 1)[0] if tok.startswith('--') else tok
+        if optname in takes_value:
+            cli_args.append(tok)
+            if takes_value[optname] and '=' not in tok:
+                i += 1
+                if i < n:
+                    cli_args.append(args[i])
+            i += 1
+            continue
+        if not seen_prog:
+            cli_args.append(tok)
+            seen_prog = True
+            i += 1
+            continue
+        prog_args.append(tok)
+        i += 1
+    return cli_args, prog_args
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
 
@@ -246,8 +287,20 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     console = Console()
     parser = build_parser()
+
+    # 程序文件之后的裸参数透传给 CIN 程序 (问题反馈 #3): 已知 CLI 选项
+    # (含取值) 仍归 argparse, 其余 token 归 arg_count()/arg(i)。
+    cli_args, direct_args = _extract_program_args(args, parser)
+    if direct_args:
+        for tok in direct_args:
+            if tok.startswith('-') and tok not in ('-',) \
+                    and not tok.lstrip('-').split('=')[0].isdigit():
+                sys.stderr.write(
+                    f"note: {tok!r} 不是 CLI 选项, 已作为程序参数传递 "
+                    f"(arg_count/arg); 如需强制传参请用 `-- {tok}`\n")
+
     try:
-        ns = parser.parse_args(args)
+        ns = parser.parse_args(cli_args)
     except SystemExit as e:
         # argparse 错误 (未知选项/非法数值): 已打印 usage, 返回其退出码
         return int(e.code) if e.code is not None else 2
@@ -278,7 +331,8 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     config = Config()
     _apply_namespace(config, ns)
-    config.program_args = program_args
+    # 直传参数与 `--` 后参数合并 (直传在前, 位置顺序与命令行一致)
+    config.program_args = direct_args + program_args
     config.validate()
 
     program_file = ns.program

@@ -1,9 +1,18 @@
 // Code CIN 官方标准库: Go 标准库兼容层 (gostd)
 // 用法: import "gostd.cin"
 //
-// 以 pkg.Func 命名习惯提供 strings / strconv / math / slices / os 的
-// 常用函数 (go_strings_contains 对应 strings.Contains)。命名里的包段
-// 与 Go 文档一一对应, 便于从 Go 移植或查阅语义。
+// 覆盖范围 (纯 CIN 实现, 与 Go 标准库命名的对应关系):
+//   strings  —— Contains/Index/重复/大小写/裁剪/前后缀/替换等常用函数
+//   strconv  —— Itoa/Atoi/ParseBool/FormatFloat(经 ftoa) 等转换
+//   math     —— Sqrt/Abs/Floor/Ceil/Round/Pow 等包装
+//   slices   —— Contains/Index/Sort(经排序内建)/Reverse 等常用操作
+//   os       —— 仅 os.Args (go_os_args_len / go_os_args_get)
+// 未覆盖 (避免误解): time、os 文件读写、net/http、sync 等包暂无兼容层 ——
+// 计时请用内建 time_ms/time_us/time_ns, 文件读写用内建 file_* 函数族。
+//
+// 以 pkg.Func 命名习惯提供上述包的常用函数 (go_strings_contains 对应
+// strings.Contains)。命名里的包段与 Go 文档一一对应, 便于从 Go 移植或
+// 查阅语义。
 // 注意: go_os_args_len / go_os_args_get 依赖命令行参数内建 (arg_count /
 // arg, SYS 129..130), 需要原生路径 (CLI `--` 传参或 AOT 产物 os.Args)。
 

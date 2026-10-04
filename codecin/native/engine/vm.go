@@ -50,6 +50,7 @@ type vmState struct {
 	sp        uint64
 	pc        int
 	heapPtr   uint64
+	heapBase  uint64 // 堆起始 (heapPtr 初值; 报错信息用)
 	steps     uint64
 	flags     struct{ N, Z, C, V bool }
 	out       strings.Builder
@@ -199,15 +200,16 @@ func Run(bc []byte, mem []byte, entry, sp, heapBase int64, inData []byte,
 		ent = int(entry)
 	}
 	vm := &vmState{
-		prog:    prog,
-		entry:   ent,
-		mem:     mem,
-		sp:      uint64(sp),
-		pc:      ent,
-		heapPtr: uint64(heapBase),
-		rng:     rand.New(rand.NewSource(time.Now().UnixNano())),
-		inData:  inData,
-		args:    currentProgramArgs(),
+		prog:     prog,
+		entry:    ent,
+		mem:      mem,
+		sp:       uint64(sp),
+		pc:       ent,
+		heapPtr:  uint64(heapBase),
+		heapBase: uint64(heapBase),
+		rng:      rand.New(rand.NewSource(time.Now().UnixNano())),
+		inData:   inData,
+		args:     currentProgramArgs(),
 	}
 
 	// 键盘监听可能切换终端 raw mode, 任何出口都必须恢复 (幂等)
@@ -280,7 +282,7 @@ func opcodeSupported(op uint8) bool {
 }
 
 func syscallSupported(id uint64) bool {
-	return id <= sysAUDIOLEVEL
+	return id <= sysTIMENS
 }
 
 func (vm *vmState) reg(n int) uint64 {
@@ -342,7 +344,13 @@ func (vm *vmState) val(op operand) (uint64, bool) {
 
 func (vm *vmState) checkAddr(addr uint64, width int) string {
 	if uint64(len(vm.mem)) < uint64(width) || addr > uint64(len(vm.mem))-uint64(width) {
-		return "address " + strconv.FormatUint(addr, 16) + " out of bounds"
+		hint := ""
+		if addr >= 1<<63 {
+			// 按位模 2^64 后为负数: 典型成因是栈溢出 (SP 被推到负地址)
+			// 或野指针。可读性提示, 与 Python 侧 memory.py 文案一致。
+			hint = " (negative address: stack overflow or bad pointer?)"
+		}
+		return "Address 0x" + strconv.FormatUint(addr, 16) + " out of bounds" + hint
 	}
 	return ""
 }
@@ -976,7 +984,14 @@ func (vm *vmState) doSyscall(id uint64) string {
 		ptr := vm.heapPtr
 		vm.heapPtr += size
 		if vm.heapPtr > vm.sp {
-			return "Heap exhausted"
+			free := uint64(0)
+			if vm.sp > ptr {
+				free = vm.sp - ptr
+			}
+			// 文本与 Python 解释器 (cpu.py) 保持一致
+			return fmt.Sprintf("Heap exhausted: need %d bytes, free %d bytes "+
+				"(heap 0x%x..0x%x). Try --mem-size (default 65536) or "+
+				"reduce allocations", size, free, vm.heapBase, vm.sp)
 		}
 		vm.setReg(0, ptr)
 	case sysPRINTFLO:
@@ -1005,7 +1020,14 @@ func (vm *vmState) doSyscall(id uint64) string {
 		ptr := vm.heapPtr
 		vm.heapPtr += size
 		if vm.heapPtr > vm.sp {
-			return "Heap exhausted (string concat)"
+			free := uint64(0)
+			if vm.sp > ptr {
+				free = vm.sp - ptr
+			}
+			return fmt.Sprintf("Heap exhausted (string concat): need %d bytes, "+
+				"free %d bytes (heap 0x%x..0x%x). Try --mem-size "+
+				"(default 65536) or reduce allocations",
+				size, free, vm.heapBase, vm.sp)
 		}
 		if e := vm.checkAddr(ptr, len(data)); e != "" {
 			return e
@@ -1313,6 +1335,28 @@ func (vm *vmState) doSyscall(id uint64) string {
 		vm.setReg(0, vm.argAt(x0))
 	case sysREADLINE:
 		vm.setReg(0, vm.readLineStr())
+	// 核心 VM 机制 (非宿主能力, 与 Python 解释器 cpu.py 语义逐一致)
+	case sysALLOCFRAME:
+		fb := x0
+		guard := vm.heapPtr + 4096
+		// 有符号比较: SP 绕回 (负地址) 必须判溢出, 不能先取模再比大小
+		newSP := int64(vm.sp) - int64(fb)
+		if newSP < int64(guard) {
+			avail := int64(vm.sp) - int64(guard)
+			if avail < 0 {
+				avail = 0
+			}
+			return fmt.Sprintf("Stack overflow: frame needs %d bytes, stack "+
+				"headroom only %d bytes (SP 0x%x, guard 0x%x, memory %d "+
+				"bytes). Try --mem-size (default 65536) or smaller local "+
+				"arrays", fb, avail, vm.sp, guard, len(vm.mem))
+		}
+		vm.sp = uint64(newSP)
+		vm.setReg(0, vm.sp)
+	case sysTIMEUS:
+		vm.setReg(0, uint64(time.Now().UnixNano()/1000))
+	case sysTIMENS:
+		vm.setReg(0, uint64(time.Now().UnixNano()))
 	default:
 		return "Unknown SYS call id"
 	}
@@ -1326,7 +1370,14 @@ func (vm *vmState) heapDupString(s string) (uint64, string) {
 	ptr := vm.heapPtr
 	vm.heapPtr += size
 	if vm.heapPtr > vm.sp {
-		return 0, "Heap exhausted (string operation)"
+		free := uint64(0)
+		if vm.sp > ptr {
+			free = vm.sp - ptr
+		}
+		return 0, fmt.Sprintf("Heap exhausted (string operation): need %d "+
+			"bytes, free %d bytes (heap 0x%x..0x%x). Try --mem-size "+
+			"(default 65536) or reduce allocations",
+			size, free, vm.heapBase, vm.sp)
 	}
 	if e := vm.checkAddr(ptr, len(data)); e != "" {
 		return 0, e

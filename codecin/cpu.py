@@ -23,6 +23,12 @@ Instruction = Tuple[str, List[Operand]]
 MASK64 = 0xFFFFFFFFFFFFFFFF
 MASK32 = 0xFFFFFFFF
 
+# 核心 VM 机制系统调用: 不触碰宿主状态, 沙箱模式同样放行 (与 SYS < AUDIOPLAY
+# 的数学/字符串类内建同级)。文本语义必须与 Go 引擎 vm.go 保持一致。
+_CORE_SYS_CALLS = frozenset({
+    Syscall.ALLOCFRAME, Syscall.TIMEUS, Syscall.TIMENS,
+})
+
 
 def _f_to_bits(f: float) -> int:
     return struct.unpack('<Q', struct.pack('<d', f))[0]
@@ -85,7 +91,8 @@ class CPU:
         self.pstate: Dict[str, bool] = {'N': False, 'Z': False, 'C': False, 'V': False}
         self.pc = 0
         self.sp = (config.mem_size - Constants.STACK_SLOT) & ~0x7
-        self.heap_ptr = config.mem_size // 2
+        self.heap_base = config.mem_size // 2
+        self.heap_ptr = self.heap_base
 
         self.logger.dump("CPU 初始化", {
             'memory': f"0x{config.mem_size:x} bytes",
@@ -1153,7 +1160,11 @@ class CPU:
         ptr = self.heap_ptr
         self.heap_ptr += size
         if self.heap_ptr > self.sp:
-            raise ExecutionError("Heap exhausted (string operation)")
+            free = max(self.sp - ptr, 0)
+            raise ExecutionError(
+                f"Heap exhausted (string operation): need {size} bytes,"
+                f" free {free} bytes (heap 0x{self.heap_base:x}..0x{self.sp:x})."
+                " Try --mem-size (default 65536) or reduce allocations")
         self.memory.write_block(ptr, data)
         return ptr
 
@@ -1170,7 +1181,9 @@ class CPU:
         call_id = args[0][1]
         # 沙箱模式: 拦截全部宿主能力 (音频/画布/文件/进程/环境/网络/Termux),
         # 只放行数学/字符串/内存/输出类内建。原生路径在 _try_native_run 已强制回退。
-        if self.config.sandbox_mode and call_id >= Syscall.AUDIOPLAY:
+        # 核心机制系统调用 (_CORE_SYS_CALLS) 不触碰宿主状态, 沙箱内照常放行。
+        if (self.config.sandbox_mode and call_id >= Syscall.AUDIOPLAY
+                and call_id not in _CORE_SYS_CALLS):
             raise ExecutionError(
                 "Host capability disabled in sandbox mode (SYS "
                 f"{call_id}: {Syscall(call_id).name if call_id in Syscall._value2member_map_ else 'UNKNOWN'})")
@@ -1183,7 +1196,30 @@ class CPU:
             self.logger.trace(f"  SYS #{call_id} ({name}) "
                               f"x0=0x{x0:x} x1=0x{x1:x} x2=0x{x2:x}")
 
-        if call_id == Syscall.ABS:
+        if call_id == Syscall.ALLOCFRAME:
+            # 函数序言的帧分配 (核心机制, 沙箱放行): 带溢出防护的 SP 递减。
+            # 此前 prologue 直接 ADDI SP, SP, -frame_bytes, 局部大数组会把 SP
+            # 推到负地址 —— 轻则报晦涩的 "address ffff... out of bounds",
+            # 重则静默覆盖全局/堆内存。消息文本必须与 Go 引擎 vm.go 一致。
+            fb = x0
+            guard = self.heap_ptr + 4096
+            # 按有符号比较: SP 绕回 (负地址) 必须判定为溢出, 不能先按
+            # 2^64 取模再比大小 (绕回值会显得巨大而漏判)。
+            new_sp = self.sp - fb
+            if new_sp < guard:
+                avail = max(self.sp - guard, 0)
+                raise ExecutionError(
+                    f"Stack overflow: frame needs {fb} bytes, stack headroom "
+                    f"only {avail} bytes (SP 0x{self.sp:x}, guard "
+                    f"0x{guard:x}, memory {self.config.mem_size} bytes). "
+                    "Try --mem-size (default 65536) or smaller local arrays")
+            self.sp = new_sp & MASK64
+            self._set_reg(0, self.sp)
+        elif call_id in (Syscall.TIMEUS, Syscall.TIMENS):
+            # 高精度计时: Unix 纪元微秒/纳秒 (与 Go time.Now() 同基, 非单调钟)
+            ns = time.time_ns()
+            self._set_reg(0, ns // 1000 if call_id == Syscall.TIMEUS else ns)
+        elif call_id == Syscall.ABS:
             self._set_reg(0, abs(x0 if x0 < (1 << 63) else x0 - (1 << 64)))
         elif call_id in (Syscall.SQRT,):
             # 负数定义域: 与 Go 路径一致返回 NaN (不抛 CPython 内部异常)
@@ -1258,7 +1294,11 @@ class CPU:
             ptr = self.heap_ptr
             self.heap_ptr += size
             if self.heap_ptr > self.sp:
-                raise ExecutionError("Heap exhausted")
+                free = max(self.sp - ptr, 0)
+                raise ExecutionError(
+                    f"Heap exhausted: need {size} bytes, free {free} bytes"
+                    f" (heap 0x{self.heap_base:x}..0x{self.sp:x})."
+                    " Try --mem-size (default 65536) or reduce allocations")
             self._set_reg(0, ptr)
         elif call_id == Syscall.PRINT_FLOAT:
             self._emit_text(_format_float(_bits_to_f(x0)))
@@ -1282,7 +1322,11 @@ class CPU:
             ptr = self.heap_ptr
             self.heap_ptr += size
             if self.heap_ptr > self.sp:
-                raise ExecutionError("Heap exhausted (string concat)")
+                free = max(self.sp - ptr, 0)
+                raise ExecutionError(
+                    f"Heap exhausted (string concat): need {size} bytes,"
+                    f" free {free} bytes (heap 0x{self.heap_base:x}..0x{self.sp:x})."
+                    " Try --mem-size (default 65536) or reduce allocations")
             self.memory.write_block(ptr, data)
             self._set_reg(0, ptr)
         elif call_id == Syscall.BOOL_STR:

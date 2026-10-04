@@ -5,6 +5,70 @@
 
 ---
 
+## [5.8.2] - 2026-10-04
+
+一次以「真实压测程序暴露的错误信息与栈安全」为主线的修复发布。核心结论：
+5.5.3 的浮点下标修复在三条执行路径均有效（`a[(n * p) / 100]` 一类变量参与
+的浮点表达式同样覆盖）；用户在 Termux 上报告的 `address ffffffffffffc6f8
+out of bounds` 实为**局部大数组把栈推成负地址**——`int lat[10000]` 需要
+80 KB 局部空间，超过默认 64 KB 内存后 SP 绕回，越界检查检查的是绕回后的
+地址。为此新增带防护的帧分配系统调用（SYS 137），并全面改进运行时/编译期
+错误信息、补齐 CLI 直传参数与高精度计时。
+
+### 修复 (Fixed)
+
+#### 局部大数组撑爆栈（静默生成负地址）
+- **函数序言的帧分配改为带防护的系统调用**。此前 prologue 用裸 `ADDI sp, sp,
+  -frame_bytes` 递减栈指针，局部数组总大小超过可用内存时 SP 绕回为巨大无符号
+  值（如 0xFFFFFFFFFFFFC6F8），后续所有访问都指向"负地址"，报错只看到一句
+  out of bounds，看不出真因。现在两侧编译器（`cin.py` / `codegen.go`）改为
+  `SYS ALLOCFRAME`：VM 侧用**有符号比较**在分配前检查栈余量（含 4 KB 警戒
+  线），不足时直接报
+  `Stack overflow: frame needs N bytes, stack headroom only M bytes (...)
+  Try --mem-size (default 65536) or smaller local arrays`，
+  不再让绕回地址流入访存路径。Python 解释器、JIT、Go 原生三条路径语义一致。
+- **负地址越界提示兜底**：地址 >= 2^63 的越界报错（Python `memory.py` 与
+  Go `checkAddr`）追加
+  `(negative address: stack overflow or bad pointer?)`，把"看起来像随机大数"
+  的地址翻译成可排查的方向。
+
+#### 错误信息补全（问题 2/4/5）
+- **Heap exhausted 附用量与建议**：三处堆耗尽点（malloc / 字符串拼接 / 字符串
+  操作）在 Python 与 Go 两侧逐字一致地报
+  `Heap exhausted: need N bytes, free M bytes (heap 0x...0x...).
+  Try --mem-size (default 65536) or reduce allocations`。
+- **非常量数组长度的编译期报错附 hint**：
+  `array lengths must be compile-time constants; declare it as
+  \`const int NAME = ...\`; variable-length arrays are not supported —
+  use a fixed-size array plus a count variable`。
+- **`float(x)` / `int(x)` 报错附替代写法**：提示使用 `to_float(x)` / `to_int(x)`
+  或依赖混合表达式的隐式提升。
+
+#### 兼容层与文档
+- `gostd.cin` 头注释明确列出当前覆盖的包（strings / strconv / math / slices /
+  os.Args）与**未覆盖项**（time、os 文件读写、net/http、sync），并指向对应
+  内建（`time_ms/time_us/time_ns`、`file_*` 函数族），避免"Go 标准库兼容层"
+  的命名让人误以为常用包会逐步全覆盖。
+
+### 新增 (Added)
+
+#### CLI 程序名后直传参数
+- `codecin 压测.cin https://example.com 24` 现在可用：程序文件之后的裸参数
+  原样传给 CIN 程序（`arg_count()` / `arg(i)`），已知 CLI 选项放在程序之前或
+  之后均可识别；形如选项的直传参数给出 stderr 提示并用 `--` 显式分隔。
+  `--` 分隔符行为不变且优先级最高，`--help` 新增 Program arguments 说明段。
+
+#### 高精度计时 `time_us()` / `time_ns()`（SYS 138/139）
+- 微秒 / 纳秒级单调计时，补齐 `time_ms()` 只能测毫秒的短板（压测与微基准
+  基础设施）。两侧编译器同步登记，解释器 / JIT / 原生三条路径均可用；
+  与 ALLOCFRAME 同属核心 VM 机制，不触发沙箱门禁与原生路径限定。
+
+#### 显式类型转换 `to_int()` / `to_float()`
+- 数值类型（int/float/bool）间的显式转换，语义与隐式转换一致（float→int 向零
+  截断）。非数值参数在编译期报错并说明。
+
+---
+
 ## [5.8.0] - 2026-10-04
 
 一次「图形、媒体与跨平台兼容」发布：新增 **GUI 窗口**（Windows Win32 /

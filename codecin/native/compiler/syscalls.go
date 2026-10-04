@@ -141,3 +141,6 @@ const SysAUDIOPLAYING = 133
 const SysAUDIOPAUSE = 134
 const SysAUDIORESUME = 135
 const SysAUDIOLEVEL = 136
+const SysALLOCFRAME = 137
+const SysTIMEUS = 138
+const SysTIMENS = 139
