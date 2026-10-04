@@ -48,6 +48,9 @@ def build_parser() -> argparse.ArgumentParser:
                         '包路径) 后退出; 与 --json 合用输出机器可读 JSON')
     p.add_argument('--json', action='store_true', dest='json_output',
                    help='配合 --build-info 输出 JSON (需与 --build-info 同时使用)')
+    p.add_argument('--libs', action='store_true', dest='list_libs',
+                   help='列出内置标准库并标注执行路径要求 '
+                        '(纯 CIN / C·C++·Go 兼容层 / 需原生运行时) 后退出')
 
     # 执行路径
     p.add_argument('--no-native', action='store_true',
@@ -260,6 +263,11 @@ def main(argv: Optional[List[str]] = None) -> int:
             sys.stdout.write(build_info_json() + "\n")
         else:
             sys.stdout.write(format_build_info() + "\n")
+        return 0
+
+    if ns.list_libs:
+        from .stdlib import format_library_report
+        sys.stdout.write(format_library_report() + "\n")
         return 0
 
     if ns.program is None:
