@@ -20,8 +20,6 @@ type memoryStatusEx struct {
 	AvailExtendedVirtual uint64
 }
 
-// SystemMemoryKB 经 GlobalMemoryStatusEx 读取物理内存总量/可用量 (KB)。
-// 仅使用标准库 syscall, 不引入外部依赖 (也无 cgo)。
 func SystemMemoryKB() (uint64, uint64, bool) {
 	kernel32 := syscall.NewLazyDLL("kernel32.dll")
 	proc := kernel32.NewProc("GlobalMemoryStatusEx")

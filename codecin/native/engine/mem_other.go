@@ -8,8 +8,6 @@ import (
 	"strings"
 )
 
-// SystemMemoryKB 从 /proc/meminfo 读取物理内存总量/可用量 (Linux / Android)。
-// 其他非 Windows 平台 (如 macOS) 无 /proc, 返回 ok=false。
 func SystemMemoryKB() (uint64, uint64, bool) {
 	data, err := os.ReadFile("/proc/meminfo")
 	if err != nil {

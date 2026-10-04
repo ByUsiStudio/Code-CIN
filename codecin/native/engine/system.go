@@ -12,9 +12,6 @@ import (
 	"time"
 )
 
-// 系统原生交互: 文件/目录/进程/环境变量/系统信息 (跨平台 Windows/Linux/macOS)。
-// 全部经 SYS 宿主调用暴露给 CIN。
-
 // empty 返回一个安全的空串地址 (惰性分配, 避免影响 heap_ptr 的三路径一致性)。
 func (vm *vmState) empty() uint64 {
 	if vm.emptyStr == 0 {
