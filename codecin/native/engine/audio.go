@@ -227,14 +227,18 @@ func audioLevelNow() int {
 	return audioLevel
 }
 
-// audioPos SYS 126: audio_pos() -> 当前播放已进行毫秒 / -1 (无播放)。
+// audioPos SYS 126: audio_pos() -> 当前播放已进行毫秒 / -1 (无播放或已播完)。
 func (vm *vmState) audioPos() uint64 {
 	audioMu.Lock()
 	defer audioMu.Unlock()
 	if !audioActive || audioDur <= 0 {
 		return mask64
 	}
-	el := time.Since(audioStarted)
+	now := time.Now()
+	if !audioEnd.IsZero() && now.After(audioEnd) {
+		return mask64 // 已自然播完 (audio_wait 之前也视为无进度)
+	}
+	el := now.Sub(audioStarted)
 	if el > audioDur {
 		el = audioDur
 	}

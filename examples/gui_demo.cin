@@ -1,0 +1,49 @@
+// Code CIN GUI 窗口演示 (Windows Win32 / Linux X11; 其他平台优雅失败)
+// 运行: codecin examples/gui_demo.cin   (需原生路径; --sandbox 会拦截)
+// 无显示服务 (CI / SSH / 管道) 时 gui_new 返回 -1, 程序打印提示后正常退出。
+import "gui.cin"
+import "key.cin"
+
+function main() -> int {
+    if (g_new(320, 240, "Code CIN GUI Demo") != 0) {
+        println("GUI unavailable (no display / sandbox / unsupported platform)")
+        return 0
+    }
+
+    // 画布内建直画窗口后备缓冲 (g_new 成功后无需再调 canvas())
+    g_clear(0x202040)
+    set_color(0xFFD080)
+    fill_rect(40, 40, 240, 60)
+    set_color(0x202040)
+    draw_text(60, 70, "Hello from Code CIN!")
+    set_color(0x80C0FF)
+    draw_text(48, 128, "Arrows move the box; mouse drag works too")
+    draw_text(48, 144, "ESC quits. Window X also quits.")
+
+    int box_x = 140
+    int box_y = 180
+    while (1) {
+        // 动画区重绘 + 方块
+        set_color(0x202040)
+        fill_rect(0, 160, 320, 80)
+        set_color(0x40E0A0)
+        fill_rect(box_x, box_y, 36, 36)
+        g_update()
+
+        if (g_closed() == 1) { break }
+        int k = get_key()
+        if (k == K_LEFT || k == K_CTRL_LEFT) { box_x = box_x - 8 }
+        if (k == K_RIGHT || k == K_CTRL_RIGHT) { box_x = box_x + 8 }
+        if (k == K_UP) { box_y = box_y - 8 }
+        if (k == K_DOWN) { box_y = box_y + 8 }
+        if (k == K_ESC) { break }
+        if (g_mouse_left() == 1) {
+            box_x = g_mouse_x() - 18
+            box_y = g_mouse_y() - 18
+        }
+        sleep_ms(16)
+    }
+    g_close()
+    println("bye")
+    return 0
+}

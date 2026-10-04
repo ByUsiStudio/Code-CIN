@@ -114,16 +114,25 @@ func TestAudioPosElapsedClamped(t *testing.T) {
 	audioActive = true
 	audioDur = 200 * time.Millisecond
 	audioStarted = time.Now().Add(-50 * time.Millisecond)
+	audioEnd = audioStarted.Add(audioDur)
 	audioMu.Unlock()
 	if got := vm.audioPos(); got < 40 || got > 60 {
 		t.Fatalf("audio_pos 应在 40..60ms 附近, 实际 %d", got)
 	}
-	// 已超过时长: 钳到总时长
+	// 即将超时: 钳到总时长 (end 尚未到达)
 	audioMu.Lock()
 	audioStarted = time.Now().Add(-1 * time.Second)
+	audioEnd = time.Now().Add(50 * time.Millisecond) // end 未到但已超 audioDur
 	audioMu.Unlock()
 	if got := vm.audioPos(); got != 200 {
 		t.Fatalf("超时后 audio_pos 应钳到 200, 实际 %d", got)
+	}
+	// 已自然播完 (end 已过): audio_pos 恢复 -1
+	audioMu.Lock()
+	audioEnd = time.Now().Add(-10 * time.Millisecond)
+	audioMu.Unlock()
+	if got := vm.audioPos(); got != mask64 {
+		t.Fatalf("自然播完后 audio_pos 应返回 -1, 实际 %d", got)
 	}
 }
 

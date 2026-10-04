@@ -1,0 +1,41 @@
+// Code CIN 本地音频演示 (beep 合成 / 音量 / 播放进度)
+// 运行: codecin examples/local_audio.cin   (需原生路径; --sandbox 会拦截)
+// Windows 用 waveOut 实时发声; Linux/macOS 交给系统播放器 (aplay/afplay 等),
+// 没有可用播放器时 beep 返回 -1, 演示仍正常走完。
+function main() -> int {
+    // 参数校验 (三平台一致, 在触碰设备之前完成)
+    if (beep(10, 100) != -1) { return 1 }      // 频率过低 (< 20Hz)
+    if (beep(440, 0) != -1) { return 2 }       // 时长为 0
+    println("validation ok; pos_before=" + int_to_str(audio_pos()))
+
+    // 音量 (0..100, 越界自动钳制)
+    audio_volume(80)
+
+    // 一段小旋律: C5 E5 G5 C6 (阻塞等每一段结束)
+    beep(523, 150)
+    audio_wait()
+    beep(659, 150)
+    audio_wait()
+    beep(784, 150)
+    audio_wait()
+    beep(1046, 300)
+    audio_wait()
+    println("melody done")
+
+    // 播放进度轮询: audio_pos 从毫秒数递增, 播完后回到 -1
+    beep(440, 800)
+    int seen = 0
+    int last = -2
+    while (1) {
+        int p = audio_pos()
+        if (p == -1) { break }
+        seen = 1
+        if (p != last) {
+            println("pos=" + int_to_str(p))
+            last = p
+        }
+        sleep_ms(50)
+    }
+    println("pos_seen=" + int_to_str(seen) + " pos_after=" + int_to_str(audio_pos()))
+    return 0
+}
