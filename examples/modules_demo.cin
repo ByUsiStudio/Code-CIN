@@ -1,5 +1,5 @@
 // import + 内置标准库演示 (B3)
-// 运行: python cpu.py examples/modules_demo.cin
+// 运行: codecin examples/modules_demo.cin
 
 import "math.cin"
 import "str.cin"

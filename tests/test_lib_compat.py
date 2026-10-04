@@ -290,6 +290,128 @@ def test_gostd_go(workdir, use_native):
 
 
 # ====================================================================
+# 3b. 兼容层 API 扩容 (5.8.0 新增函数, 双路径语义一致)
+# ====================================================================
+
+CSTD_EXT_SRC = '''\
+import "cstd.cin"
+function main() -> int {
+    // ctype 扩展
+    if (libc_iscntrl(0) != 1) { return 1 }
+    if (libc_isgraph(' ') != 0) { return 2 }
+    if (libc_isblank(9) != 1) { return 3 }
+    if (libc_ispunct('#') != 1) { return 4 }
+    if (libc_ispunct('a') != 0) { return 5 }
+    if (libc_toascii('z') != 'z') { return 6 }
+    // string 扩展
+    if (strcmp(libc_strlwr("AbC"), "abc") != 0) { return 7 }
+    if (strcmp(libc_strupr("AbC"), "ABC") != 0) { return 8 }
+    if (libc_strspn("aabbcc", "ab") != 4) { return 9 }
+    if (libc_strcspn("aabbcc", "c") != 4) { return 10 }
+    if (libc_strpbrk("xyz12", "9871") != 3) { return 11 }
+    // stdlib / math 扩展
+    if (libc_labs(-42) != 42) { return 12 }
+    if (libc_round(-2.5) != -3.0) { return 13 }
+    if (libc_round(2.5) != 3.0) { return 14 }
+    if (libc_trunc(-2.7) != -2.0) { return 15 }
+    if (libc_fabs(libc_sin(0.0)) > 0.000001) { return 17 }
+    // stdio 扩展 (putchar 返回字符码并输出)
+    if (libc_putchar('!') != 33) { return 16 }
+    return 0
+}'''
+
+
+@pytest.mark.parametrize('use_native', PATHS, ids=PATH_IDS)
+def test_cstd_extensions(workdir, use_native):
+    path = _write_workdir(workdir, 't_cstd_ext.cin', CSTD_EXT_SRC)
+    cpu = run_cin_file(path, use_native=use_native)
+    _run_ok(cpu)
+
+
+CPPSTD_EXT_SRC = '''\
+import "cppstd.cin"
+function main() -> int {
+    // std::string 扩展
+    if (stl_str_starts_with("hello", "he") != 1) { return 1 }
+    if (stl_str_ends_with("hello", "lo") != 1) { return 2 }
+    if (stl_str_find_first_of("hello", "ol") != 2) { return 3 }
+    if (stl_str_find_last_of("hello", "l") != 3) { return 4 }
+    if (stl_str_at("abc", 1) != 'b') { return 5 }
+    if (stl_str_front("abc") != 'a') { return 6 }
+    if (stl_str_back("abc") != 'c') { return 7 }
+    if (strcmp(stl_str_insert("helo", 2, "l"), "hello") != 0) { return 8 }
+    if (strcmp(stl_str_erase("hello", 1, 2), "hlo") != 0) { return 9 }
+    if (strcmp(stl_str_replace("hello", 1, 2, "ey"), "heylo") != 0) {
+        return 10
+    }
+    // vector 扩展
+    int v[8]
+    int n = 0
+    n = stl_vec_push_back(v, n, 1)
+    n = stl_vec_push_back(v, n, 3)
+    n = stl_vec_insert(v, n, 1, 2)
+    if (n != 3) { return 11 }
+    if (v[1] != 2) { return 12 }
+    if (stl_vec_find(v, n, 3) != 2) { return 13 }
+    if (stl_vec_count(v, n, 9) != 0) { return 14 }
+    n = stl_vec_erase(v, n, 0)
+    if (n != 2 || v[0] != 2) { return 15 }
+    stl_sort_desc(v, n)
+    if (v[0] != 3) { return 16 }
+    if (stl_clamp(7, 1, 5) != 5) { return 17 }
+    return 0
+}'''
+
+
+@pytest.mark.parametrize('use_native', PATHS, ids=PATH_IDS)
+def test_cppstd_extensions(workdir, use_native):
+    path = _write_workdir(workdir, 't_cppstd_ext.cin', CPPSTD_EXT_SRC)
+    cpu = run_cin_file(path, use_native=use_native)
+    _run_ok(cpu)
+
+
+GOSTD_EXT_SRC = '''\
+import "gostd.cin"
+function main() -> int {
+    // strings 扩展
+    if (go_strings_last_index("aXbX", "X") != 3) { return 1 }
+    if (go_strings_index_any("abc", "cb") != 1) { return 2 }
+    if (strcmp(go_strings_trim_left("aab!", "a"), "b!") != 0) { return 3 }
+    if (strcmp(go_strings_trim_right("abb!", "b!"), "a") != 0) { return 4 }
+    if (strcmp(go_strings_trim_prefix("prefix:x", "prefix:"), "x") != 0) {
+        return 5
+    }
+    if (strcmp(go_strings_trim_suffix("x:suffix", ":suffix"), "x") != 0) {
+        return 6
+    }
+    // strconv 扩展 (任意进制)
+    if (strcmp(go_format_int(255, 16), "ff") != 0) { return 7 }
+    if (strcmp(go_format_int(-8, 2), "-1000") != 0) { return 8 }
+    if (go_parse_int("-ff", 16) != -255) { return 9 }
+    if (go_parse_int("101", 2) != 5) { return 10 }
+    // math 扩展
+    if (go_math_round(-2.5) != -3.0) { return 11 }
+    if (go_math_trunc(2.9) != 2.0) { return 12 }
+    // slices 扩展
+    int a[3] = {1, 2, 3}
+    int b[3] = {0, 0, 0}
+    if (go_slices_clone(b, a, 3) != 3) { return 13 }
+    if (go_slices_equal(a, b, 3) != 1) { return 14 }
+    if (go_slices_last_index(a, 3, 3) != 2) { return 15 }
+    go_slices_sort(b, 3)
+    if (b[0] != 1) { return 16 }
+    return 0
+}'''
+
+
+@pytest.mark.parametrize('use_native', PATHS, ids=PATH_IDS)
+def test_gostd_extensions(workdir, use_native):
+    path = _write_workdir(workdir, 't_gostd_ext.cin', GOSTD_EXT_SRC)
+    cpu = run_cin_file(path, use_native=use_native)
+    _run_ok(cpu)
+
+
+# ====================================================================
 # 4. 三库同载 (互不冲突, 无函数名碰撞)
 # ====================================================================
 

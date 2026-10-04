@@ -1,5 +1,5 @@
 // Code CIN 命令行参数与行输入演示 (SYS 129..131, 跨平台一致)
-// 运行: python cpu.py examples/args_demo.cin -- alice 42
+// 运行: codecin examples/args_demo.cin -- alice 42
 //       codecin examples/args_demo.cin -- alice 42
 // 参数在 `--` 之后传给 CIN 程序; AOT 产物直接取进程 os.Args[1:]。
 // 另见 stdlib: gostd.cin 的 go_os_args_len() / go_os_args_get(i)。

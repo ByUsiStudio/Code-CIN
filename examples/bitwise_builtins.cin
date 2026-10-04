@@ -1,5 +1,5 @@
 // Code CIN 位运算 / 整数除法 / 字符串下标 / 新内建函数示例
-// 运行: python cpu.py examples/bitwise_builtins.cin
+// 运行: codecin examples/bitwise_builtins.cin
 function main() -> int {
     // 位运算 (& | ^ << >> ~)
     int a = 0b1100 & 0b1010        // 8

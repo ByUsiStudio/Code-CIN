@@ -1,5 +1,5 @@
 // Code CIN 官方标准库演示 (array / sort / conv / vec / json / time / test)
-// 运行: python cpu.py examples/stdlib_demo.cin
+// 运行: codecin examples/stdlib_demo.cin
 //       codecin examples/stdlib_demo.cin
 import "test.cin"
 import "array.cin"

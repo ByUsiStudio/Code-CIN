@@ -1,6 +1,6 @@
 // Code CIN 语法扩展示例: enum 枚举 / 范围 for / switch 多值与闭区间 case /
 // 多参数 println / 字符串转义
-// 运行: python cpu.py examples/enum_range_for.cin
+// 运行: codecin examples/enum_range_for.cin
 // 全部特性都是确定性的 (不使用 time()/rand()/宿主 API), 三条执行路径输出一致。
 
 // 枚举: 缺省自增 / 显式赋值 / 常量表达式初始化

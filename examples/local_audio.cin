@@ -1,4 +1,4 @@
-// Code CIN 本地音频演示 (beep 合成 / 音量 / 播放进度)
+// Code CIN 本地音频演示 (beep 合成 / 音量 / 播放进度 / 暂停恢复控制)
 // 运行: codecin examples/local_audio.cin   (需原生路径; --sandbox 会拦截)
 // Windows 用 waveOut 实时发声; Linux/macOS 交给系统播放器 (aplay/afplay 等),
 // 没有可用播放器时 beep 返回 -1, 演示仍正常走完。
@@ -8,8 +8,10 @@ function main() -> int {
     if (beep(440, 0) != -1) { return 2 }       // 时长为 0
     println("validation ok; pos_before=" + int_to_str(audio_pos()))
 
-    // 音量 (0..100, 越界自动钳制)
+    // 音量 (0..100, 越界自动钳制); audio_level 读取当前音量
     audio_volume(80)
+    if (audio_level() != 80) { return 3 }
+    println("volume=" + int_to_str(audio_level()))
 
     // 一段小旋律: C5 E5 G5 C6 (阻塞等每一段结束)
     beep(523, 150)
@@ -37,5 +39,20 @@ function main() -> int {
         sleep_ms(50)
     }
     println("pos_seen=" + int_to_str(seen) + " pos_after=" + int_to_str(audio_pos()))
+
+    // 暂停 / 恢复控制: audio_pos 在暂停期间冻结, 恢复后继续走
+    if (beep(660, 1200) != 0) { return 0 }     // 播放器不可用时跳过余下演示
+    int dur = audio_duration()
+    sleep_ms(200)
+    if (audio_pause() != 0) { return 0 }       // 平台不支持暂停时优雅退出
+    println("paused: pos=" + int_to_str(audio_pos()) + " playing=" + int_to_str(audio_playing()) + " duration=" + int_to_str(dur))
+    sleep_ms(300)
+    int frozen = audio_pos()
+    sleep_ms(200)
+    if (audio_pos() != frozen) { return 4 }    // 暂停期间进度必须冻结
+    if (audio_resume() != 0) { return 5 }
+    println("resumed: pos=" + int_to_str(audio_pos()) + " playing=" + int_to_str(audio_playing()))
+    audio_stop()
+    println("control done")
     return 0
 }

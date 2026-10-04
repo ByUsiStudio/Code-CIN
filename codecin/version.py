@@ -21,7 +21,7 @@
     format_build_info() -> str                         # 可读多行文本
     build_info_json()   -> str                         # 机器可读 JSON
 
-CLI 侧: `python cpu.py --build-info [--json]` (见 codecin/cli.py)。
+CLI 侧: `codecin --build-info [--json]` (见 codecin/cli.py)。
 """
 
 import json

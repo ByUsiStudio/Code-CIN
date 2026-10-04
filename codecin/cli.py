@@ -17,7 +17,7 @@ from .console import Colors, Console, Panel
 HELP_INTRO = f"""{Colors.colorize(f'Code CIN v{__version__}', Colors.CYAN, True)}
 
 {Colors.colorize('Usage:', Colors.YELLOW)}
-  python cpu.py <program.[cin|pl|asm|bin]> [options]
+  codecin <program.[cin|pl|asm|bin]> [options]
 
 {Colors.colorize('Supported formats:', Colors.YELLOW)}
   .cin   CIN 高级语言 (函数/struct/数组/浮点/字符串)
@@ -318,7 +318,7 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     try:
         # 管道/重定向输入预读到 input_buffer: 让 input() 在原生与解释器路径下
-        # 都能读到 `"42" | python cpu.py t.cin` 这样的标准输入 (交互 TTY 不预读)。
+        # 都能读到 `"42" | codecin t.cin` 这样的标准输入 (交互 TTY 不预读)。
         try:
             if sys.stdin is not None and not sys.stdin.isatty():
                 cpu.input_buffer = sys.stdin.read() or ""

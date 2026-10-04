@@ -179,3 +179,101 @@ func TestAudioWaitDoneAndInactive(t *testing.T) {
 		t.Fatal("audio_wait 后 audio_active 应清零")
 	}
 }
+
+func TestAudioControlsInactive(t *testing.T) {
+	resetAudioState()
+	defer resetAudioState()
+	vm := newHostVM(4096)
+	// 无播放: 查询为 -1 / 0, 控制返回 -1, 默认音量 100
+	if got := vm.audioDuration(); got != mask64 {
+		t.Fatalf("无播放 audio_duration 应返回 -1, 实际 %d", got)
+	}
+	if audioPlayingNow() {
+		t.Fatal("无播放 audio_playing 应为 0")
+	}
+	if got := vm.audioPause(); got != mask64 {
+		t.Fatalf("无播放 audio_pause 应返回 -1, 实际 %d", got)
+	}
+	if got := vm.audioResume(); got != mask64 {
+		t.Fatalf("无暂停 audio_resume 应返回 -1, 实际 %d", got)
+	}
+	if got := audioLevelNow(); got != 100 {
+		t.Fatalf("默认音量应为 100, 实际 %d", got)
+	}
+}
+
+func TestAudioControlsStateMachine(t *testing.T) {
+	resetAudioState()
+	defer resetAudioState()
+	vm := newHostVM(4096)
+	// 手工构造"播放中"状态 (不触碰真实设备): 已播 50ms / 总 200ms
+	audioMu.Lock()
+	audioActive = true
+	audioDur = 200 * time.Millisecond
+	audioStarted = time.Now().Add(-50 * time.Millisecond)
+	audioEnd = audioStarted.Add(audioDur)
+	audioMu.Unlock()
+
+	if got := vm.audioDuration(); got != 200 {
+		t.Fatalf("播放中 audio_duration 应为 200, 实际 %d", got)
+	}
+	if !audioPlayingNow() {
+		t.Fatal("播放中 audio_playing 应为 1")
+	}
+	// 测试钩子下无平台句柄可暂停: 返回 -1 且状态不变
+	if got := vm.audioPause(); got != mask64 {
+		t.Fatalf("无平台句柄 audio_pause 应返回 -1, 实际 %d", got)
+	}
+	if !audioPlayingNow() {
+		t.Fatal("失败的暂停不应改变播放状态")
+	}
+
+	// 手工进入暂停态: audio_pos 冻结在暂停时刻, playing 归 0
+	audioMu.Lock()
+	audioPaused = true
+	audioPausedAt = time.Now()
+	audioMu.Unlock()
+	if got := vm.audioPos(); got < 40 || got > 60 {
+		t.Fatalf("暂停期间 audio_pos 应冻结在 ~50ms, 实际 %d", got)
+	}
+	time.Sleep(30 * time.Millisecond)
+	if got := vm.audioPos(); got < 40 || got > 60 {
+		t.Fatalf("暂停期间 audio_pos 不应随时间前进, 实际 %d", got)
+	}
+	if audioPlayingNow() {
+		t.Fatal("暂停期间 audio_playing 应为 0")
+	}
+	if got := vm.audioDuration(); got != 200 {
+		t.Fatalf("暂停期间 audio_duration 应仍为 200, 实际 %d", got)
+	}
+	// 测试钩子下无平台句柄可恢复: 返回 -1 且保持暂停
+	if got := vm.audioResume(); got != mask64 {
+		t.Fatalf("无平台句柄 audio_resume 应返回 -1, 实际 %d", got)
+	}
+
+	// 自然播完 (end 已过): duration/pos/playing 全部归 -1/0
+	audioMu.Lock()
+	audioPaused = false
+	audioPausedAt = time.Time{}
+	audioEnd = time.Now().Add(-10 * time.Millisecond)
+	audioMu.Unlock()
+	if got := vm.audioDuration(); got != mask64 {
+		t.Fatalf("自然播完后 audio_duration 应返回 -1, 实际 %d", got)
+	}
+	if got := vm.audioPos(); got != mask64 {
+		t.Fatalf("自然播完后 audio_pos 应返回 -1, 实际 %d", got)
+	}
+	if audioPlayingNow() {
+		t.Fatal("自然播完后 audio_playing 应为 0")
+	}
+}
+
+func TestAudioLevelQueryAfterVolume(t *testing.T) {
+	resetAudioState()
+	defer resetAudioState()
+	vm := newHostVM(4096)
+	vm.audioVolume(30)
+	if got := audioLevelNow(); got != 30 {
+		t.Fatalf("audio_volume(30) 后 audio_level 应为 30, 实际 %d", got)
+	}
+}

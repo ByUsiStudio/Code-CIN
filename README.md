@@ -425,9 +425,9 @@ codecin --version
 
 3. 运行:
    ```
-   python cpu.py basic.cin                          # 唯一 CLI 入口 (自动用 Go 原生库)
+   codecin basic.cin                          # 唯一 CLI 入口 (自动用 Go 原生库)
    codecin basic.cin                                # 安装后等价的 console script
-   python cpu.py --help
+   codecin --help
    ```
 
 > **Python 只是 CLI 外壳**: 语言实现 (`codecin/native/` 下的 Go 编译器与字节码 VM) 全部在 Go 侧,
@@ -467,11 +467,11 @@ ruff check codecin cpu.py script tests
 
 ```bash
 # 本机平台
-python cpu.py program.cin --build-exe program          # Windows 自动补 .exe
+codecin program.cin --build-exe program          # Windows 自动补 .exe
 
 # 交叉编译 (只需要安装 Go 工具链)
-python cpu.py program.cin --build-exe app-linux --build-target linux/amd64
-python cpu.py program.cin --build-exe app-mac   --build-target darwin/arm64
+codecin program.cin --build-exe app-linux --build-target linux/amd64
+codecin program.cin --build-exe app-mac   --build-target darwin/arm64
 ```
 
 | 目标 | 说明 |
@@ -488,10 +488,10 @@ python cpu.py program.cin --build-exe app-mac   --build-target darwin/arm64
 ### 命令行选项
 
 **基础执行**
-- `python cpu.py program.cin` - 运行CIN程序
-- `python cpu.py program.pl` - 运行PL程序
-- `python cpu.py program.asm` - 运行ASM程序
-- `python cpu.py program.bin` - 运行字节码
+- `codecin program.cin` - 运行CIN程序
+- `codecin program.pl` - 运行PL程序
+- `codecin program.asm` - 运行ASM程序
+- `codecin program.bin` - 运行字节码
 
 **执行路径**
 - `--no-native` - 禁用 Go 原生库, 强制纯 Python

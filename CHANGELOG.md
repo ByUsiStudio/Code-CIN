@@ -5,6 +5,197 @@
 
 ---
 
+## [5.8.0] - 2026-10-04
+
+一次「图形、媒体与跨平台兼容」发布：新增 **GUI 窗口**（Windows Win32 /
+Linux X11）、**本地音频扩展**（真实音量 / 播放进度 / 合成蜂鸣）、**键盘输入
+多平台优化**（Unicode 码点、F11/F12、修饰键组合），并补齐 **命令行参数与
+行输入**（SYS 129..131）、**终端输出缓存的跨平台冲刷**（Windows VT/UTF-8
+初始化）与 **C/C++/Go 三语言标准库兼容层**（36 → 39 个）。随后在同一版本内
+继续增强：**音频控制全家桶**（查询 / 暂停恢复 / 音量读取，SYS 132..136）、
+**三兼容层 API 扩容**（40+ 新函数）、**工具链缺失检测与平台化安装提示**
+（environment）与 **`--libs` 内置库清单**（标注执行路径要求）。核心实现全部
+在 Go 原生引擎（纯标准库，零第三方依赖），三条执行路径语义与 5.7.x 保持一致。
+
+### 新增 (Added)
+
+#### GUI 窗口（SYS 119..125、128，全部 Go 原生实现）
+
+- **`gui_new(w, h, title)` / `gui_update()` / `gui_close()` / `gui_closed()` /
+  `gui_active()` / `mouse_x()` / `mouse_y()` / `mouse_button()`**：
+  - `gui_new` 成功返回 0 并把画布内建（`set_color` / `fill_rect` / `fill_circle` /
+    `draw_line` / `draw_text`）直接绑定为**窗口后备缓冲直画**，`gui_update`
+    处理事件并呈现一帧（主循环每帧调用）；`gui_close` 销毁窗口（画布保留，
+    仍可 `save_png`）；点 X / Alt+F4 / WM 删除协议由 `gui_closed` 报告。
+  - 平台后端：Windows 用 Win32（专用窗口线程 + 消息泵，`StretchDIBits`
+    呈现，`AdjustWindowRect` 精确客户区）；Linux 用**纯 Go X11 客户端**
+    （Unix socket / TCP 连接、MIT-MAGIC-COOKIE-1 认证、`PutImage` 分块呈现、
+    WM_DELETE_WINDOW 协议）；其他平台与无显示服务环境一律优雅失败
+    （`gui_new` 返回 -1，不报错不崩溃）。
+  - 鼠标：客户区坐标 + 键位掩码（bit0 左 / bit1 右 / bit2 中）；键盘事件注入
+    与终端共用的同一键码队列（`get_key` 可直接读）。
+  - 并发安全：快照复制防撕裂（呈现线程读 / VM 线程写）。
+- **`codecin/lib/gui.cin` 重构**：窗口封装 `g_new` / `g_update` / `g_close` /
+  `g_closed` / `g_active` / `g_clear` / `g_mouse_*`（含键位判定），并**保留**
+  5.7.x 的离屏绘图助手（`g_rgb` / `g_bar_chart` / `g_line_chart` / `g_grid` /
+  `g_rect_outline` / `g_save` / `g_show`）。
+
+#### 本地音频扩展（SYS 126、127）
+
+- **`audio_pos()`**：当前播放已进行毫秒；无播放 / 已播完 / 时长未知返回 -1。
+- **`beep(freq, ms)`**：合成 16-bit 单声道 22050Hz 正弦蜂鸣（10% / 5ms 淡入
+  淡出防爆音）；频率 20..20000 Hz、单次上限 10 秒，参数校验在三平台一致地
+  于触碰设备之前完成。
+- Windows 后端从 PlaySoundW 升级为 **waveOut 流式**：`audio_volume` 经
+  `waveOutSetVolume` 实时生效、`audio_stop` 即时中止（`waveOutReset`）；
+  Unix 后端向 `paplay` / `ffplay` / `afplay` 透传音量参数。
+
+#### 音频控制增强（SYS 132..136）
+
+- **`audio_duration()`**：当前播放总时长毫秒；无播放 / 自然播完 / 时长未知返回 -1
+  （播放与暂停期间返回同一总时长）。
+- **`audio_playing()`**：1 = 正在发声（已开始、未暂停、未播完），否则 0。
+- **`audio_pause()`**：暂停当前播放（Windows `waveOutPause`；Unix 向播放器
+  进程投递 SIGSTOP），成功 0；无播放 / 已暂停 / 平台失败为 -1。
+- **`audio_resume()`**：恢复暂停的播放，时间基线整体后移暂停时长——
+  `audio_pos` 无缝续走、自然结束时刻保持正确；成功 0 / 无暂停可恢复 -1。
+- **`audio_level()`**：读取当前音量 0..100（`audio_volume` 的读端）。
+- **`audio_pos` 暂停冻结**：暂停期间进度停在暂停时刻，不随真实时间前进；
+  `audio_stop` / 重新播放即解除暂停态。
+- 五个内建在两侧编译器同步登记，ISA 真源（`isa.py`）→ Go 生成物一致。
+
+#### 键盘输入多平台优化（键码表扩展）
+
+- 新增键码：**F11 / F12**（1031 / 1032）、**Ctrl+方向**（1101..1104）、
+  **Shift+方向**（1105..1108）、**Shift+Tab**（1109）。
+- **XTerm 修饰参数解析**：`CSI 1;5C`（Ctrl+Right）等修饰变体三端一致。
+- **Unicode 码点解码**（Linux / macOS / Termux）：终端 UTF-8 多字节序列解码为
+  码点（>255，如 "中" → 0x4E2D），非法序列回退按字节处理；Windows 端
+  UTF-16 代理对组合为同一码点。
+- **Windows 输入重写**：msvcrt `_getch` → `ReadConsoleInputW` 事件流
+  （UTF-16 字符 + VK 虚拟键，键抬起过滤、重复计数、扩展键），启用时关闭
+  QuickEdit 防误选卡死。
+- `codecin/lib/key.cin`：`K_F11` / `K_F12` / `K_CTRL_*` / `K_SHIFT_*` /
+  `K_SHIFT_TAB` 常量与 `k_is_function` / `k_is_modified_arrow` 判定；
+  `k_is_special` 范围同步扩展。
+
+#### 命令行参数与行输入（SYS 129..131，跨平台一致语义）
+
+- **`arg_count()` / `arg(i)`**：读取传给 CIN 程序的命令行参数（不含程序文件名；
+  越界 / 负下标返回空串）。传参约定三端统一：
+  - CLI：`codecin prog.cin -- a b c`（`--` 之后的参数全部交给 CIN 程序）；
+  - AOT 产物：直接取进程 `os.Args[1:]`；
+  - c-shared 库：新导出 `codecin_set_args`，Python 桥接层每次运行前注入
+    （空列表即清空，同进程多次运行不残留）。
+- **`input_str()`**：读入一行 UTF-8 文本（不含行尾；EOF 为空串）。优先消费
+  预读输入缓冲（与解释器 `input()` 的管道语义一致），耗尽后阻塞读标准输入；
+  Windows 控制台用 `ReadConsoleW`（UTF-16 → UTF-8，中文输入不乱码），其余平台
+  用 `bufio` 按行读；行尾 `\n` / `\r\n` 三平台统一剥离，与键盘 raw 模式
+  （监听激活时临时恢复行模式）互不干扰。
+- 新内建在两侧编译器同步登记（`arg_count` / `arg` / `input_str`）。
+
+#### 终端输出缓存与 Windows 控制台兼容
+
+- **阻塞读前冲刷输出缓冲**：原生引擎把输出缓冲到程序结束一次性回传；
+  当 `input_str()` / 数字输入将要阻塞读真实终端时先冲刷已缓冲输出，
+  `"你的名字: "` 这类交互提示立即可见。冲刷**仅在 stdout 为终端时生效**——
+  管道 / 重定向 / 测试捕获下输出字节序列与旧版本完全一致。
+- **Windows 控制台一次性初始化**（进程级、幂等、失败安全）：
+  `ENABLE_VIRTUAL_TERMINAL_PROCESSING`（ANSI/VT 转义序列在传统 conhost 上
+  与 Linux/macOS 行为一致）+ `SetConsoleOutputCP(65001)`（输出代码页切
+  UTF-8，中文 Windows 默认 GBK 下中文/Emoji 不再乱码）。
+- AOT 产物在打印输出前执行同一初始化；非 Windows 平台为空操作
+  （终端原生支持 VT 与 UTF-8）。
+
+#### C / C++ / Go 标准库兼容层（36 → 39 个，全部纯 CIN）
+
+- **`codecin/lib/cstd.cin`（`libc_*`）**：`<ctype.h>`（isdigit / toupper …，
+  字符码可用字符字面量 `'A'` 直接传入）、`<string.h>`（strlen / strcmp /
+  strstr / strchr / strrev / memcpy …）、`<stdlib.h>`（abs / atoi / qsort_asc）、
+  `<math.h>`（fabs / sqrt / pow / floor / ceil / fmod 商向零截断）与
+  `<stdio.h>`（puts / print）。
+- **`codecin/lib/cppstd.cin`（`stl_*`）**：`std::string`（find / rfind /
+  substr / append / to_string，npos 以 -1 表示）、`vector<int>` / `stack<int>` /
+  `queue<int>`（**数组 + 长度游标**表达，push/pop 返回新长度）、
+  `<utility>`（max / min / abs / swap / sort 固定升序）。
+- **`codecin/lib/gostd.cin`（`go_*`）**：`strings`（Contains / Index /
+  HasPrefix / Repeat / Count / ReplaceAll / EqualFold …）、`strconv`（Itoa /
+  Atoi / FormatFloat）、`math`、`slices`（Index / Contains / Max / Reverse …）
+  与 `os.Args`（经 `go_os_args_len` / `go_os_args_get`，依赖原生路径）。
+- 类型映射约定：C `char*` → `string`、C `char` → 字符码 `int`、C 数组参数 →
+  CIN 数组引用 + 显式长度；与 C/C++ 指针返回值不可表达的 API（如返回
+  `char*` 的 strchr）以**下标**语义对齐，头注释均注明差异。
+
+#### 兼容层 API 扩容（三库 40+ 新函数，纯 CIN、三路径一致）
+
+- **cstd**：`<ctype.h>` 补 iscntrl / isgraph / isblank / ispunct / toascii；
+  `<string.h>` 补 memmove / strspn / strcspn / strpbrk / strlwr / strupr；
+  `<stdlib.h>` 补 labs / rand / srand；`<math.h>` 补 sin / cos / tan /
+  round（C 语义半值远离零）/ trunc；`<stdio.h>` 补 putchar（配套内部
+  字符码 → 字符串转换）。
+- **cppstd**：`std::string` 补 starts_with / ends_with（C++20）/
+  find_first_of / find_last_of / at / front / back / insert / erase /
+  replace；`vector<int>` 补 find / count / insert / erase；`<algorithm>`
+  补 sort 降序版与 clamp。
+- **gostd**：`strings` 补 LastIndex / IndexAny / TrimLeft / TrimRight /
+  TrimPrefix / TrimSuffix；`strconv` 补 FormatInt（base 2..36）/
+  ParseInt（任意进制解析）；`math` 补 Round / Trunc；`slices` 补
+  LastIndex / Equal / Clone / Sort。
+
+#### 工具链缺失检测与平台化安装提示（environment）
+
+- **`codecin/environment.py`**：`find_tool` / `tool_available`（只读
+  `shutil.which` 探测，绝不自动安装）、`install_hint`（按当前平台给出可复制
+  执行的安装命令：Windows winget/MSYS2、macOS brew/xcode-select、Linux
+  apt/dnf/pacman、Termux pkg）、`missing_tool_message`（缺工具 + 用途 +
+  怎么装合一）、`native_runtime_hint`（原生库缺失时的三条出路指引）。
+- 接入点（所有缺失入口提示一致）：
+  - AOT 构建缺 Go：报错附 `install_hint('go')`（原先只有干巴巴的
+    "go 命令未找到"）；
+  - 解释路径（含 `--no-native`）调用宿主能力内建：报错附原生库安装指引；
+  - pip 安装（`setup.py`）缺 Go：打印安装命令并说明重装后获得原生加速。
+
+#### `--libs`：内置标准库清单与执行路径标注
+
+- 新 CLI 选项 **`--libs`**：列出 `codecin/lib/` 全部官方库并按**执行路径
+  要求**标注三类——纯 CIN（三路径一致）/ 兼容层（C/C++/Go 三语言标准库
+  兼容层）/ 需原生运行时（调用宿主能力内建，`--no-native` 与沙箱下不可用）。
+- 分类由**源码扫描**得出（是否引用 `HOST_BUILTINS` 内建名），与库头注释
+  保持单一事实来源；`gostd.cin` 的 `go_os_args_*` 原生依赖自动标注。
+
+#### 其他
+
+- 新内建在两侧编译器同步登记：Python `HOST_BUILTINS` 与 Go
+  `compiler.hostBuiltins`（并补上 5.6.0 遗漏的 `key_hit` / `get_key` /
+  `key_flush`）。
+- 新示例：`examples/gui_demo.cin`（无显示服务自动降级为提示后退出）、
+  `examples/local_audio.cin`、`examples/args_demo.cin`（`--` 传参与
+  `input_str`）。
+- 新测试：`tests/test_lib_compat.py`（三兼容层函数语义、参数注入管道、
+  预读缓冲行输入、无原生库可编译，解释 / 原生双路径参数化）。
+- 本轮新增：Go 侧 `engine/audio_test.go`（audio_duration / playing /
+  pause / resume 状态机、暂停冻结、自然播完回落）、`tests/test_environment.py`
+  （安装提示契约）、`tests/test_cli.py::test_list_libs_reports_categories`
+  （--libs 分类标注）；`examples/local_audio.cin` 增补音量读取与暂停 /
+  恢复演示。
+
+### 变更 (Changed)
+
+- **`lib/gui.cin` 签名变更**（窗口化重构）：`g_new(w, h)` → `g_new(w, h, title)`
+  （旧的无窗口画布用法请直接使用 `canvas(w, h)`）；`g_clear(w, h, rgb)` →
+  `g_clear(rgb)`（沿用最近一次窗口尺寸，从未开窗时返回 -1）。
+  图表助手内部已同步适配，`g_bar_chart` / `g_line_chart` / `g_save` /
+  `g_show` 调用方式不变。
+
+### 修复 (Fixed)
+
+- 音频自然播完后 `audio_pos` 不再恒返回总时长（正确恢复 -1）。
+- GUI：Windows 窗口线程改为常驻，`gui_close` 之后可以再次 `gui_new`；
+  窗口销毁（无论来自 `gui_close` 还是用户点 X）后清理失效句柄。
+- `guiSnapshot` 增加窗口打开校验（关闭后不再产出快照）。
+
+---
+
 ## [5.7.4] - 2026-09-28
 
 一次「静默错误清零 + 标准库扩容」的发布：修掉一族会**静默破坏内存/静默给错结果**的
@@ -316,7 +507,7 @@ struct 缺陷与两处**同一程序两条路径结论不同**的分歧，并把
 
 ### 修复 (Fixed)
 
-- `python cpu.py --help` 的首行版本号长期停留在 `Code CIN v5.3`，现直接取
+- `codecin --help` 的首行版本号长期停留在 `Code CIN v5.3`，现直接取
   `codecin.__version__`（此前是全仓唯一残留的版本串）。
 - `--build-exe` 在程序文件不存在时抛裸 `FileNotFoundError` traceback，现在与普通路径
   一样给出 `Build Error` 面板。
@@ -367,7 +558,7 @@ struct 缺陷与两处**同一程序两条路径结论不同**的分歧，并把
 ### 新增 (Added)
 
 - **AOT 静态编译: 编译成独立可执行文件 (Windows / Linux / macOS)**：
-  `python cpu.py program.cin --build-exe app` 或 `codecin build program.cin -o app`，
+  `codecin program.cin --build-exe app` 或 `codecin build program.cin -o app`，
   支持 `--target OS/ARCH` 交叉编译（windows/amd64|arm64、linux/amd64|arm64、darwin/amd64|arm64）。
   产物内嵌 UCBC 字节码与初始内存镜像，由内置 Go VM 执行，**不依赖 Python、Go 工具链、
   libc 或任何动态库**（`CGO_ENABLED=0`，Linux 产物无 `PT_INTERP`）；入口 shell 模板由

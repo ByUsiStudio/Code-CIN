@@ -1,5 +1,5 @@
 // 控制流新语法: break / continue / do-while / switch / 三目 / 复合赋值
-// 运行: python cpu.py examples/control_flow.cin
+// 运行: codecin examples/control_flow.cin
 
 function main() -> int {
     int sum = 0

@@ -270,6 +270,9 @@ func (vm *vmState) audioDuration() uint64 {
 	if !audioActive || audioDur <= 0 {
 		return mask64
 	}
+	if !audioPaused && !audioEnd.IsZero() && time.Now().After(audioEnd) {
+		return mask64 // 已自然播完
+	}
 	return uint64(audioDur.Milliseconds())
 }
 

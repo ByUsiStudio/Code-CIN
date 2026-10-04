@@ -24,6 +24,20 @@ def test_missing_program_returns_error(capsys):
     assert cli.main([]) == 1
 
 
+def test_list_libs_reports_categories(capsys):
+    """--libs: 列出内置库并标注执行路径要求 (纯 CIN / 兼容层 / 需原生)。"""
+    assert cli.main(['--libs']) == 0
+    out = capsys.readouterr().out
+    # 三语言兼容层库
+    for lib in ('cstd.cin', 'cppstd.cin', 'gostd.cin'):
+        assert lib in out
+    assert '兼容层' in out
+    # 宿主能力库必须标为"需原生运行时"
+    assert 'gui.cin' in out and '需原生运行时' in out
+    # gostd 的原生依赖项要有标注
+    assert 'go_os_args' in out
+
+
 def test_unknown_option_returns_error_code(capsys):
     code = cli.main(['--definitely-not-an-option'])
     assert code in (1, 2)

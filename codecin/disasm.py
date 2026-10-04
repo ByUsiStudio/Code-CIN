@@ -4,7 +4,7 @@
   - CPUSA 容器 (.bin, `--compile-only` 产物): 头 + 内存镜像 + UCBC 段
   - 裸 UCBC 段 (magic 'UCBC')
 
-CLI: python cpu.py --disasm prog.bin
+CLI: codecin --disasm prog.bin
 """
 
 import os
@@ -68,7 +68,7 @@ def disassemble_bytes(data: bytes) -> List[str]:
     if data[:4] != b'UCBC':
         raise CPUSimulatorError(
             "--disasm 需要 .bin (CPUSA 容器) 或 UCBC 字节码; "
-            "先用 `python cpu.py src.cin --compile-only -o out.bin` 生成")
+            "先用 `codecin src.cin --compile-only -o out.bin` 生成")
     instructions, entry = _decode_ucbc_segment(data)
     out = [f"; UCBC disassembly: {len(instructions)} instructions, "
            f"entry=0x{entry:x}", ";"]

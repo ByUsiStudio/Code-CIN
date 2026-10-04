@@ -12,8 +12,8 @@
   codecin.debugger  调试器
 
 用法:
-  python cpu.py <program.[cin|pl|asm|bin]> [options]
-  python cpu.py --help
+  codecin <program.[cin|pl|asm|bin]> [options]
+  codecin --help
 """
 
 import os

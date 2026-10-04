@@ -1,5 +1,5 @@
 // Code CIN 系统原生交互演示 (跨平台: Windows / Linux / macOS)
-// 运行: python cpu.py examples/system_interaction.cin
+// 运行: codecin examples/system_interaction.cin
 //       codecin examples/system_interaction.cin
 function main() -> int {
     // 系统信息

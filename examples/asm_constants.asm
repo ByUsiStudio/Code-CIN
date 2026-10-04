@@ -1,5 +1,5 @@
 ; 汇编语法增强: .equ 常量、表达式立即数与符号算术
-; 运行: python cpu.py examples/asm_constants.asm
+; 运行: codecin examples/asm_constants.asm
 ;   结果: x0 = 63, mem[buf + 8*3] = 42 (见下方注释)
 
 .equ ROWS, 4
