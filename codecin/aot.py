@@ -362,8 +362,9 @@ def build(bytecode: bytes,
         try:
             proc, detail = _run_go_build(cmd, mod, env, logger)
         except FileNotFoundError as e:
-            raise AotError('未找到 go 命令; AOT 构建需要 Go 工具链 '
-                           '(https://go.dev/dl/)') from e
+            from .environment import missing_tool_message
+            raise AotError(missing_tool_message(
+                'go', 'AOT 构建独立可执行文件')) from e
         except subprocess.TimeoutExpired as e:
             raise AotError('go build 超时') from e
         if proc.returncode != 0:

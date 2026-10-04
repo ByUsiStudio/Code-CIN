@@ -1338,9 +1338,11 @@ class CPU:
             self._set_reg(0, self._heap_dup_string(
                 self.memory.read_string(x0).rstrip().encode('utf-8') + b'\x00'))
         elif call_id >= Syscall.AUDIOPLAY:
+            from .environment import native_runtime_hint
             raise ExecutionError(
                 "host builtins (GUI/audio/system/Termux/keyboard) require the "
-                "native Go runtime (run without --no-native)")
+                "native Go runtime (run without --no-native)\n"
+                + native_runtime_hint())
         else:
             raise ExecutionError(f"Unknown SYS call id: {call_id}")
         return True

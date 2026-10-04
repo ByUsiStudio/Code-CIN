@@ -28,7 +28,17 @@ def _should_skip() -> bool:
 
 def _go_available() -> bool:
     if shutil.which("go") is None:
-        print("[codecin] 'go' not found in PATH — 跳过原生库构建", file=sys.stderr)
+        try:
+            sys.path.insert(0, str(NATIVE.parent))
+            from codecin.environment import install_hint
+            hint = install_hint("go").rstrip()
+        except Exception:
+            hint = "参考 https://go.dev/dl/ 安装 Go 工具链"
+        print("[codecin] 'go' not found in PATH — 跳过原生库构建\n"
+              f"{hint}\n"
+              "[codecin] 安装 Go 后重新 `pip install` 即可获得原生加速; "
+              "本次安装回退纯 Python 解释执行 (宿主能力内建不可用)",
+              file=sys.stderr)
         return False
     return True
 
