@@ -219,6 +219,15 @@ def _run_aot_build(ns: argparse.Namespace, console, program_file: str,
 def main(argv: Optional[List[str]] = None) -> int:
     args = list(sys.argv[1:] if argv is None else argv)
 
+    # `--` 之后的参数原样传给 CIN 程序 (arg_count()/arg(i) 读取), 不参与
+    # CLI 自身解析; 与 Go `os.Args[1:]`、C `argv[1..]` 的习惯一致。
+    if '--' in args:
+        sep = args.index('--')
+        program_args = args[sep + 1:]
+        args = args[:sep]
+    else:
+        program_args = []
+
     # 中文 Windows 默认 stdout/stderr 是 GBK, 输出非 GBK 字符 (emoji 等) 会直接
     # UnicodeEncodeError; 且重定向产物字节与 Go 路径 (恒 UTF-8) 不一致。
     # 统一切成 UTF-8, 无法编码的字符以 ? 替换而不是崩溃。
@@ -261,6 +270,7 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     config = Config()
     _apply_namespace(config, ns)
+    config.program_args = program_args
     config.validate()
 
     program_file = ns.program

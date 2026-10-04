@@ -1,7 +1,7 @@
 """运行配置与命令行参数解析。"""
 
-from dataclasses import dataclass
-from typing import Optional
+from dataclasses import dataclass, field
+from typing import List, Optional
 
 
 @dataclass
@@ -41,6 +41,8 @@ class Config:
     mmu: bool = False
     # A4: 远程调试服务端口 (None = 不启动)
     debug_server_port: Optional[int] = None
+    # 传给 CIN 程序的命令行参数 (cli 里 `--` 之后的参数; 供 arg_count()/arg(i))
+    program_args: List[str] = field(default_factory=list)
 
     # 命令行解析请使用 codecin/cli.py build_parser() (argparse, 单一来源)。
     # Config 仅承载运行配置, 由 cli._apply_namespace 填充。
