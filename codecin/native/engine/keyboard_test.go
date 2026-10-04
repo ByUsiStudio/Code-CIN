@@ -2,10 +2,6 @@ package engine
 
 import "testing"
 
-// 键盘监听 (SYS 116..118) 的引擎侧单元测试: 只覆盖纯逻辑
-// (转义序列解码 / 键码队列 / SYS 语义), 不依赖真实终端输入。
-
-// resetKeyState 重置键盘全局状态并禁用平台后端 (测试不触碰真实控制台)。
 func resetKeyState() {
 	keyMu.Lock()
 	defer keyMu.Unlock()
@@ -13,8 +9,11 @@ func resetKeyState() {
 	keyPending = keyPending[:0]
 	keyEsc = 0
 	keyEscNum = keyEscNum[:0]
+	keyU8N = 0
+	keyU8Acc = 0
 	keyReady = false
 	keyForcedOff = true
+	keyResetPlatform()
 }
 
 // feedAll 依次喂入字节, 返回全部完整键码。
@@ -58,7 +57,11 @@ func TestKeyFeedCSIArrowsAndNav(t *testing.T) {
 		"\x1B[1~": keyHome, "\x1B[2~": keyIns, "\x1B[3~": keyDel,
 		"\x1B[4~": keyEnd, "\x1B[5~": keyPgUp, "\x1B[6~": keyPgDn,
 		"\x1B[15~": keyF5, "\x1B[17~": keyF6, "\x1B[21~": keyF10,
-		"\x1B[1;5C": keyRight, // 带修饰参数 (Ctrl+Right): 忽略参数
+		"\x1B[23~": keyF11, "\x1B[24~": keyF12,
+		"\x1B[1;5C": keyCtrlRight, // Ctrl+Right (XTerm 修饰参数)
+		"\x1B[1;5A": keyCtrlUp,
+		"\x1B[1;2B": keyShiftDown,
+		"\x1B[Z":    keyShiftTab,
 	}
 	for seq, want := range cases {
 		resetKeyState()
@@ -66,6 +69,50 @@ func TestKeyFeedCSIArrowsAndNav(t *testing.T) {
 		if len(codes) != 1 || codes[0] != want {
 			t.Fatalf("序列 %q 应产出键码 %d, 实际 %v", seq, want, codes)
 		}
+	}
+}
+
+func TestKeyFeedUTF8Codepoints(t *testing.T) {
+	resetKeyState()
+	// "中" U+4E2D (3 字节 UTF-8) → 码点 0x4E2D; ASCII 混排不受影响
+	codes := feedAll(t, "a\xe4\xb8\xadz")
+	if len(codes) != 3 || codes[0] != 'a' || codes[1] != 0x4E2D || codes[2] != 'z' {
+		t.Fatalf("UTF-8 应解码为码点, 实际 %v", codes)
+	}
+	// 4 字节序列: "𝄞" U+1D11E
+	resetKeyState()
+	codes = feedAll(t, "\xF0\x9D\x84\x9E")
+	if len(codes) != 1 || codes[0] != 0x1D11E {
+		t.Fatalf("4 字节 UTF-8 应产出码点 0x1D11E, 实际 %v", codes)
+	}
+	// 非法续字节: 丢弃序列, 字节重新按普通路径处理
+	resetKeyState()
+	codes = feedAll(t, "\xe4q")
+	if len(codes) != 1 || codes[0] != 'q' {
+		t.Fatalf("非法序列应丢弃并重新解码, 实际 %v", codes)
+	}
+}
+
+func TestKeyFlushClearsQueueAndDecoder(t *testing.T) {
+	resetKeyState()
+	vm := newHostVM(4096)
+	keyMu.Lock()
+	keyQueue = append(keyQueue[:0], keyUp, keyDel)
+	keyEsc = 2 // 模拟转义序列解码中间态
+	keyEscNum = append(keyEscNum[:0], '1', ';')
+	keyU8N = 2 // 模拟未完成的 UTF-8 序列
+	keyU8Acc = 0xE4
+	keyMu.Unlock()
+
+	if got := vm.keyFlush(); got != 0 {
+		t.Fatalf("key_flush 应返回 0, 实际 %d", got)
+	}
+	keyMu.Lock()
+	defer keyMu.Unlock()
+	if len(keyQueue) != 0 || keyEsc != 0 || len(keyEscNum) != 0 ||
+		keyU8N != 0 || keyU8Acc != 0 {
+		t.Fatalf("flush 后队列与解码状态应清空: queue=%v esc=%d num=%v u8=%d/%d",
+			keyQueue, keyEsc, keyEscNum, keyU8N, keyU8Acc)
 	}
 }
 
@@ -84,7 +131,7 @@ func TestKeyFeedLoneEscapeAndUnknown(t *testing.T) {
 	}
 	// 未知 CSI 最终字节: 整体丢弃, 不产出
 	resetKeyState()
-	if codes := feedAll(t, "\x1B[Z"); len(codes) != 0 {
+	if codes := feedAll(t, "\x1B[Y"); len(codes) != 0 {
 		t.Fatalf("未知序列应整体丢弃, 实际 %v", codes)
 	}
 	// 状态应已复位: 后续普通字节正常

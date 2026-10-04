@@ -50,6 +50,9 @@ func keyRestorePlatform() {
 	}
 }
 
+// keyResetPlatform 重置平台侧解码中间态 (key_flush 调用; Unix 无)。
+func keyResetPlatform() {}
+
 // keyNext 非阻塞读 stdin 并经转义序列状态机解码。
 func keyNext() (uint64, bool) {
 	for {

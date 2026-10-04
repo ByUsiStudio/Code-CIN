@@ -251,6 +251,20 @@ class Syscall(IntEnum):
     KEYHIT = 116      # key_hit() -> 1 缓冲有待读按键 / 0 无
     KEYGET = 117      # get_key() -> 键码 (0..255 原始字节, 1001+ 扩展码) / -1 无按键
     KEYFLUSH = 118    # key_flush(): 清空键盘输入缓冲 -> 0
+    # ---- 宿主能力: GUI 窗口 (Windows Win32 / Linux X11, Go 原生实现) ----
+    # 窗口打开期间 curCanvas 即窗口后备缓冲: fill_rect/draw_text 等画布内建
+    # 直接画进窗口, gui_update() 负责处理事件并呈现。无显示环境优雅失败 -1。
+    GUINEW = 119      # gui_new(w=x0, h=x1, title=x2) -> 0 成功 / -1 失败 (无显示等)
+    GUIUPDATE = 120   # gui_update() -> 0 处理事件+呈现 / -1 无窗口
+    GUICLOSE = 121    # gui_close() -> 0 (销毁窗口, 画布保留可 save_png)
+    GUICLOSED = 122   # gui_closed() -> 1 用户已请求关闭 (点 X / Alt+F4) / 0
+    MOUSEX = 123      # mouse_x() -> 光标 x (窗口内) / -1 无窗口
+    MOUSEY = 124      # mouse_y() -> 光标 y / -1 无窗口
+    MOUSEBTN = 125    # mouse_button() -> 位掩码 bit0 左 / bit1 右 / bit2 中按住
+    # ---- 宿主能力: 本地音频扩展 (播放进度 / 蜂鸣合成) ----
+    AUDIOPOS = 126    # audio_pos() -> 当前播放已进行毫秒 / -1 无播放
+    AUDIOBEEP = 127   # beep(freq=x0 Hz, ms=x1) -> 0 成功 / -1 失败 (合成正弦音)
+    GUIACTIVE = 128   # gui_active() -> 1 窗口已打开 / 0
 
 
 class Cond:
