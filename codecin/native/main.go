@@ -144,6 +144,27 @@ func codecin_free(ptr unsafe.Pointer) {
 	}
 }
 
+//export codecin_set_args
+func codecin_set_args(argv **C.char, argc C.int) {
+	defer func() {
+		recover() // 参数注入失败不得拖垮宿主进程: 降级为无参数
+	}()
+	if argc < 0 {
+		return
+	}
+	args := make([]string, 0, int(argc))
+	if argc > 0 {
+		for _, p := range unsafe.Slice(argv, int(argc)) {
+			if p == nil {
+				args = append(args, "")
+			} else {
+				args = append(args, C.GoString(p))
+			}
+		}
+	}
+	engine.SetProgramArgs(args)
+}
+
 //export codecin_crom_pack
 func codecin_crom_pack(dataPtr unsafe.Pointer, dataLen C.int, compress C.int,
 	outLen *C.int) (ret unsafe.Pointer) {

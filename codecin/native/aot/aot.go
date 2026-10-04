@@ -23,9 +23,12 @@ const stackSlot = 8
 // Main 运行内嵌的字节码并返回进程退出码 (0 = 正常结束, 1 = 运行期错误)。
 //
 // 标准输入只在被重定向 (管道/文件) 时读取, 交互式终端下不会挂起等待 EOF。
+// AOT 产物里 arg_count()/arg(i) 直接取本进程 os.Args[1:]。
 func Main(bytecode, memImage []byte) int {
 	mem := make([]byte, len(memImage))
 	copy(mem, memImage)
+
+	engine.SetProgramArgs(os.Args[1:])
 
 	var in []byte
 	if fi, err := os.Stdin.Stat(); err == nil &&
@@ -41,6 +44,7 @@ func Main(bytecode, memImage []byte) int {
 		fmt.Fprintln(os.Stderr, "runtime error: no result")
 		return 1
 	}
+	consoleInit() // Windows: 终端输出 VT/UTF-8 兼容 (其他平台空操作)
 	fmt.Print(res.Output)
 	if res.Status == engine.StatusError ||
 		res.Status == engine.StatusUnsupported {
