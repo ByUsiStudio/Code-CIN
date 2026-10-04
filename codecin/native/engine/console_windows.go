@@ -38,3 +38,6 @@ func consoleInit() {
 		_, _, _ = procSetConsoleOutputCP.Call(consoleCodePageUTF)
 	})
 }
+
+// ConsoleInit 供 engine 包外 (aot 产物) 在打印输出前初始化终端。
+func ConsoleInit() { consoleInit() }
