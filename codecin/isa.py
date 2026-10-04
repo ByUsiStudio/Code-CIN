@@ -265,6 +265,10 @@ class Syscall(IntEnum):
     AUDIOPOS = 126    # audio_pos() -> 当前播放已进行毫秒 / -1 无播放
     AUDIOBEEP = 127   # beep(freq=x0 Hz, ms=x1) -> 0 成功 / -1 失败 (合成正弦音)
     GUIACTIVE = 128   # gui_active() -> 1 窗口已打开 / 0
+    # ---- 宿主能力: 命令行参数 / 行输入 (跨平台一致语义) ----
+    ARGC = 129      # arg_count() -> 传给 CIN 程序的参数个数 (不含程序文件名)
+    ARGV = 130      # arg(x0=i) -> 第 i 个参数 (新堆字符串; 越界为空串)
+    READLINE = 131  # input_str() -> 读入一行 UTF-8 文本 (不含行尾; EOF 为空串)
 
 
 class Cond:

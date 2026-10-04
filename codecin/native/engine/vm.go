@@ -13,12 +13,10 @@
 package engine
 
 import (
-	"bufio"
 	"encoding/binary"
 	"fmt"
 	"math"
 	"math/rand"
-	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -62,8 +60,8 @@ type vmState struct {
 	rng       *rand.Rand
 	inData    []byte
 	inPos     int
-	stdinRdr  *bufio.Reader // inData 耗尽后回退读标准输入 (交互 / AOT 产物)
-	emptyStr  uint64        // 预留空串地址 (宿主调用返回失败时的安全空串)
+	args      []string // 传给 CIN 程序的命令行参数 (arg_count / arg)
+	emptyStr  uint64   // 预留空串地址 (宿主调用返回失败时的安全空串)
 }
 
 // maxOutputBytes 限制单次运行的输出总量: 程序用无限打印不能把宿主 OOM。
@@ -209,6 +207,7 @@ func Run(bc []byte, mem []byte, entry, sp, heapBase int64, inData []byte,
 		heapPtr: uint64(heapBase),
 		rng:     rand.New(rand.NewSource(time.Now().UnixNano())),
 		inData:  inData,
+		args:    currentProgramArgs(),
 	}
 
 	// 键盘监听可能切换终端 raw mode, 任何出口都必须恢复 (幂等)
@@ -806,7 +805,7 @@ func (vm *vmState) doOut(op operand) string {
 }
 
 func (vm *vmState) readLineInt() uint64 {
-	for vm.inPos < len(vm.inData) {
+	if vm.inPos < len(vm.inData) {
 		end := vm.inPos
 		for end < len(vm.inData) && vm.inData[end] != '\n' {
 			end++
@@ -823,12 +822,11 @@ func (vm *vmState) readLineInt() uint64 {
 		}
 		return 0
 	}
-	// 输入缓冲耗尽: 与解释器 (int(input()) 兜底) 一致, 回退读标准输入。
-	if vm.stdinRdr == nil {
-		vm.stdinRdr = bufio.NewReader(os.Stdin)
-	}
-	line, err := vm.stdinRdr.ReadString('\n')
-	if err != nil && line == "" {
+	// 输入缓冲耗尽: 回退读标准输入 (交互 / AOT 产物)。
+	// 阻塞前先冲刷输出缓冲, 让 "请输入..." 提示先出现在终端上。
+	vm.flushOut()
+	line, ok := stdinReadLine()
+	if !ok {
 		return 0
 	}
 	n, perr := strconv.ParseInt(strings.TrimSpace(line), 10, 64)
@@ -836,6 +834,44 @@ func (vm *vmState) readLineInt() uint64 {
 		return 0
 	}
 	return uint64(n) & mask64
+}
+
+// readLineStr SYS 131: input_str() -> 读入一行 UTF-8 文本 (不含行尾)。
+// 优先消费预读缓冲 (与解释器路径 / input() 的管道语义一致), 耗尽后回退
+// 标准输入; EOF 返回空串。行尾 \n / \r\n 三平台统一剥离。
+func (vm *vmState) readLineStr() uint64 {
+	if vm.inPos < len(vm.inData) {
+		end := vm.inPos
+		for end < len(vm.inData) && vm.inData[end] != '\n' {
+			end++
+		}
+		line := string(vm.inData[vm.inPos:end])
+		if end < len(vm.inData) {
+			vm.inPos = end + 1
+		} else {
+			vm.inPos = end
+		}
+		return vm.hs(trimEOL(line))
+	}
+	vm.flushOut()
+	line, ok := stdinReadLine()
+	if !ok {
+		return vm.empty()
+	}
+	return vm.hs(trimEOL(line))
+}
+
+// flushOut 在阻塞读标准输入前, 把已缓冲输出冲刷到真实终端。
+// 仅在 stdout 为终端时生效 (交互提示可见); 管道/重定向/测试捕获保持
+// 纯缓冲语义 —— 输出仍随 Result.Output 一次性回传, 字节序列不变。
+// 冲刷后 vm.out 清空, 回传结果里不再包含这部分 (不重复打印)。
+func (vm *vmState) flushOut() {
+	if vm.outDirect || vm.out.Len() == 0 || !stdoutIsTerminal() {
+		return
+	}
+	consoleInit()
+	keyOutSink(vm.out.String())
+	vm.out.Reset()
 }
 
 // ---------------- SYS ----------------
@@ -1255,6 +1291,13 @@ func (vm *vmState) doSyscall(id uint64) string {
 		vm.setReg(0, vm.keyGet())
 	case sysKEYFLUSH:
 		vm.setReg(0, vm.keyFlush())
+	// 命令行参数与行输入 (跨平台一致)
+	case sysARGC:
+		vm.setReg(0, vm.argCount())
+	case sysARGV:
+		vm.setReg(0, vm.argAt(x0))
+	case sysREADLINE:
+		vm.setReg(0, vm.readLineStr())
 	default:
 		return "Unknown SYS call id"
 	}

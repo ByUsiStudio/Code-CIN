@@ -133,3 +133,6 @@ const SysMOUSEBTN = 125
 const SysAUDIOPOS = 126
 const SysAUDIOBEEP = 127
 const SysGUIACTIVE = 128
+const SysARGC = 129
+const SysARGV = 130
+const SysREADLINE = 131

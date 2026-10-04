@@ -123,6 +123,10 @@ var hostBuiltins = map[string]hostBuiltin{
 	// 音频扩展 (播放进度与蜂鸣合成)
 	"audio_pos": {SysAUDIOPOS, 0, kInt},
 	"beep":      {SysAUDIOBEEP, 2, kInt},
+	// 命令行参数与行输入 (跨平台一致)
+	"arg_count": {SysARGC, 0, kInt},
+	"arg":       {SysARGV, 1, kString},
+	"input_str": {SysREADLINE, 0, kString},
 }
 
 func (c *compiler) emit(op string, args ...ir.Operand) {

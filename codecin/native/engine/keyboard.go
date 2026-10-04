@@ -72,8 +72,12 @@ var (
 )
 
 // keyOutSink 键盘监听激活后的直写输出通道。
-// os.File.Write 无用户态缓冲, 每次直落 fd -> 天然实时; 测试可替换。
-var keyOutSink = func(s string) { _, _ = os.Stdout.WriteString(s) }
+// os.File.Write 无用户态缓冲, 每次直落 fd -> 天然实时; 写前做一次 Windows
+// 控制台输出初始化 (VT/UTF-8, 其他平台空操作); 测试可替换。
+var keyOutSink = func(s string) {
+	consoleInit()
+	_, _ = os.Stdout.WriteString(s)
+}
 
 // keyEnsure 惰性启用键盘监听; 可重复调用 (恢复后再次调用会重新启用)。
 // 返回是否"本次调用刚激活" (真实终端首次启用), 供 VM 切换直写输出。
@@ -165,6 +169,43 @@ func (vm *vmState) keyFlush() uint64 {
 	keyU8Acc = 0
 	keyResetPlatform()
 	return 0
+}
+
+// ---------------- 行输入与键盘监听的模式协同 ----------------
+//
+// input()/input_str() 需要行缓冲+回显的"熟"终端, 而 get_key 轮询需要 raw
+// 终端; 同一程序先后使用两者时, 行输入必须临时恢复行模式, 否则用户在
+// Linux/macOS 终端输入不可见、Windows 控制台没有行编辑。恢复/重启用
+// keyRestorePlatform / keyEnablePlatform (平台后端各自实现), 队列与解码
+// 中间态不受影响。
+
+// keyLineWasRaw 记录行输入前键盘监听是否处于 raw 模式。
+var keyLineWasRaw bool
+
+// lineInputBegin 行输入 (IN / input_str) 阻塞读取前调用: 若键盘监听已把
+// 终端切成 raw 模式, 临时恢复行缓冲/回显。非终端 (keyReady=false) 与测试
+// 钩子 (keyForcedOff) 下是空操作。调用方须保证随后调用 lineInputEnd。
+func lineInputBegin() {
+	keyMu.Lock()
+	defer keyMu.Unlock()
+	if keyReady && !keyForcedOff {
+		keyRestorePlatform()
+		keyReady = false
+		keyLineWasRaw = true
+	}
+}
+
+// lineInputEnd 行输入结束后调用: 恢复 raw 键盘监听 (若此前激活过)。
+func lineInputEnd() {
+	keyMu.Lock()
+	defer keyMu.Unlock()
+	if keyLineWasRaw {
+		keyLineWasRaw = false
+		if !keyForcedOff {
+			// 重新启用; 失败 (终端已重定向等) 则保持关闭, 键码路径优雅降级
+			keyReady = keyEnablePlatform()
+		}
+	}
 }
 
 // ---------------- 转义序列解码 (Unix 后端逐字节喂入) ----------------
