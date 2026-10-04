@@ -8,6 +8,7 @@
 //   C bool -> int (0/1)             C NULL -> 0 / C EOF -> -1
 // 差异: CIN 字符串是堆字符串且无裸指针, 因此 "写入 dst" 类 API 返回新串、
 // strchr 返回下标 (C 返回指针); 数组一律以引用传递并显式带长度。
+// 字符码可直接用字符字面量传入: libc_isupper('A')、libc_tolower('Q') 等。
 
 // ==================== <ctype.h> ====================
 
@@ -101,23 +102,46 @@ function libc_strstr(string hay, string needle) -> int {
     return indexof(hay, needle)
 }
 
-// strchr: 字符首现下标 (未找到 -1)
-function libc_strchr(string s, int ch) -> int {
+// strchr: 首现下标 (C 第二参数是字符码; CIN 从码值构造字符需要额外
+// 字节表, 这里约定传 1 字符串, 如 libc_strchr(s, "x"); 未找到 -1)
+function libc_strchr(string s, string ch) -> int {
+    return indexof(s, ch)
+}
+
+// strrchr: 末现下标 (同上, 未找到 -1)
+function libc_strrchr(string s, string ch) -> int {
     int n = strlen(s)
-    for (int i = 0; i < n; i = i + 1) {
-        if (atoi(substr(s, i, 1)) == ch) { return i }
+    int cl = strlen(ch)
+    if (cl == 0) { return n }
+    int pos = n - cl
+    while (pos >= 0) {
+        if (strcmp(substr(s, pos, cl), ch) == 0) { return pos }
+        pos = pos - 1
     }
     return -1
 }
 
-// strrchr: 字符末现下标 (未找到 -1)
-function libc_strrchr(string s, int ch) -> int {
-    int n = strlen(s)
-    int found = -1
-    for (int i = 0; i < n; i = i + 1) {
-        if (atoi(substr(s, i, 1)) == ch) { found = i }
+// strncmp: 比较前 n 个字符 (同 strcmp 三态)
+function libc_strncmp(string a, string b, int n) -> int {
+    if (n <= 0) { return 0 }
+    int al = strlen(a)
+    int bl = strlen(b)
+    int i = 0
+    while (i < n) {
+        if (i >= al) {
+            if (i >= bl) { return 0 }
+            return -1
+        }
+        if (i >= bl) { return 1 }
+        string ca = substr(a, i, 1)
+        string cb = substr(b, i, 1)
+        if (strcmp(ca, cb) != 0) {
+            if (strcmp(ca, cb) < 0) { return -1 }
+            return 1
+        }
+        i = i + 1
     }
-    return found
+    return 0
 }
 
 // strrev (POSIX 常见扩展): 反转字符串

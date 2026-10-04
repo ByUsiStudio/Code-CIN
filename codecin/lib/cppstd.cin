@@ -1,0 +1,262 @@
+// Code CIN 官方标准库: C++ 标准库 (STL) 兼容层 (cppstd)
+// 用法: import "cppstd.cin"
+//
+// 以 std:: 命名习惯提供 std::string / std::vector / std::stack /
+// std::queue 的常用方法。CIN 没有模板与引用包装, 容器以
+// "数组 + 长度游标" 表达: 数组是引用传递, push/pop 返回**新的长度**,
+// 调用方把它存回自己的游标变量, 例如:
+//   int v[64]
+//   int n = 0
+//   n = stl_vec_push_back(v, n, 42)
+// 注意: push 前调用方需自行保证数组容量 (CIN 无动态扩容)。
+
+// ==================== std::string ====================
+
+// size() / length()
+function stl_str_size(string s) -> int {
+    return strlen(s)
+}
+
+function stl_str_length(string s) -> int {
+    return strlen(s)
+}
+
+// empty()
+function stl_str_empty(string s) -> int {
+    if (strlen(s) == 0) { return 1 }
+    return 0
+}
+
+// find(): 首现下标 (npos 以 -1 表示)
+function stl_str_find(string s, string sub) -> int {
+    return indexof(s, sub)
+}
+
+// rfind(): 末现下标 (npos 以 -1 表示)
+function stl_str_rfind(string s, string sub) -> int {
+    int sl = strlen(s)
+    int nl = strlen(sub)
+    if (nl == 0) { return sl }
+    int pos = sl - nl
+    while (pos >= 0) {
+        if (strcmp(substr(s, pos, nl), sub) == 0) { return pos }
+        pos = pos - 1
+    }
+    return -1
+}
+
+// substr(pos, len)
+function stl_str_substr(string s, int pos, int len) -> string {
+    return substr(s, pos, len)
+}
+
+// operator+ / append()
+function stl_str_append(string a, string b) -> string {
+    return a + b
+}
+
+// compare(): <0 / 0 / >0
+function stl_str_compare(string a, string b) -> int {
+    return strcmp(a, b)
+}
+
+// c_str(): CIN 字符串本身就是宿主字符串, 恒等返回
+function stl_str_c_str(string s) -> string {
+    return s
+}
+
+// std::to_string
+function stl_to_string(int v) -> string {
+    return int_to_str(v)
+}
+
+// ==================== std::vector<int> ====================
+
+// push_back(x): 返回新长度
+function stl_vec_push_back(int[] v, int len, int x) -> int {
+    v[len] = x
+    return len + 1
+}
+
+// pop_back(): 返回新长度 (空容器不变)
+function stl_vec_pop_back(int len) -> int {
+    if (len > 0) { return len - 1 }
+    return 0
+}
+
+// back() / front(): 空容器返回 0
+function stl_vec_back(int[] v, int len) -> int {
+    if (len > 0) { return v[len - 1] }
+    return 0
+}
+
+function stl_vec_front(int[] v, int len) -> int {
+    if (len > 0) { return v[0] }
+    return 0
+}
+
+// size() / empty() / clear()
+function stl_vec_size(int len) -> int {
+    return len
+}
+
+function stl_vec_empty(int len) -> int {
+    if (len == 0) { return 1 }
+    return 0
+}
+
+function stl_vec_clear() -> int {
+    return 0
+}
+
+// at(i): 带边界检查 (越界返回 0; C++ 此处抛 std::out_of_range)
+function stl_vec_at(int[] v, int len, int i) -> int {
+    if (i >= 0 && i < len) { return v[i] }
+    return 0
+}
+
+// 原地反转
+function stl_vec_reverse(int[] v, int len) -> void {
+    int lo = 0
+    int hi = len - 1
+    while (lo < hi) {
+        int t = v[lo]
+        v[lo] = v[hi]
+        v[hi] = t
+        lo = lo + 1
+        hi = hi - 1
+    }
+}
+
+// 填充
+function stl_vec_fill(int[] v, int len, int x) -> void {
+    for (int i = 0; i < len; i = i + 1) { v[i] = x }
+}
+
+// 求和 / 最大 / 最小
+function stl_vec_sum(int[] v, int len) -> int {
+    int s = 0
+    for (int i = 0; i < len; i = i + 1) { s = s + v[i] }
+    return s
+}
+
+function stl_vec_max(int[] v, int len) -> int {
+    if (len <= 0) { return 0 }
+    int m = v[0]
+    for (int i = 1; i < len; i = i + 1) {
+        if (v[i] > m) { m = v[i] }
+    }
+    return m
+}
+
+function stl_vec_min(int[] v, int len) -> int {
+    if (len <= 0) { return 0 }
+    int m = v[0]
+    for (int i = 1; i < len; i = i + 1) {
+        if (v[i] < m) { m = v[i] }
+    }
+    return m
+}
+
+// ==================== std::stack<int> ====================
+// top 游标语义: 0 = 空, 栈顶是 s[top - 1]
+
+// push(x): 返回新 top
+function stl_stack_push(int[] s, int top, int x) -> int {
+    s[top] = x
+    return top + 1
+}
+
+// pop(): 返回新 top (空栈不变)
+function stl_stack_pop(int top) -> int {
+    if (top > 0) { return top - 1 }
+    return 0
+}
+
+// top(): 空栈返回 0
+function stl_stack_top(int[] s, int top) -> int {
+    if (top > 0) { return s[top - 1] }
+    return 0
+}
+
+// size() / empty()
+function stl_stack_size(int top) -> int {
+    return top
+}
+
+function stl_stack_empty(int top) -> int {
+    if (top == 0) { return 1 }
+    return 0
+}
+
+// ==================== std::queue<int> ====================
+// 非循环数组队列: head 指向队首, tail 指向下一个写入位 (head <= tail)
+
+// push(x): 返回新 tail
+function stl_queue_push(int[] q, int tail, int x) -> int {
+    q[tail] = x
+    return tail + 1
+}
+
+// pop(): 返回新 head (调用方保证非空)
+function stl_queue_pop(int head) -> int {
+    return head + 1
+}
+
+// front() / back()
+function stl_queue_front(int[] q, int head) -> int {
+    return q[head]
+}
+
+function stl_queue_back(int[] q, int tail) -> int {
+    if (tail > 0) { return q[tail - 1] }
+    return 0
+}
+
+// empty() / size()
+function stl_queue_empty(int head, int tail) -> int {
+    if (head >= tail) { return 1 }
+    return 0
+}
+
+function stl_queue_size(int head, int tail) -> int {
+    return tail - head
+}
+
+// ==================== <utility> / <algorithm> ====================
+
+// std::max / std::min / std::abs
+function stl_max(int a, int b) -> int {
+    if (a > b) { return a }
+    return b
+}
+
+function stl_min(int a, int b) -> int {
+    if (a < b) { return a }
+    return b
+}
+
+function stl_abs(int x) -> int {
+    if (x < 0) { return -x }
+    return x
+}
+
+// std::swap 的数组元素版
+function stl_swap(int[] v, int i, int j) -> void {
+    int t = v[i]
+    v[i] = v[j]
+    v[j] = t
+}
+
+// std::sort (升序; CIN 无函数指针, 固定升序)
+function stl_sort(int[] v, int len) -> void {
+    for (int i = 0; i < len - 1; i = i + 1) {
+        for (int j = 0; j < len - 1 - i; j = j + 1) {
+            if (v[j] > v[j + 1]) {
+                int t = v[j]
+                v[j] = v[j + 1]
+                v[j + 1] = t
+            }
+        }
+    }
+}

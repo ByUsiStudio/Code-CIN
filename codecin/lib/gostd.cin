@@ -1,0 +1,240 @@
+// Code CIN 官方标准库: Go 标准库兼容层 (gostd)
+// 用法: import "gostd.cin"
+//
+// 以 pkg.Func 命名习惯提供 strings / strconv / math / slices / os 的
+// 常用函数 (go_strings_contains 对应 strings.Contains)。命名里的包段
+// 与 Go 文档一一对应, 便于从 Go 移植或查阅语义。
+// 注意: go_os_args_len / go_os_args_get 依赖命令行参数内建 (arg_count /
+// arg, SYS 129..130), 需要原生路径 (CLI `--` 传参或 AOT 产物 os.Args)。
+
+// ==================== strings ====================
+
+// strings.Contains
+function go_strings_contains(string s, string sub) -> int {
+    if (indexof(s, sub) >= 0) { return 1 }
+    return 0
+}
+
+// strings.Index: 未找到 -1 (与 Go 语义一致)
+function go_strings_index(string s, string sub) -> int {
+    return indexof(s, sub)
+}
+
+// strings.ContainsAny 的单字符特例: s 是否含任一 ch 中字符
+function go_strings_contains_any(string s, string chars) -> int {
+    int n = strlen(chars)
+    for (int i = 0; i < n; i = i + 1) {
+        if (indexof(s, substr(chars, i, 1)) >= 0) { return 1 }
+    }
+    return 0
+}
+
+// strings.HasPrefix / strings.HasSuffix
+function go_strings_has_prefix(string s, string prefix) -> int {
+    int sl = strlen(s)
+    int pl = strlen(prefix)
+    if (pl > sl) { return 0 }
+    if (strcmp(substr(s, 0, pl), prefix) == 0) { return 1 }
+    return 0
+}
+
+function go_strings_has_suffix(string s, string suffix) -> int {
+    int sl = strlen(s)
+    int fl = strlen(suffix)
+    if (fl > sl) { return 0 }
+    if (strcmp(substr(s, sl - fl, fl), suffix) == 0) { return 1 }
+    return 0
+}
+
+// strings.ToUpper / strings.ToLower / strings.TrimSpace
+function go_strings_to_upper(string s) -> string {
+    return upper(s)
+}
+
+function go_strings_to_lower(string s) -> string {
+    return lower(s)
+}
+
+function go_strings_trim_space(string s) -> string {
+    return trim(s)
+}
+
+// strings.Repeat
+function go_strings_repeat(string s, int n) -> string {
+    string out = ""
+    while (n > 0) {
+        out = out + s
+        n = n - 1
+    }
+    return out
+}
+
+// strings.Count: 非重叠子串计数
+function go_strings_count(string s, string sub) -> int {
+    int sl = strlen(s)
+    int nl = strlen(sub)
+    if (nl == 0) { return sl + 1 }
+    int total = 0
+    int pos = 0
+    while (pos <= sl) {
+        int at = indexof(substr(s, pos, sl), sub)
+        if (at < 0) { break }
+        total = total + 1
+        pos = pos + at + nl
+    }
+    return total
+}
+
+// strings.ReplaceAll
+function go_strings_replace_all(string s, string oldstr, string newstr) -> string {
+    int sl = strlen(s)
+    int ol = strlen(oldstr)
+    if (ol == 0) { return s }
+    string out = ""
+    int pos = 0
+    while (pos <= sl) {
+        string rest = substr(s, pos, sl)
+        int at = indexof(rest, oldstr)
+        if (at < 0) { break }
+        out = out + substr(s, pos, at) + newstr
+        pos = pos + at + ol
+    }
+    out = out + substr(s, pos, sl)
+    return out
+}
+
+// strings.EqualFold 的 ASCII 精确版 (大小写不敏感相等)
+function go_strings_equal_fold(string a, string b) -> int {
+    if (strcmp(upper(a), upper(b)) == 0) { return 1 }
+    return 0
+}
+
+// strings.Compare: <0 / 0 / >0
+function go_strings_compare(string a, string b) -> int {
+    return strcmp(a, b)
+}
+
+// len(s): 字节长度
+function go_len(string s) -> int {
+    return strlen(s)
+}
+
+// ==================== strconv ====================
+
+// strconv.Itoa
+function go_itoa(int v) -> string {
+    return int_to_str(v)
+}
+
+// strconv.Atoi (解析失败为 0, 与内建 atoi 一致)
+function go_atoi(string s) -> int {
+    return atoi(s)
+}
+
+// strconv.FormatFloat 的默认精度替身
+function go_format_float(float v) -> string {
+    return float_to_str(v)
+}
+
+// ==================== math ====================
+
+// math.Abs
+function go_math_abs(int x) -> int {
+    if (x < 0) { return -x }
+    return x
+}
+
+// math.Max / math.Min (整数版)
+function go_math_max(int a, int b) -> int {
+    if (a > b) { return a }
+    return b
+}
+
+function go_math_min(int a, int b) -> int {
+    if (a < b) { return a }
+    return b
+}
+
+// math.Floor / math.Ceil / math.Sqrt / math.Pow
+function go_math_floor(float x) -> float {
+    return floor(x)
+}
+
+function go_math_ceil(float x) -> float {
+    return ceil(x)
+}
+
+function go_math_sqrt(float x) -> float {
+    return sqrt(x)
+}
+
+function go_math_pow(float x, float y) -> float {
+    return pow(x, y)
+}
+
+// ==================== slices ====================
+
+// slices.Index: 未找到 -1
+function go_slices_index(int[] a, int n, int x) -> int {
+    for (int i = 0; i < n; i = i + 1) {
+        if (a[i] == x) { return i }
+    }
+    return -1
+}
+
+// slices.Contains
+function go_slices_contains(int[] a, int n, int x) -> int {
+    if (go_slices_index(a, n, x) >= 0) { return 1 }
+    return 0
+}
+
+// slices.Max / slices.Min / slices.Sum
+function go_slices_max(int[] a, int n) -> int {
+    if (n <= 0) { return 0 }
+    int m = a[0]
+    for (int i = 1; i < n; i = i + 1) {
+        if (a[i] > m) { m = a[i] }
+    }
+    return m
+}
+
+function go_slices_min(int[] a, int n) -> int {
+    if (n <= 0) { return 0 }
+    int m = a[0]
+    for (int i = 1; i < n; i = i + 1) {
+        if (a[i] < m) { m = a[i] }
+    }
+    return m
+}
+
+function go_slices_sum(int[] a, int n) -> int {
+    int s = 0
+    for (int i = 0; i < n; i = i + 1) { s = s + a[i] }
+    return s
+}
+
+// slices.Reverse (原地)
+function go_slices_reverse(int[] a, int n) -> void {
+    int lo = 0
+    int hi = n - 1
+    while (lo < hi) {
+        int t = a[lo]
+        a[lo] = a[hi]
+        a[hi] = t
+        lo = lo + 1
+        hi = hi - 1
+    }
+}
+
+// ==================== os (命令行参数) ====================
+// 依赖原生路径 (CLI `--` 之后传参 / AOT 产物取 os.Args[1:])
+
+// len(os.Args)
+function go_os_args_len() -> int {
+    return arg_count()
+}
+
+// os.Args[i] (越界为空串; Go 语义下标从 0 计 CIN 参数)
+function go_os_args_get(int i) -> string {
+    return arg(i)
+}
