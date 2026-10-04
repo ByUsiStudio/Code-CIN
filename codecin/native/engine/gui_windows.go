@@ -20,7 +20,6 @@ var (
 	procPeekMessageW      = user32.NewProc("PeekMessageW")
 	procTranslateMessage  = user32.NewProc("TranslateMessage")
 	procDispatchMessageW  = user32.NewProc("DispatchMessageW")
-	procPostQuitMessage   = user32.NewProc("PostQuitMessage")
 	procDestroyWindow     = user32.NewProc("DestroyWindow")
 	procInvalidateRect    = user32.NewProc("InvalidateRect")
 	procUpdateWindow      = user32.NewProc("UpdateWindow")
@@ -220,7 +219,7 @@ func guiWinThread() {
 		}
 		select {
 		case cmd := <-guiWinCh:
-			quit = guiWinHandleCmd(cmd)
+			guiWinHandleCmd(cmd)
 		case <-time.After(8 * time.Millisecond):
 		}
 	}
@@ -251,7 +250,7 @@ func loadCursor(id uintptr) uintptr {
 	return c
 }
 
-func guiWinHandleCmd(cmd guiWinCmd) bool {
+func guiWinHandleCmd(cmd guiWinCmd) {
 	switch cmd.kind {
 	case 0: // create
 		title, _ := syscall.UTF16PtrFromString(cmd.title)
@@ -288,9 +287,8 @@ func guiWinHandleCmd(cmd guiWinCmd) bool {
 			procDestroyWindow.Call(h)
 		}
 		cmd.result <- true
-		return true
+		// 线程保持存活 (消息泵常驻), 允许之后再次 gui_new
 	}
-	return false
 }
 
 var wcNamePtr, _ = syscall.UTF16PtrFromString("CodeCINWindow")
@@ -320,7 +318,13 @@ func guiWndProc(hwnd uintptr, msg uintptr, wp, lp uintptr) uintptr {
 	case wmClose:
 		guiMarkClosed() // gui_closed() 置 1; 交给 DefWindowProc 销毁窗口
 	case wmDestroy:
-		procPostQuitMessage.Call(0)
+		// 窗口已销毁 (无论来自 gui_close 还是用户点 X): 清理句柄,
+		// 避免残留的失效 hwnd 被后续 update/close 误用。
+		// 不 PostQuitMessage: 窗口线程常驻, 允许之后再次 gui_new。
+		guiWinMu.Lock()
+		guiWinHwnd = 0
+		winScratch = nil
+		guiWinMu.Unlock()
 		return 0
 	case wmKeydown:
 		guiWinKeyDown(wp, lp)

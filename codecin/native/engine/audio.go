@@ -22,7 +22,7 @@ var (
 	audioEnd     time.Time
 	audioLevel   int = 100 // 0..100 (audio_volume; Windows 实时生效, Unix 传入播放器)
 	audioDone    chan struct{}
-	audioTemp    string  // 当前播放的临时 WAV 文件路径 (Unix 异步播放时保留)
+	audioTemp    string // 当前播放的临时 WAV 文件路径 (Unix 异步播放时保留)
 	audioCmd     *exec.Cmd
 	audioCmdMu   sync.Mutex
 	audioData    []byte // 播放中的 WAV 字节 (waveOut 直接引用, 保活防 GC)
@@ -30,6 +30,10 @@ var (
 
 // MaxResourceBytes 是 FetchResource 的下载/读取上限 (音频等宿主资源)。
 const MaxResourceBytes = 64 << 20 // 64 MiB
+
+// audioTestOff 测试钩子: 置 true 时 playPlatform 一律视为失败,
+// 测试不触碰真实音频设备 (与 guiForcedOff 同模式)。
+var audioTestOff bool
 
 // FetchResource 下载 URL 或读取本地文件, 返回原始字节。
 func FetchResource(loc string) ([]byte, error) {
@@ -173,6 +177,9 @@ func (vm *vmState) audioPlay(loc string) uint64 {
 
 func (vm *vmState) audioPlayBytes(data []byte) uint64 {
 	vm.audioStop() // 停掉上一段 (若在播)
+	if audioTestOff {
+		return mask64
+	}
 	if err := playPlatform(data); err != nil {
 		return mask64
 	}
@@ -274,12 +281,12 @@ func synthBeepWav(freq, ms uint64) []byte {
 	copy(data[8:12], "WAVE")
 	copy(data[12:16], "fmt ")
 	binary.LittleEndian.PutUint32(data[16:20], 16)
-	binary.LittleEndian.PutUint16(data[20:22], 1)                    // PCM
-	binary.LittleEndian.PutUint16(data[22:24], 1)                    // mono
-	binary.LittleEndian.PutUint32(data[24:28], rate)                 // 采样率
-	binary.LittleEndian.PutUint32(data[28:32], rate*2)               // byte rate
-	binary.LittleEndian.PutUint16(data[32:34], 2)                    // block align
-	binary.LittleEndian.PutUint16(data[34:36], 16)                   // bits
+	binary.LittleEndian.PutUint16(data[20:22], 1)      // PCM
+	binary.LittleEndian.PutUint16(data[22:24], 1)      // mono
+	binary.LittleEndian.PutUint32(data[24:28], rate)   // 采样率
+	binary.LittleEndian.PutUint32(data[28:32], rate*2) // byte rate
+	binary.LittleEndian.PutUint16(data[32:34], 2)      // block align
+	binary.LittleEndian.PutUint16(data[34:36], 16)     // bits
 	copy(data[36:40], "data")
 	binary.LittleEndian.PutUint32(data[40:44], uint32(n*2))
 	w := 2 * math.Pi * float64(freq) / float64(rate)

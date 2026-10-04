@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"sync"
 	"syscall"
-	"unsafe"
 	"time"
+	"unsafe"
 )
 
 // Windows 音频后端: winmm waveOut 流式播放。
@@ -16,14 +16,14 @@ import (
 // 回调传 0, 用 WHDR_DONE 轮询 (10ms) 判断自然结束。
 
 var (
-	winmm                 = syscall.NewLazyDLL("winmm.dll")
-	procWaveOutOpen       = winmm.NewProc("waveOutOpen")
-	procWaveOutPrepHdr    = winmm.NewProc("waveOutPrepareHeader")
-	procWaveOutWrite      = winmm.NewProc("waveOutWrite")
-	procWaveOutUnprepHdr  = winmm.NewProc("waveOutUnprepareHeader")
-	procWaveOutReset      = winmm.NewProc("waveOutReset")
-	procWaveOutClose      = winmm.NewProc("waveOutClose")
-	procWaveOutSetVolume  = winmm.NewProc("waveOutSetVolume")
+	winmm                = syscall.NewLazyDLL("winmm.dll")
+	procWaveOutOpen      = winmm.NewProc("waveOutOpen")
+	procWaveOutPrepHdr   = winmm.NewProc("waveOutPrepareHeader")
+	procWaveOutWrite     = winmm.NewProc("waveOutWrite")
+	procWaveOutUnprepHdr = winmm.NewProc("waveOutUnprepareHeader")
+	procWaveOutReset     = winmm.NewProc("waveOutReset")
+	procWaveOutClose     = winmm.NewProc("waveOutClose")
+	procWaveOutSetVolume = winmm.NewProc("waveOutSetVolume")
 )
 
 const (

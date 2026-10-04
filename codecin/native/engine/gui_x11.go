@@ -6,7 +6,7 @@ import (
 	"bufio"
 	"encoding/binary"
 	"image"
-	_"io"
+	_ "io"
 	"net"
 	"os"
 	"strconv"
@@ -173,7 +173,7 @@ func x11Handshake(conn net.Conn, host, disp string) (*x11Conn, error) {
 	// 认证: MIT-MAGIC-COOKIE-1 (尽力而为; 本地 socket 通常无需)
 	name, cookie := xauthCookie(host, disp)
 	hdr := make([]byte, 12)
-	hdr[0] = 'l' // LSBFirst
+	hdr[0] = 'l'                             // LSBFirst
 	binary.BigEndian.PutUint16(hdr[2:4], 11) // protocol major
 	binary.BigEndian.PutUint16(hdr[4:6], 0)  // minor
 	binary.BigEndian.PutUint16(hdr[6:8], uint16(len(name)))

@@ -108,9 +108,9 @@ var hostBuiltins = map[string]hostBuiltin{
 	"termux_fingerprint":  {SysTERMUXFINGER, 0, kString},
 	"termux_sensor":       {SysTERMUXSENSOR, 1, kString},
 	// 键盘输入监听 (非阻塞轮询)
-	"key_hit":    {SysKEYHIT, 0, kInt},
-	"get_key":    {SysKEYGET, 0, kInt},
-	"key_flush":  {SysKEYFLUSH, 0, kInt},
+	"key_hit":   {SysKEYHIT, 0, kInt},
+	"get_key":   {SysKEYGET, 0, kInt},
+	"key_flush": {SysKEYFLUSH, 0, kInt},
 	// GUI 窗口 (Windows Win32 / Linux X11, 其他平台优雅失败)
 	"gui_new":      {SysGUINEW, 3, kInt},
 	"gui_update":   {SysGUIUPDATE, 0, kInt},

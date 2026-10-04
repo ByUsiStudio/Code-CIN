@@ -37,15 +37,15 @@ const (
 )
 
 const (
-	keyCtrlUp    = 1101
-	keyCtrlDown  = 1102
-	keyCtrlLeft  = 1103
-	keyCtrlRight = 1104
-	keyShiftUp   = 1105
-	keyShiftDown = 1106
-	keyShiftLeft = 1107
+	keyCtrlUp     = 1101
+	keyCtrlDown   = 1102
+	keyCtrlLeft   = 1103
+	keyCtrlRight  = 1104
+	keyShiftUp    = 1105
+	keyShiftDown  = 1106
+	keyShiftLeft  = 1107
 	keyShiftRight = 1108
-	keyShiftTab  = 1109
+	keyShiftTab   = 1109
 )
 
 func arrowVariant(base uint64, mod int) uint64 {
