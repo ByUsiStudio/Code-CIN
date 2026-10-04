@@ -3,6 +3,7 @@
 package engine
 
 import (
+	"errors"
 	"os/exec"
 	"runtime"
 	"strconv"
@@ -46,7 +47,7 @@ func playPlatform(data []byte) error {
 	return errNoPlayer
 }
 
-var errNoPlayer = &exec.Error{Name: "audio", Err: errPlayerMissing}
+var errNoPlayer = errors.New("no audio player found (aplay/paplay/ffplay)")
 
 // waitPlatform 等待播放进程自然退出 (stopPlatform 的 Kill 会解除等待)。
 func waitPlatform() {
