@@ -236,7 +236,7 @@ class NativeEngine:
         ]
         lib.codecin_crom_unpack.restype = ctypes.c_void_p
         lib.codecin_version.argtypes = []
-        lib.codecin_version.restype = c_char_p
+        lib.codecin_version.restype = ctypes.c_char_p
 
         # None (arg_count()/arg(i) 恒为 0/空串), 不影响其余原生能力。
         set_args = getattr(lib, 'codecin_set_args', None)

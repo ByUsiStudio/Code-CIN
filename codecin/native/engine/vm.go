@@ -280,7 +280,7 @@ func opcodeSupported(op uint8) bool {
 }
 
 func syscallSupported(id uint64) bool {
-	return id <= sysGUIACTIVE
+	return id <= sysREADLINE
 }
 
 func (vm *vmState) reg(n int) uint64 {
