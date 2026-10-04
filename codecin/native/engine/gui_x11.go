@@ -6,6 +6,7 @@ import (
 	"bufio"
 	"encoding/binary"
 	"image"
+	_"io"
 	"net"
 	"os"
 	"strconv"
@@ -13,9 +14,37 @@ import (
 	"time"
 )
 
+// Linux GUI 后端: 纯 Go X11 客户端 (标准库 net, 零第三方依赖)。
+// 支持 X11 与 XWayland (绝大多数发行版的默认显示路径); 无 DISPLAY 或
+// 认证失败时 gui_new 优雅返回 -1。
+//
+// 事件在同一 goroutine (调用 SYS 的 VM 线程) 内处理: X11 无线程亲和性
+// 限制, 连接/呈现/泵事件全部同步完成 —— 与 VM 单线程确定性模型天然契合。
+// 窗口间的间隙事件缓存在内核 socket 缓冲, gui_update 时统一泵出。
+// 协议编码按 X11 核心协议 (请求 4 字节对齐, 大端字段)。
+
+const (
+	x11OpcodeCreateWindow  = 1
+	x11OpcodeDestroyWindow = 4
+	x11OpcodeMapWindow     = 8
+	x11OpcodeInternAtom    = 16
+	x11OpcodeChangeProp    = 18
+	x11OpcodeCreateGC      = 55
+	x11OpcodePutImage      = 72
+	x11OpcodeKeymap        = 101
+
+	evKeyPress       = 2
+	evButtonPress    = 4
+	evButtonRelease  = 5
+	evMotion         = 6
+	evClientMessage  = 33
+	x11ZPixmap       = 2
+	x11VisualTrueCol = 4
+)
+
 type x11Conn struct {
 	conn      net.Conn
-	order     binary.ByteOrder
+	br        *bufio.Reader
 	resBase   uint32
 	root      uint32
 	visual    uint32
@@ -27,12 +56,16 @@ type x11Conn struct {
 	win       uint32
 	gc        uint32
 	w, h      int
-	maxReqLen int // 请求最大字节数 (4 字节单位)
+	maxReqLen int // 单请求最大字节数 (握手值×4)
 	nextID    uint32
+	atomWMPro uint32
+	atomWMDel uint32
 }
 
-// guiPlatformOpen 连接 X 服务并创建窗口 (同步, VM 线程)。
+// ---------------- 平台接口 ----------------
+
 func guiPlatformOpen(w, h int, title string, buf *image.RGBA) bool {
+	_ = buf
 	xc, err := guiX11Dial()
 	if err != nil {
 		return false
@@ -75,11 +108,13 @@ func guiPlatformClose() {
 // guiX11 当前连接 (gui.go 状态之外的平台侧句柄)。
 var guiX11 *x11Conn
 
+// ---------------- 连接与握手 ----------------
+
 // guiX11Dial 解析 $DISPLAY 建立连接 (unix socket 优先, 其次 TCP)。
 func guiX11Dial() (*x11Conn, error) {
 	spec := os.Getenv("DISPLAY")
 	if spec == "" {
-		return nil, errNoDisplay
+		return nil, &displayError{"DISPLAY not set"}
 	}
 	host, disp, err := parseDisplay(spec)
 	if err != nil {
@@ -91,7 +126,7 @@ func guiX11Dial() (*x11Conn, error) {
 			"/tmp/.X11-unix/X"+disp, 2*time.Second)
 	} else {
 		conn, err = net.DialTimeout("tcp",
-			host+":"+strconv.Itoa(6000+atoiOr0(disp)), 2*time.Second)
+			host+":"+strconv.Itoa(atoiOr0(disp)+6000), 2*time.Second)
 	}
 	if err != nil {
 		return nil, err
@@ -106,19 +141,15 @@ func guiX11Dial() (*x11Conn, error) {
 	return xc, nil
 }
 
-var errNoDisplay = &net.OpError{Op: "dial", Err: errDisplayMissing}
-
 type displayError struct{ msg string }
 
 func (e *displayError) Error() string { return e.msg }
-
-var errDisplayMissing = &displayError{msg: "DISPLAY not set"}
 
 // parseDisplay 解析 "host:dpy[.screen]"。
 func parseDisplay(spec string) (host, disp string, err error) {
 	colon := strings.LastIndex(spec, ":")
 	if colon < 0 {
-		return "", "", &displayError{msg: "bad DISPLAY: " + spec}
+		return "", "", &displayError{"bad DISPLAY: " + spec}
 	}
 	host = spec[:colon]
 	dpy := spec[colon+1:]
@@ -126,7 +157,7 @@ func parseDisplay(spec string) (host, disp string, err error) {
 		dpy = dpy[:i]
 	}
 	if _, e := strconv.Atoi(dpy); e != nil {
-		return "", "", &displayError{msg: "bad DISPLAY number: " + spec}
+		return "", "", &displayError{"bad DISPLAY number: " + spec}
 	}
 	return host, dpy, nil
 }
@@ -138,80 +169,74 @@ func atoiOr0(s string) int {
 
 // x11Handshake 发送连接握手并解析 setup 回复。
 func x11Handshake(conn net.Conn, host, disp string) (*x11Conn, error) {
+	br := bufio.NewReader(conn)
 	// 认证: MIT-MAGIC-COOKIE-1 (尽力而为; 本地 socket 通常无需)
-	name, data := xauthCookie(host, disp)
+	name, cookie := xauthCookie(host, disp)
 	hdr := make([]byte, 12)
 	hdr[0] = 'l' // LSBFirst
 	binary.BigEndian.PutUint16(hdr[2:4], 11) // protocol major
-	nameLen := len(name)
-	dataLen := len(data)
-	binary.BigEndian.PutUint16(hdr[6:8], uint16(nameLen))
-	binary.BigEndian.PutUint16(hdr[8:10], uint16(dataLen))
+	binary.BigEndian.PutUint16(hdr[4:6], 0)  // minor
+	binary.BigEndian.PutUint16(hdr[6:8], uint16(len(name)))
+	binary.BigEndian.PutUint16(hdr[8:10], uint16(len(cookie)))
 	req := append(hdr, name...)
-	req = append(req, make([]byte, pad4(nameLen)-nameLen)...)
-	req = append(req, data...)
-	req = append(req, make([]byte, pad4(dataLen)-dataLen)...)
+	req = append(req, make([]byte, pad4(len(name))-len(name))...)
+	req = append(req, cookie...)
+	req = append(req, make([]byte, pad4(len(cookie))-len(cookie))...)
 	if _, err := conn.Write(req); err != nil {
 		return nil, err
 	}
-	r := bufio.NewReader(conn)
-	first, err := r.ReadByte()
+	first, err := br.ReadByte()
 	if err != nil {
 		return nil, err
 	}
-	if first != 1 { // 0=failed, 2=authenticate
-		return nil, &displayError{msg: "X11 handshake rejected"}
+	if first != 1 { // 0=failed, 2=further-auth
+		return nil, &displayError{"X11 handshake rejected"}
 	}
-	setup := make([]byte, 7)
-	if _, err := ioReadFull(r, setup); err != nil {
+	head := make([]byte, 7)
+	if _, err := ioReadFull(br, head); err != nil {
 		return nil, err
 	}
-	extra := int(binary.BigEndian.Uint16(setup[5:7])) * 4
+	extra := int(binary.BigEndian.Uint16(head[5:7])) * 4
 	body := make([]byte, extra)
-	if _, err := ioReadFull(r, body); err != nil {
+	if _, err := ioReadFull(br, body); err != nil {
 		return nil, err
 	}
-	// body: release(4) resBase(4) mask(4) motion(4) vendorLen(2) maxReq(2)
-	//       screens(1) formats(1) order(1) bitorder(1) unit(1) pad(1)
-	//       minKC(1) maxKC(1) ...
+	// additional data: release(4) resBase(4) mask(4) motion(4) vendorLen(2)
+	// maxReq(2) screens(1) formats(1) order(1) bitOrder(1) unit(1) pad(1)
+	// minKC(1) maxKC(1) unused(4) vendor.. formats.. screens..
 	if len(body) < 32 {
-		return nil, &displayError{msg: "X11 setup truncated"}
+		return nil, &displayError{"X11 setup truncated"}
 	}
 	vendorLen := int(binary.BigEndian.Uint16(body[16:18]))
-	maxReq := int(binary.BigEndian.Uint16(body[18:20])) * 4
-	numFormats := int(body[23])
-	minKC, maxKC := body[30], body[31]
-	pos := 32 + vendorLen
-	pos = padTo(pos, 4)
-	pos += numFormats * 8 // 深度格式
+	maxReqBytes := int(binary.BigEndian.Uint16(body[18:20])) * 4
+	numFormats := int(body[21])
+	minKC, maxKC := body[26], body[27]
+	pos := padTo(32+vendorLen, 4) + numFormats*8
 	if len(body) < pos+40 {
-		return nil, &displayError{msg: "X11 setup truncated"}
+		return nil, &displayError{"X11 setup truncated"}
 	}
 	sc := body[pos:]
 	root := binary.BigEndian.Uint32(sc[0:4])
-	sc2 := sc[32:] // 跳过到 root-visual(20)/depth(23)/allowed-depths(24)
-	rootVisual := binary.BigEndian.Uint32(sc2[20:24])
-	rootDepth := sc2[23]
-	nDepths := int(sc2[24])
-	pos2 := 40
-	visual, depth := findTrueColor(sc2[pos2:], nDepths, rootVisual, rootDepth)
+	rootVisual := binary.BigEndian.Uint32(sc[32:36])
+	rootDepth := sc[38]
+	nDepths := int(sc[39])
+	visual, depth := findTrueColor(sc[40:], nDepths, rootVisual, rootDepth)
+	if visual == 0 {
+		return nil, &displayError{"no TrueColor visual found"}
+	}
 	xc := &x11Conn{
 		conn:      conn,
-		order:     binary.BigEndian,
+		br:        br,
 		resBase:   binary.BigEndian.Uint32(body[4:8]),
 		root:      root,
 		visual:    visual,
 		depth:     depth,
 		minKC:     minKC,
 		maxKC:     maxKC,
-		maxReqLen: maxReq,
-		nextID:    0,
+		maxReqLen: maxReqBytes,
 	}
-	if xc.visual == 0 {
-		return nil, &displayError{msg: "no TrueColor visual found"}
-	}
-	if !xc.loadKeymap(r) {
-		return nil, &displayError{msg: "X11 keymap query failed"}
+	if !xc.loadKeymap() {
+		return nil, &displayError{"X11 keymap query failed"}
 	}
 	return xc, nil
 }
@@ -226,7 +251,7 @@ func findTrueColor(depths []byte, n int, fallbackVisual uint32, fallbackDepth ui
 		for v := 0; v < nVis && pos+24 <= len(depths); v++ {
 			id := binary.BigEndian.Uint32(depths[pos : pos+4])
 			class := depths[pos+4]
-			if class == 4 && depth >= 24 { // TrueColor
+			if class == x11VisualTrueCol && depth >= 24 {
 				return id, depth
 			}
 			pos += 24
@@ -235,33 +260,31 @@ func findTrueColor(depths []byte, n int, fallbackVisual uint32, fallbackDepth ui
 	return fallbackVisual, fallbackDepth
 }
 
-// loadKeymap GetKeyboardMapping: keycode -> keysyms。
-func (xc *x11Conn) loadKeymap(r *bufio.Reader) bool {
+// loadKeymap GetKeyboardMapping: keycode -> keysyms 表。
+func (xc *x11Conn) loadKeymap() bool {
 	count := int(xc.maxKC) - int(xc.minKC) + 1
 	if count <= 0 {
 		return false
 	}
-	req := make([]byte, 4)
-	req[0] = 101 // GetKeyboardMapping
+	req := make([]byte, 8)
+	req[0] = x11OpcodeKeymap
 	req[1] = xc.minKC
-	binary.BigEndian.PutUint16(req[2:4], uint16(count))
+	binary.BigEndian.PutUint16(req[2:4], 2) // 8 字节请求
+	req[4] = uint8(count)
 	if _, err := xc.conn.Write(req); err != nil {
 		return false
 	}
-	head := make([]byte, 8)
-	if _, err := ioReadFull(r, head); err != nil {
+	head := make([]byte, 32)
+	if _, err := ioReadFull(xc.br, head); err != nil || head[0] != 1 {
 		return false
 	}
-	if head[0] != 1 {
-		return false
-	}
+	xc.perKC = int(head[1])
 	n := int(binary.BigEndian.Uint32(head[4:8])) * 4
-	body := make([]byte, n)
-	if _, err := ioReadFull(r, body); err != nil {
+	if xc.perKC <= 0 || n <= 0 {
 		return false
 	}
-	xc.perKC = n / 4 / count
-	if xc.perKC <= 0 {
+	body := make([]byte, n)
+	if _, err := ioReadFull(xc.br, body); err != nil {
 		return false
 	}
 	xc.keysyms = make([]uint32, n/4)
@@ -271,64 +294,72 @@ func (xc *x11Conn) loadKeymap(r *bufio.Reader) bool {
 	return true
 }
 
+// ---------------- 窗口创建 / 呈现 / 销毁 ----------------
+
 func (xc *x11Conn) allocID() uint32 {
 	xc.nextID++
 	return xc.resBase + xc.nextID
 }
 
 func (xc *x11Conn) openWindow(w, h int, title string) bool {
+	xc.atomWMPro = xc.internAtom("WM_PROTOCOLS")
+	xc.atomWMDel = xc.internAtom("WM_DELETE_WINDOW")
 	win := xc.allocID()
 	gc := xc.allocID()
-	atomWMProtocols := xc.internAtom("WM_PROTOCOLS")
-	atomWMDelete := xc.internAtom("WM_DELETE_WINDOW")
 
-	const mask = 0x2 | 0x800
-	req := make([]byte, 8+32)
-	req[0] = 1 // CreateWindow
-	putB16(req[2:4], uint32(8+len(req)-8)/4)
-	putB16(req[4:8], win)
-	putB16(req[8:12], xc.root)
-	putB16(req[12:14], 0) // x
-	putB16(req[14:16], 0) // y
-	putB16(req[16:18], uint32(w))
-	putB16(req[18:20], uint32(h))
-	putB16(req[20:22], 1)                       // border width
-	putB16(req[22:24], 1)                       // class: InputOutput
-	putB16(req[24:28], xc.visual)               // visual
-	putB16(req[28:32], mask)                    // value-mask
-	putB16(req[32:36], 0xFFFFFF)                // background pixel (白)
-	putB16(req[36:40], 0x20800|0x4|0x8|0x40|0x20000) // 曝光|按键|释放|指针|结构
+	// CreateWindow (值顺序按 value-mask 位序: back-pixel -> event-mask)
+	// CW_BACK_PIXEL(0x2) | CW_EVENT_MASK(0x800)
+	const evMask = 0x1 | 0x2 | 0x4 | 0x8 | 0x40 | 0x8000 | 0x20000
+	req := make([]byte, 44)
+	req[0] = x11OpcodeCreateWindow
+	req[1] = xc.depth
+	binary.BigEndian.PutUint16(req[2:4], 11) // 44/4
+	binary.BigEndian.PutUint32(req[4:8], win)
+	binary.BigEndian.PutUint32(req[8:12], xc.root)
+	binary.BigEndian.PutUint16(req[12:14], 0) // x
+	binary.BigEndian.PutUint16(req[14:16], 0) // y
+	binary.BigEndian.PutUint16(req[16:18], uint16(w))
+	binary.BigEndian.PutUint16(req[18:20], uint16(h))
+	binary.BigEndian.PutUint16(req[20:22], 1) // border
+	binary.BigEndian.PutUint16(req[22:24], 1) // InputOutput
+	binary.BigEndian.PutUint32(req[26:30], xc.visual)
+	binary.BigEndian.PutUint32(req[30:34], 0x2|0x800)
+	binary.BigEndian.PutUint32(req[34:38], 0xFFFFFF) // 白背景
+	binary.BigEndian.PutUint32(req[38:42], evMask)
 	if err := xc.write(req); err != nil {
 		return false
 	}
 
-	// CreateGC (graphics-exposures off)
+	// CreateGC (graphics-exposures = 0)
 	greq := make([]byte, 20)
-	greq[0] = 55
-	putB16(greq[2:4], 5)
-	putB16(greq[4:8], gc)
-	putB16(greq[8:12], win)
-	putB16(greq[12:16], 1<<9) // GC_GRAPHICS_EXPOSURES
-	// value 0 = off
+	greq[0] = x11OpcodeCreateGC
+	binary.BigEndian.PutUint16(greq[2:4], 5) // 20/4
+	binary.BigEndian.PutUint32(greq[4:8], gc)
+	binary.BigEndian.PutUint32(greq[8:12], win)
+	binary.BigEndian.PutUint32(greq[12:16], 1<<9) // GC_GRAPHICS_EXPOSURES
 	if err := xc.write(greq); err != nil {
 		return false
 	}
-	// SetWMProtocols (ChangeProperty): 让点 X 触发 WM_DELETE_WINDOW
-	if atomWMProtocols != 0 && atomWMDelete != 0 {
+
+	// ChangeProperty: WM_PROTOCOLS = [WM_DELETE_WINDOW] (点 X 触发 ClientMessage)
+	if xc.atomWMPro != 0 && xc.atomWMDel != 0 {
 		preq := make([]byte, 28)
-		preq[0] = 18 // ChangeProperty
-		putB16(preq[2:4], 7)
-		putB16(preq[4:8], win)
-		putB16(preq[8:12], atomWMProtocols)
-		preq[12] = 4 // format: 32
-		putB16(preq[16:20], 1)
-		putB16(preq[20:24], atomWMDelete)
+		preq[0] = x11OpcodeChangeProp
+		binary.BigEndian.PutUint16(preq[2:4], 7) // 28/4
+		binary.BigEndian.PutUint32(preq[4:8], win)
+		binary.BigEndian.PutUint32(preq[8:12], xc.atomWMPro)
+		binary.BigEndian.PutUint32(preq[12:16], xc.atomWMPro) // type: ATOM
+		preq[16] = 32                                         // format
+		binary.BigEndian.PutUint32(preq[20:24], 1)            // n items
+		binary.BigEndian.PutUint32(preq[24:28], xc.atomWMDel)
 		_ = xc.write(preq)
 	}
+
 	// MapWindow
 	mreq := make([]byte, 8)
-	mreq[0] = 8
-	putB16(mreq[4:8], win)
+	mreq[0] = x11OpcodeMapWindow
+	binary.BigEndian.PutUint16(mreq[2:4], 2)
+	binary.BigEndian.PutUint32(mreq[4:8], win)
 	if err := xc.write(mreq); err != nil {
 		return false
 	}
@@ -341,33 +372,28 @@ func (xc *x11Conn) openWindow(w, h int, title string) bool {
 	return true
 }
 
-// internAtom InternAtom (only-if-exists=0)。
+// internAtom 同步查询 atom。
 func (xc *x11Conn) internAtom(name string) uint32 {
 	b := []byte(name)
-	req := make([]byte, 8+len(b))
-	req[0] = 16
-	putB16(req[2:4], uint32((8+len(b))/4))
-	putB16(req[4:6], 0) // only-if-exists: false
-	putB16(req[6:8], uint16(len(b)))
+	req := make([]byte, 8+pad4(len(b)))
+	req[0] = x11OpcodeInternAtom
+	req[1] = 0 // only-if-exists = false
+	binary.BigEndian.PutUint16(req[2:4], uint16(len(req)/4))
+	binary.BigEndian.PutUint16(req[4:6], uint16(len(b)))
 	copy(req[8:], b)
 	if err := xc.write(req); err != nil {
 		return 0
 	}
-	// 阻塞读回复 (连接仅此一处同步往返, 2s 超时由 dial 阶段覆盖)
 	rep := make([]byte, 32)
-	if err := xc.readEvent(rep); err != nil {
-		return 0
-	}
-	if rep[0] != 1 {
+	if err := xc.readReply(rep); err != nil || rep[0] != 1 {
 		return 0
 	}
 	return binary.BigEndian.Uint32(rep[8:12])
 }
 
-// present 把 RGBA 像素呈现到窗口 (PutImage 分块; BGRX 依服务器字节序)。
+// present 把 RGBA 像素呈现到窗口 (PutImage 分块)。
 func (xc *x11Conn) present(pix []byte, w, h int) bool {
 	bpl := w * 4
-	// 每请求行数受 max-request-length 限制 (头 24 字节)
 	chunkRows := (xc.maxReqLen - 24) / bpl
 	if chunkRows < 1 {
 		chunkRows = 1
@@ -375,47 +401,40 @@ func (xc *x11Conn) present(pix []byte, w, h int) bool {
 	if chunkRows > h {
 		chunkRows = h
 	}
-	row := 0
-	for row < h {
+	for row := 0; row < h; row += chunkRows {
 		rows := chunkRows
 		if rows > h-row {
 			rows = h - row
 		}
 		n := rows * bpl
 		req := make([]byte, 24+n)
-		req[0] = 72 // PutImage
-		putB16(req[2:4], uint32((24+n)/4))
-		putB16(req[4:8], xc.win)
-		putB16(req[8:12], xc.gc)
-		putB16(req[12:14], uint32(w))
-		putB16(req[14:16], uint32(rows))
-		putB16(req[16:18], 0) // dst-x
-		putB16(req[18:20], uint32(row))
+		req[0] = x11OpcodePutImage
+		req[1] = x11ZPixmap
+		binary.BigEndian.PutUint16(req[2:4], uint16((24+n)/4))
+		binary.BigEndian.PutUint32(req[4:8], xc.win)
+		binary.BigEndian.PutUint32(req[8:12], xc.gc)
+		binary.BigEndian.PutUint16(req[12:14], uint16(w))
+		binary.BigEndian.PutUint16(req[14:16], uint16(rows))
+		binary.BigEndian.PutUint16(req[16:18], 0) // dst-x
+		binary.BigEndian.PutUint16(req[18:20], uint16(row))
 		req[21] = xc.depth
-		packPixels(pix[row*bpl:(row+rows)*bpl], req[24:], xc.order)
+		packPixels(pix[row*bpl:(row+rows)*bpl], req[24:])
 		if err := xc.write(req); err != nil {
 			return false
 		}
-		row += rows
 	}
 	return true
 }
 
-// packPixels RGBA -> ZPixmap 像素 (LSB 服务器: B,G,R,x; MSB: x,R,G,B)。
-func packPixels(src, dst []byte, order binary.ByteOrder) {
-	lsb := order == binary.LittleEndian
+// packPixels RGBA -> ZPixmap 像素单元 (LSB 服务器: B,G,R,x; MSB: x,R,G,B)。
+// x11Handshake 默认本地服务器为 LSBFirst ('l' 握手序即客户端序),
+// 这里按客户端一律 LSB 编码 (请求 hdr[0]='l' 已声明)。
+func packPixels(src, dst []byte) {
 	j := 0
 	for i := 0; i+3 < len(src); i += 4 {
-		if lsb {
-			dst[j] = src[i+2]
-			dst[j+1] = src[i+1]
-			dst[j+2] = src[i]
-		} else {
-			dst[j] = 0
-			dst[j+1] = src[i]
-			dst[j+2] = src[i+1]
-			dst[j+3] = src[i+2]
-		}
+		dst[j] = src[i+2]   // B
+		dst[j+1] = src[i+1] // G
+		dst[j+2] = src[i]   // R
 		j += 4
 	}
 }
@@ -423,8 +442,9 @@ func packPixels(src, dst []byte, order binary.ByteOrder) {
 func (xc *x11Conn) destroy() {
 	if xc.win != 0 {
 		req := make([]byte, 8)
-		req[0] = 4 // DestroyWindow
-		putB16(req[4:8], xc.win)
+		req[0] = x11OpcodeDestroyWindow
+		binary.BigEndian.PutUint16(req[2:4], 2)
+		binary.BigEndian.PutUint32(req[4:8], xc.win)
 		_ = xc.write(req)
 	}
 	_ = xc.conn.Close()
@@ -438,13 +458,13 @@ func (xc *x11Conn) pump() bool {
 	defer func() { _ = xc.conn.SetReadDeadline(time.Time{}) }()
 	var ev [32]byte
 	for {
-		if _, err := ioReadFull(xc.conn, ev[:]); err != nil {
+		if _, err := ioReadFull(xc.br, ev[:]); err != nil {
 			if isTimeout(err) {
 				return true // 输入暂尽: 正常
 			}
 			return false // 连接断开
 		}
-		xc.handleEvent(ev)
+		xc.handleEvent(ev[:])
 	}
 }
 
@@ -452,26 +472,26 @@ func (xc *x11Conn) pump() bool {
 func (xc *x11Conn) handleEvent(ev []byte) {
 	switch ev[0] {
 	case 0: // 错误: 消费
-	case 2, 3: // KeyPress / KeyRelease
-		if ev[0] != 2 {
-			return
-		}
-		kc := ev[1]
+	case evKeyPress:
 		state := binary.BigEndian.Uint16(ev[28:30])
-		if k, ok := xc.keycodeToKey(kc, state); ok {
+		if k, ok := xc.keycodeToKey(ev[1], state); ok {
 			guiInjectKey(k)
 		}
-	case 4: // ButtonPress
-		guiX11Button(int(ev[1]), true, binary.BigEndian.Uint16(ev[28:30]))
+	case evButtonPress:
+		guiX11Button(int(ev[1]), true)
 		guiX11Mouse(ev)
-	case 5: // ButtonRelease
-		guiX11Button(int(ev[1]), false, 0)
+	case evButtonRelease:
+		guiX11Button(int(ev[1]), false)
 		guiX11Mouse(ev)
-	case 6: // MotionNotify
+	case evMotion:
 		guiX11Mouse(ev)
-	case 33: // ClientMessage (WM_DELETE_WINDOW)
-		guiMarkClosed()
-	default: // Expose / MapNotify / GraphicsExpose 等: 消费
+	case evClientMessage:
+		// WM_DELETE_WINDOW: format=32(字节1), type@8, data[0]@12
+		if ev[1] == 32 && binary.BigEndian.Uint32(ev[8:12]) == xc.atomWMPro &&
+			binary.BigEndian.Uint32(ev[12:16]) == xc.atomWMDel {
+			guiMarkClosed()
+		}
+	default: // Expose / MapNotify / ConfigureNotify 等: 消费
 	}
 }
 
@@ -482,7 +502,7 @@ func guiX11Mouse(ev []byte) {
 }
 
 // guiX11Button X11 按钮号 -> guiMouseBtn 位 (1 左 / 2 中 / 3 右)。
-func guiX11Button(detail int, down bool, state uint16) {
+func guiX11Button(detail int, down bool) {
 	var bit int
 	switch detail {
 	case 1:
@@ -495,10 +515,9 @@ func guiX11Button(detail int, down bool, state uint16) {
 		return // 滚轮 4/5
 	}
 	guiMouseButtonBit(bit, down)
-	_ = state
 }
 
-// keycodeToKey 键码 -> 键码值 (与终端/Windows 三端一致)。
+// keycodeToKey 键码 -> 统一键码值 (与终端 / Windows 三端一致)。
 func (xc *x11Conn) keycodeToKey(kc uint8, state uint16) (uint64, bool) {
 	shift := state&0x1 != 0
 	ctrl := state&0x4 != 0
@@ -506,7 +525,7 @@ func (xc *x11Conn) keycodeToKey(kc uint8, state uint16) (uint64, bool) {
 	if k == 0 {
 		return 0, false
 	}
-	// Ctrl+字母 -> 控制字节 (与 Windows/终端一致: Ctrl+C=3)
+	// Ctrl+字母 -> 控制字节 (与 Windows / 终端一致: Ctrl+C=3)
 	if ctrl {
 		switch {
 		case k >= 'a' && k <= 'z':
@@ -528,14 +547,22 @@ func (xc *x11Conn) keycodeToKey(kc uint8, state uint16) (uint64, bool) {
 		return 27, true // Escape
 	case 0xFF50:
 		return keyHome, true
-	case 0xFF63:
-		return keyIns, true
-	case 0xFFFF:
-		return keyDel, true
 	case 0xFF55:
 		return keyPgUp, true
 	case 0xFF56:
 		return keyPgDn, true
+	case 0xFF63:
+		return keyIns, true
+	case 0xFFFF:
+		return keyDel, true
+	case 0xFF51:
+		return arrowVariant(keyLeft, x11Mod(shift, ctrl)), true
+	case 0xFF52:
+		return arrowVariant(keyUp, x11Mod(shift, ctrl)), true
+	case 0xFF53:
+		return arrowVariant(keyRight, x11Mod(shift, ctrl)), true
+	case 0xFF54:
+		return arrowVariant(keyDown, x11Mod(shift, ctrl)), true
 	case 0xFFBE:
 		return keyF1, true
 	case 0xFFBF:
@@ -560,14 +587,6 @@ func (xc *x11Conn) keycodeToKey(kc uint8, state uint16) (uint64, bool) {
 		return keyF11, true
 	case 0xFFC9:
 		return keyF12, true
-	case 0xFF51:
-		return arrowVariant(keyLeft, x11Mod(shift, ctrl)), true
-	case 0xFF52:
-		return arrowVariant(keyUp, x11Mod(shift, ctrl)), true
-	case 0xFF53:
-		return arrowVariant(keyRight, x11Mod(shift, ctrl)), true
-	case 0xFF54:
-		return arrowVariant(keyDown, x11Mod(shift, ctrl)), true
 	}
 	switch {
 	case k >= 0x20 && k <= 0xFF: // Latin-1
@@ -590,7 +609,7 @@ func x11Mod(shift, ctrl bool) int {
 	return m
 }
 
-// lookupKeysym 取键盘映射: col0 = 基础, col1 = Shift 层。
+// lookupKeysym 取键盘映射: col0 = 基础层, col1 = Shift 层。
 func (xc *x11Conn) lookupKeysym(kc uint8, shift bool) uint32 {
 	if xc.perKC <= 0 {
 		return 0
@@ -628,64 +647,35 @@ func xauthCookie(host, disp string) (string, []byte) {
 		}
 		path = home + "/.Xauthority"
 	}
-	f, err := os.Open(path)
-	if err != nil {
-		return "", nil
-	}
-	defer f.Close()
-	data, err := io.ReadAll(f)
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return "", nil
 	}
 	pos := 0
-	for pos+4 <= len(data) {
+	for pos+2 <= len(data) {
 		family := int(binary.BigEndian.Uint16(data[pos : pos+2]))
 		pos += 2
-		var addr, number, aname, adata []byte
-		if pos+2 > len(data) {
+		fields := make([][]byte, 4)
+		ok := true
+		for fi := range fields {
+			if pos+2 > len(data) {
+				ok = false
+				break
+			}
+			n := int(binary.BigEndian.Uint16(data[pos : pos+2]))
+			pos += 2
+			if pos+n > len(data) {
+				ok = false
+				break
+			}
+			fields[fi] = data[pos : pos+n]
+			pos += n
+		}
+		if !ok {
 			break
 		}
-		n := int(binary.BigEndian.Uint16(data[pos : pos+2]))
-		pos += 2
-		if pos+n > len(data) {
-			break
-		}
-		addr = data[pos : pos+n]
-		pos += n
-		if pos+2 > len(data) {
-			break
-		}
-		n = int(binary.BigEndian.Uint16(data[pos : pos+2]))
-		pos += 2
-		if pos+n > len(data) {
-			break
-		}
-		number = data[pos : pos+n]
-		pos += n
-		if pos+2 > len(data) {
-			break
-		}
-		n = int(binary.BigEndian.Uint16(data[pos : pos+2]))
-		pos += 2
-		if pos+n > len(data) {
-			break
-		}
-		aname = data[pos : pos+n]
-		pos += n
-		if pos+2 > len(data) {
-			break
-		}
-		n = int(binary.BigEndian.Uint16(data[pos : pos+2]))
-		pos += 2
-		if pos+n > len(data) {
-			break
-		}
-		adata = data[pos : pos+n]
-		pos += n
-		if string(aname) != "MIT-MAGIC-COOKIE-1" {
-			continue
-		}
-		if string(number) != disp {
+		addr, number, aname, adata := fields[0], fields[1], fields[2], fields[3]
+		if string(aname) != "MIT-MAGIC-COOKIE-1" || string(number) != disp {
 			continue
 		}
 		// family 256 = LocalHost (unix socket); 其余匹配主机名
@@ -697,8 +687,6 @@ func xauthCookie(host, disp string) (string, []byte) {
 }
 
 // ---------------- 小工具 ----------------
-
-func putB16(b []byte, v uint32) { binary.BigEndian.PutUint32(b, v) }
 
 func pad4(n int) int { return (n + 3) &^ 3 }
 
@@ -726,8 +714,8 @@ func (xc *x11Conn) write(b []byte) error {
 	return err
 }
 
-// readEvent 读一个 32 字节事件/回复 (阻塞, 需外部设置超时)。
-func (xc *x11Conn) readEvent(b []byte) error {
-	_, err := ioReadFull(bufio.NewReader(xc.conn), b)
+// readReply 读一个 32 字节回复/事件 (阻塞, 调用方负责超时)。
+func (xc *x11Conn) readReply(b []byte) error {
+	_, err := ioReadFull(xc.br, b)
 	return err
 }

@@ -195,7 +195,7 @@ func guiWinThread() {
 		guiWinReady <- false
 		return
 	}
-	procRegisterClassOnce(hInst)
+	guiWinRegisterClassOnce(hInst)
 	guiWinReady <- true
 
 	quit := false
