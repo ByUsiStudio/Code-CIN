@@ -166,7 +166,7 @@ func guiMouseButtonBit(bit int, down bool) int {
 func guiSnapshot(buf *image.RGBA) []byte {
 	guiMu.Lock()
 	defer guiMu.Unlock()
-	if buf != guiBuffer || buf == nil {
+	if !guiOpen || buf != guiBuffer || buf == nil {
 		return nil
 	}
 	pix := make([]byte, len(buf.Pix))

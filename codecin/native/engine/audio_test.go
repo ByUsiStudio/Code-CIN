@@ -75,7 +75,7 @@ func TestWavParseRejectsGarbage(t *testing.T) {
 	if _, ok := wavParse(wav); !ok {
 		t.Fatal("最小合法 WAV 应通过 wavParse")
 	}
-	if got := WavDuration(wav); got != time.Millisecond/2 {
+	if got := WavDuration(wav); got != 250*time.Microsecond {
 		// 4 字节 / 16000 B/s = 0.25ms
 		t.Fatalf("时长应为 0.25ms, 实际 %v", got)
 	}
