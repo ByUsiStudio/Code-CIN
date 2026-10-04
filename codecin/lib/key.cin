@@ -26,6 +26,17 @@ enum Key {
     K_F8 = 1028,
     K_F9 = 1029,
     K_F10 = 1030,
+    K_F11 = 1031,
+    K_F12 = 1032,
+    K_CTRL_UP = 1101,
+    K_CTRL_DOWN = 1102,
+    K_CTRL_LEFT = 1103,
+    K_CTRL_RIGHT = 1104,
+    K_SHIFT_UP = 1105,
+    K_SHIFT_DOWN = 1106,
+    K_SHIFT_LEFT = 1107,
+    K_SHIFT_RIGHT = 1108,
+    K_SHIFT_TAB = 1109,
     K_ESC = 27,
     K_ENTER = 13,
     K_TAB = 9,
@@ -37,9 +48,22 @@ function k_ctrl(int c) -> int {
     return c & 0x1F
 }
 
-// 是否扩展键码 (方向键 / 功能键等, 非 0..255 原始字节)
+// 是否扩展键码 (方向键 / 功能键 / 修饰组合等, 非 0..255 原始字节)
 function k_is_special(int code) -> int {
-    if (code >= 1001 && code <= 1030) { return 1 }
+    if (code >= 1001 && code <= 1032) { return 1 }
+    if (code >= 1101 && code <= 1109) { return 1 }
+    return 0
+}
+
+// 是否功能键 F1..F12
+function k_is_function(int code) -> int {
+    if (code >= 1021 && code <= 1032) { return 1 }
+    return 0
+}
+
+// 是否修饰键 + 方向键组合 (Ctrl/Shift + 方向)
+function k_is_modified_arrow(int code) -> int {
+    if (code >= 1101 && code <= 1108) { return 1 }
     return 0
 }
 

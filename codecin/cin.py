@@ -242,11 +242,20 @@ HOST_BUILTINS = {
     'key_hit': (Syscall.KEYHIT, 0, 'int'),
     'get_key': (Syscall.KEYGET, 0, 'int'),
     'key_flush': (Syscall.KEYFLUSH, 0, 'int'),
+    # GUI 窗口 (Windows Win32 / Linux X11, 其他平台优雅失败)
+    'gui_new': (Syscall.GUINEW, 3, 'int'),
+    'gui_update': (Syscall.GUIUPDATE, 0, 'int'),
+    'gui_close': (Syscall.GUICLOSE, 0, 'int'),
+    'gui_closed': (Syscall.GUICLOSED, 0, 'int'),
+    'gui_active': (Syscall.GUIACTIVE, 0, 'int'),
+    'mouse_x': (Syscall.MOUSEX, 0, 'int'),
+    'mouse_y': (Syscall.MOUSEY, 0, 'int'),
+    'mouse_button': (Syscall.MOUSEBTN, 0, 'int'),
+    # 音频扩展 (播放进度与蜂鸣合成)
+    'audio_pos': (Syscall.AUDIOPOS, 0, 'int'),
+    'beep': (Syscall.AUDIOBEEP, 2, 'int'),
 }
 
-# 内建函数最少参数个数 (按各分支实际索引的最大下标 + 1 得出)。
-# 缺失参数旧代码会直接 IndexError 崩溃 (如 sqrt()、substr("a",1)),
-# 现在统一报 CompilerError。必须与 Go 侧 compiler.builtinMinArgs 保持一致。
 BUILTIN_MIN_ARGS = {
     'println': 0, 'print': 0,
     'sqrt': 1, 'sin': 1, 'cos': 1, 'tan': 1,

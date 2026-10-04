@@ -107,6 +107,22 @@ var hostBuiltins = map[string]hostBuiltin{
 	"termux_camera_photo": {SysTERMUXCAMERA, 1, kInt},
 	"termux_fingerprint":  {SysTERMUXFINGER, 0, kString},
 	"termux_sensor":       {SysTERMUXSENSOR, 1, kString},
+	// 键盘输入监听 (非阻塞轮询)
+	"key_hit":    {SysKEYHIT, 0, kInt},
+	"get_key":    {SysKEYGET, 0, kInt},
+	"key_flush":  {SysKEYFLUSH, 0, kInt},
+	// GUI 窗口 (Windows Win32 / Linux X11, 其他平台优雅失败)
+	"gui_new":      {SysGUINEW, 3, kInt},
+	"gui_update":   {SysGUIUPDATE, 0, kInt},
+	"gui_close":    {SysGUICLOSE, 0, kInt},
+	"gui_closed":   {SysGUICLOSED, 0, kInt},
+	"gui_active":   {SysGUIACTIVE, 0, kInt},
+	"mouse_x":      {SysMOUSEX, 0, kInt},
+	"mouse_y":      {SysMOUSEY, 0, kInt},
+	"mouse_button": {SysMOUSEBTN, 0, kInt},
+	// 音频扩展 (播放进度与蜂鸣合成)
+	"audio_pos": {SysAUDIOPOS, 0, kInt},
+	"beep":      {SysAUDIOBEEP, 2, kInt},
 }
 
 func (c *compiler) emit(op string, args ...ir.Operand) {
