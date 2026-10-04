@@ -236,7 +236,14 @@ class NativeEngine:
         ]
         lib.codecin_crom_unpack.restype = ctypes.c_void_p
         lib.codecin_version.argtypes = []
-        lib.codecin_version.restype = ctypes.c_char_p
+        lib.codecin_version.restype = c_char_p
+
+        # None (arg_count()/arg(i) 恒为 0/空串), 不影响其余原生能力。
+        set_args = getattr(lib, 'codecin_set_args', None)
+        if set_args is not None:
+            set_args.argtypes = [ctypes.POINTER(ctypes.c_char_p), ctypes.c_int]
+            set_args.restype = None
+        self._set_args = set_args
 
     def version(self) -> str:
         try:
@@ -247,10 +254,17 @@ class NativeEngine:
     # ---------------- 原生 VM ----------------
 
     def run(self, bytecode: bytes, mem: bytes, entry: int, sp: int,
-            heap_base: int, input_data: bytes, max_steps: int) -> Optional[Dict[str, Any]]:
+            heap_base: int, input_data: bytes, max_steps: int,
+            args: Optional[List[str]] = None) -> Optional[Dict[str, Any]]:
         bc_buf = ctypes.create_string_buffer(bytecode)
         mem_buf = ctypes.create_string_buffer(bytes(mem), len(mem))
         in_buf = ctypes.create_string_buffer(input_data) if input_data else None
+
+        # 命令行参数注入 (arg_count/arg 的数据源); 旧库无此导出时跳过
+        if args and self._set_args is not None:
+            arr = (ctypes.c_char_p * len(args))(
+                *[a.encode('utf-8') for a in args])
+            self._set_args(arr, len(args))
 
         ptr = self.lib.codecin_run(
             ctypes.cast(bc_buf, ctypes.c_void_p), len(bytecode),

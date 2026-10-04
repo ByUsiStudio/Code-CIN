@@ -1406,6 +1406,7 @@ class CPU:
             heap_base=self.heap_ptr,
             input_data=self.input_buffer.encode('utf-8'),
             max_steps=self.config.max_instructions,
+            args=list(self.config.program_args),
         )
         elapsed = _time.perf_counter() - t0
         if result is None:
