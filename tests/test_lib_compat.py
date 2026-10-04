@@ -94,7 +94,8 @@ function main() -> int {
     if (libc_strrchr("hello", "l") != 3) { return 27 }
     if (libc_strrchr("hello", "z") != -1) { return 28 }
     if (libc_strncmp("hello", "help", 3) != 0) { return 29 }
-    if (libc_strncmp("hello", "help", 4) <= 0) { return 30 }
+    // "hell" < "help" ('l' < 'p') -> 负值
+    if (libc_strncmp("hello", "help", 4) >= 0) { return 30 }
     if (libc_strcmp(libc_strrev("abc"), "cba") != 0) { return 31 }
     if (libc_strcmp(libc_strcat("foo", "bar"), "foobar") != 0) { return 32 }
     if (libc_strcmp(libc_strdup("dup"), "dup") != 0) { return 33 }
@@ -147,7 +148,8 @@ function main() -> int {
     if (stl_str_empty(s) != 0) { return 3 }
     if (stl_str_find(s, "ob") != 2) { return 4 }
     if (stl_str_find(s, "zz") != -1) { return 5 }
-    if (stl_str_rfind(s, "o") != 3) { return 6 }
+    // "foobar" 的 'o' 在下标 1 与 2, 末现是 2
+    if (stl_str_rfind(s, "o") != 2) { return 6 }
     if (strcmp(stl_str_substr(s, 1, 2), "oo") != 0) { return 7 }
     if (stl_str_compare("a", "b") >= 0) { return 8 }
     if (strcmp(stl_str_c_str(s), "foobar") != 0) { return 9 }
