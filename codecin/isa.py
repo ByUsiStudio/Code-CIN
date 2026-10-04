@@ -269,6 +269,12 @@ class Syscall(IntEnum):
     ARGC = 129      # arg_count() -> 传给 CIN 程序的参数个数 (不含程序文件名)
     ARGV = 130      # arg(x0=i) -> 第 i 个参数 (新堆字符串; 越界为空串)
     READLINE = 131  # input_str() -> 读入一行 UTF-8 文本 (不含行尾; EOF 为空串)
+    # ---- 宿主能力: 音频控制增强 (查询 / 暂停恢复 / 音量读取) ----
+    AUDIODUR = 132    # audio_duration() -> 当前播放总时长毫秒 / -1 (无播放或未知)
+    AUDIOPLAYING = 133  # audio_playing() -> 1 正在播放 (未暂停) / 0
+    AUDIOPAUSE = 134  # audio_pause() -> 0 成功 / -1 (无播放或已暂停)
+    AUDIORESUME = 135 # audio_resume() -> 0 成功 / -1 (无暂停可恢复)
+    AUDIOLEVEL = 136  # audio_level() -> 当前音量 0..100 (audio_volume 设置值)
 
 
 class Cond:

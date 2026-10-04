@@ -280,7 +280,7 @@ func opcodeSupported(op uint8) bool {
 }
 
 func syscallSupported(id uint64) bool {
-	return id <= sysREADLINE
+	return id <= sysAUDIOLEVEL
 }
 
 func (vm *vmState) reg(n int) uint64 {
@@ -1146,6 +1146,21 @@ func (vm *vmState) doSyscall(id uint64) string {
 		vm.setReg(0, vm.audioPos())
 	case sysAUDIOBEEP:
 		vm.setReg(0, vm.audioBeep(x0, x1))
+	// 音频控制增强 (查询 / 暂停恢复 / 音量读取)
+	case sysAUDIODUR:
+		vm.setReg(0, vm.audioDuration())
+	case sysAUDIOPLAYING:
+		if audioPlayingNow() {
+			vm.setReg(0, 1)
+		} else {
+			vm.setReg(0, 0)
+		}
+	case sysAUDIOPAUSE:
+		vm.setReg(0, vm.audioPause())
+	case sysAUDIORESUME:
+		vm.setReg(0, vm.audioResume())
+	case sysAUDIOLEVEL:
+		vm.setReg(0, uint64(audioLevelNow()))
 	// 系统原生交互 (文件/进程/环境/系统信息)
 	case sysFILEREAD:
 		vm.setReg(0, vm.fileRead(vm.readCString(x0)))

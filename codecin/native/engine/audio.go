@@ -15,17 +15,19 @@ import (
 
 // 宿主全局音频状态 (同一时刻一个音频流)。
 var (
-	audioMu      sync.Mutex
-	audioActive  bool
-	audioDur     time.Duration
-	audioStarted time.Time
-	audioEnd     time.Time
-	audioLevel   int = 100 // 0..100 (audio_volume; Windows 实时生效, Unix 传入播放器)
-	audioDone    chan struct{}
-	audioTemp    string // 当前播放的临时 WAV 文件路径 (Unix 异步播放时保留)
-	audioCmd     *exec.Cmd
-	audioCmdMu   sync.Mutex
-	audioData    []byte // 播放中的 WAV 字节 (waveOut 直接引用, 保活防 GC)
+	audioMu       sync.Mutex
+	audioActive   bool
+	audioDur      time.Duration
+	audioStarted  time.Time
+	audioEnd      time.Time
+	audioLevel    int = 100 // 0..100 (audio_volume; Windows 实时生效, Unix 传入播放器)
+	audioDone     chan struct{}
+	audioTemp     string // 当前播放的临时 WAV 文件路径 (Unix 异步播放时保留)
+	audioCmd      *exec.Cmd
+	audioCmdMu    sync.Mutex
+	audioData     []byte // 播放中的 WAV 字节 (waveOut 直接引用, 保活防 GC)
+	audioPaused   bool   // audio_pause 之后为 true (audio_pos 冻结在暂停时刻)
+	audioPausedAt time.Time
 )
 
 // MaxResourceBytes 是 FetchResource 的下载/读取上限 (音频等宿主资源)。
@@ -188,6 +190,8 @@ func (vm *vmState) audioPlayBytes(data []byte) uint64 {
 	audioDur = WavDuration(data)
 	audioStarted = time.Now()
 	audioEnd = audioStarted.Add(audioDur)
+	audioPaused = false
+	audioPausedAt = time.Time{}
 	audioDone = make(chan struct{})
 	if audioDur <= 0 {
 		close(audioDone) // 无法确定时长: 立即视为结束
@@ -204,6 +208,8 @@ func (vm *vmState) audioStop() {
 	audioMu.Lock()
 	done := audioDone
 	audioActive = false
+	audioPaused = false
+	audioPausedAt = time.Time{}
 	audioMu.Unlock()
 	stopPlatform()
 	if done != nil {
@@ -228,11 +234,22 @@ func audioLevelNow() int {
 }
 
 // audioPos SYS 126: audio_pos() -> 当前播放已进行毫秒 / -1 (无播放或已播完)。
+// 暂停期间冻结在暂停时刻 (audio_pause 前的进度), 不随真实时间前进。
 func (vm *vmState) audioPos() uint64 {
 	audioMu.Lock()
 	defer audioMu.Unlock()
 	if !audioActive || audioDur <= 0 {
 		return mask64
+	}
+	if audioPaused {
+		el := audioPausedAt.Sub(audioStarted)
+		if el < 0 {
+			el = 0
+		}
+		if el > audioDur {
+			el = audioDur
+		}
+		return uint64(el.Milliseconds())
 	}
 	now := time.Now()
 	if !audioEnd.IsZero() && now.After(audioEnd) {
@@ -243,6 +260,78 @@ func (vm *vmState) audioPos() uint64 {
 		el = audioDur
 	}
 	return uint64(el.Milliseconds())
+}
+
+// audioDuration SYS 132: audio_duration() -> 当前播放总时长毫秒 / -1。
+// 播放与暂停期间都返回总时长; 自然播完 / 未播放 / 时长未知 (WAV 头缺失) 为 -1。
+func (vm *vmState) audioDuration() uint64 {
+	audioMu.Lock()
+	defer audioMu.Unlock()
+	if !audioActive || audioDur <= 0 {
+		return mask64
+	}
+	return uint64(audioDur.Milliseconds())
+}
+
+// audioPlayingNow SYS 133 的判定: 1 表示正在发声 (已开始、未暂停、未播完)。
+func audioPlayingNow() bool {
+	audioMu.Lock()
+	defer audioMu.Unlock()
+	if !audioActive || audioPaused {
+		return false
+	}
+	if audioDur > 0 && !audioEnd.IsZero() && time.Now().After(audioEnd) {
+		return false // 已自然播完
+	}
+	return true
+}
+
+// audioPause SYS 134: audio_pause() -> 0 成功 / -1 (无播放、已暂停或平台失败)。
+// Windows 用 waveOutPause; Unix 向播放器进程投递 SIGSTOP。
+func (vm *vmState) audioPause() uint64 {
+	audioMu.Lock()
+	ok := audioActive && !audioPaused
+	audioMu.Unlock()
+	if !ok || !pausePlatform() {
+		return mask64
+	}
+	audioMu.Lock()
+	defer audioMu.Unlock()
+	// 复核: 平台调用期间可能已被 stop / 自然结束 / 播放完毕
+	if !audioActive || audioPaused {
+		return mask64
+	}
+	audioPaused = true
+	audioPausedAt = time.Now()
+	return 0
+}
+
+// audioResume SYS 135: audio_resume() -> 0 成功 / -1 (无暂停可恢复或平台失败)。
+// 恢复时把播放时间基线整体后移暂停时长, audio_pos / 自然结束时刻保持连续。
+func (vm *vmState) audioResume() uint64 {
+	audioMu.Lock()
+	ok := audioActive && audioPaused
+	pausedAt := audioPausedAt
+	audioMu.Unlock()
+	if !ok || !resumePlatform() {
+		return mask64
+	}
+	audioMu.Lock()
+	defer audioMu.Unlock()
+	if !audioActive || !audioPaused {
+		return mask64
+	}
+	delta := time.Since(pausedAt)
+	if delta < 0 {
+		delta = 0
+	}
+	audioStarted = audioStarted.Add(delta)
+	if !audioEnd.IsZero() {
+		audioEnd = audioEnd.Add(delta)
+	}
+	audioPaused = false
+	audioPausedAt = time.Time{}
+	return 0
 }
 
 func (vm *vmState) audioBeep(freq, ms uint64) uint64 {
