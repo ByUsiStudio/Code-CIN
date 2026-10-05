@@ -1067,6 +1067,8 @@ func (vm *vmState) doSyscall(id uint64) string {
 	x0 := vm.reg(0)
 	x1 := vm.reg(1)
 	x2 := vm.reg(2)
+	x3 := vm.reg(3)
+	x4 := vm.reg(4)
 
 	switch id {
 	case sysABS:
