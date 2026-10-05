@@ -186,15 +186,14 @@ class Statistics:
 
     def display_summary(self, console: Optional[Console] = None,
                         cache_stats: Optional[Dict] = None,
-                        jit_stats: Optional[Dict] = None,
-                        native_used: bool = False) -> None:
+                        native_used: bool = True) -> None:
         if console is None:
             return
 
         table = Table(title="Execution Statistics")
         table.add_column("Metric")
         table.add_column("Value")
-        table.add_row("Engine", "Go native" if native_used else "Python interpreter")
+        table.add_row("Engine", "Go native" if native_used else "Go native (未加载)")
         table.add_row("Total Instructions", str(self.instruction_count))
         table.add_row("Total Cycles", str(self.inst_profiler.get_total_cycles()))
         if self.instruction_count > 0:
@@ -212,10 +211,6 @@ class Statistics:
 
         if cache_stats:
             table.add_row("Cache Hit Rate", f"{cache_stats.get('hit_rate', 0) * 100:.1f}%")
-
-        if jit_stats:
-            table.add_row("JIT Hit Rate", f"{jit_stats.get('hit_rate', 0) * 100:.1f}%")
-            table.add_row("JIT Blocks Compiled", str(jit_stats.get('blocks_compiled', 0)))
 
         console.print(str(table))
 

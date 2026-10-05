@@ -8,6 +8,7 @@ import "C"
 import (
 	"encoding/binary"
 	"fmt"
+	"math"
 	"sync"
 	"unsafe"
 
@@ -22,6 +23,20 @@ import (
 //   mem_len u64 | mem ...
 //   out_len u64 | out ...
 //   err_len u16 | err ...
+
+// v2 结果缓冲布局 (与 codecin/native.py _parse_result_v2 严格一致):
+//   status u8 | NZCV 标志 u8 (bit0=N bit1=Z bit2=C bit3=V) | 2B pad
+//   pc u64  sp u64  heap_ptr u64  steps u64
+//   regs 33×u64
+//   vec  32×4×f64
+//   seg_count u64 | 每段: addr u64 + len u64 + data (脏段, 按地址升序)
+//   out_len u64 | out ...
+//   err_len u16 | err ...
+
+// v2 请求缓冲布局 (与 codecin/native.py _build_request_v2 严格一致):
+//   bc_len u32 | bc ...
+//   seg_count u32 | 每段: addr u64 + len u32 + data (输入内存段)
+//   in_len u32 | in ... (stdin 重定向数据)
 
 // buildVersion 由构建时注入: -ldflags "-X main.buildVersion=<版本>"
 // (codecin/native/build.ps1 / build.sh 会传入 codecin 包版本)。
@@ -135,6 +150,187 @@ func codecin_run(bcPtr unsafe.Pointer, bcLen C.int,
 	res := engine.Run(bc, mem, int64(entry), int64(sp), int64(heapBase),
 		in, int64(maxSteps))
 	return marshalResult(res, mem, int64(sp), int64(heapBase))
+}
+
+// marshalResultV2 把执行结果序列化为 v2 ABI 缓冲 (段式内存, 带 NZCV 与真实向量)。
+func marshalResultV2(res *engine.Result) unsafe.Pointer {
+	const head = 4 + 32 + 33*8 + 32*4*8 + 8 // 1332
+
+	var status byte
+	var flg byte
+	pc, sp, heap, steps := uint64(0), uint64(0), uint64(0), uint64(0)
+	var regs [33]uint64
+	var vec [32][4]float64
+	var segs []engine.MemSeg
+	out := []byte{}
+	errb := []byte{}
+	if res != nil {
+		status = byte(res.Status)
+		pc, sp, heap, steps = uint64(res.Pc), res.Sp, res.HeapPtr, res.Steps
+		regs = res.Regs
+		vec = res.Vec
+		segs = res.Segments
+		out = []byte(res.Output)
+		errb = []byte(res.ErrMsg)
+		if res.Flags.N {
+			flg |= 1
+		}
+		if res.Flags.Z {
+			flg |= 2
+		}
+		if res.Flags.C {
+			flg |= 4
+		}
+		if res.Flags.V {
+			flg |= 8
+		}
+	}
+
+	segsBytes := 0
+	for _, s := range segs {
+		segsBytes += 16 + len(s.Data)
+	}
+	total := head + segsBytes + 8 + len(out) + 2 + len(errb)
+	buf := make([]byte, total)
+
+	buf[0] = status
+	buf[1] = flg
+	pos := 4
+	binary.LittleEndian.PutUint64(buf[pos:], pc)
+	binary.LittleEndian.PutUint64(buf[pos+8:], sp)
+	binary.LittleEndian.PutUint64(buf[pos+16:], heap)
+	binary.LittleEndian.PutUint64(buf[pos+24:], steps)
+	pos = 36
+	for i := 0; i < 33; i++ {
+		binary.LittleEndian.PutUint64(buf[pos+i*8:], regs[i])
+	}
+	pos += 33 * 8
+	for i := 0; i < 32; i++ {
+		for j := 0; j < 4; j++ {
+			binary.LittleEndian.PutUint64(buf[pos:], math.Float64bits(vec[i][j]))
+			pos += 8
+		}
+	}
+	binary.LittleEndian.PutUint64(buf[pos:], uint64(len(segs)))
+	pos += 8
+	for _, s := range segs {
+		binary.LittleEndian.PutUint64(buf[pos:], s.Addr)
+		binary.LittleEndian.PutUint64(buf[pos+8:], uint64(len(s.Data)))
+		copy(buf[pos+16:], s.Data)
+		pos += 16 + len(s.Data)
+	}
+	binary.LittleEndian.PutUint64(buf[pos:], uint64(len(out)))
+	pos += 8
+	copy(buf[pos:], out)
+	pos += len(out)
+	binary.LittleEndian.PutUint16(buf[pos:], uint16(len(errb)))
+	pos += 2
+	copy(buf[pos:], errb)
+
+	cbuf := C.malloc(C.size_t(total))
+	if cbuf == nil {
+		return nil
+	}
+	copy(unsafe.Slice((*byte)(cbuf), total), buf)
+	return cbuf
+}
+
+// errResultV2 是 panic / 参数非法时的 v2 降级结果。
+func errResultV2(msg string, sp0, heap0 int64) unsafe.Pointer {
+	return marshalResultV2(&engine.Result{
+		Status:  engine.StatusError,
+		ErrMsg:  msg,
+		Sp:      uint64(sp0),
+		HeapPtr: uint64(heap0),
+	})
+}
+
+//export codecin_run_v2
+func codecin_run_v2(reqPtr unsafe.Pointer, reqLen C.int,
+	entry, sp, heapBase, memSize, maxSteps, seed, flags C.longlong) (ret unsafe.Pointer) {
+
+	// panic 不得跨越 CGO 边界 (同 codecin_run)。
+	defer func() {
+		if r := recover(); r != nil {
+			ret = errResultV2(fmt.Sprintf("native panic: %v", r),
+				int64(sp), int64(heapBase))
+		}
+	}()
+
+	if reqLen < 0 {
+		return errResultV2("native: negative buffer length",
+			int64(sp), int64(heapBase))
+	}
+
+	var req []byte
+	if reqPtr != nil && reqLen > 0 {
+		req = C.GoBytes(reqPtr, reqLen)
+	}
+	readU32 := func(pos *int) uint32 {
+		if *pos+4 > len(req) {
+			panic("malformed v2 request")
+		}
+		v := binary.LittleEndian.Uint32(req[*pos:])
+		*pos += 4
+		return v
+	}
+
+	opts := &engine.RunOptions{
+		Entry:    int64(entry),
+		SP:       int64(sp),
+		HeapBase: int64(heapBase),
+		MemSize:  int64(memSize),
+		MaxSteps: int64(maxSteps),
+		Seed:     int64(seed),
+		Sandbox:  flags&1 != 0,
+	}
+	pos := 0
+	bcLen := readU32(&pos)
+	if int(bcLen) > len(req)-pos {
+		return errResultV2("native: malformed v2 request (bytecode)",
+			int64(sp), int64(heapBase))
+	}
+	if bcLen > 0 {
+		opts.BC = req[pos : pos+int(bcLen)]
+	}
+	pos += int(bcLen)
+
+	segCount := readU32(&pos)
+	for i := uint32(0); i < segCount; i++ {
+		if pos+12 > len(req) {
+			return errResultV2("native: malformed v2 request (segment)",
+				int64(sp), int64(heapBase))
+		}
+		addr := binary.LittleEndian.Uint64(req[pos:])
+		dataLen := binary.LittleEndian.Uint32(req[pos+8:])
+		pos += 12
+		if int(dataLen) > len(req)-pos {
+			return errResultV2("native: malformed v2 request (segment data)",
+				int64(sp), int64(heapBase))
+		}
+		if dataLen > 0 {
+			opts.Segments = append(opts.Segments, engine.MemSeg{
+				Addr: addr, Data: req[pos : pos+int(dataLen)],
+			})
+		}
+		pos += int(dataLen)
+	}
+
+	inLen := readU32(&pos)
+	if int(inLen) > len(req)-pos {
+		return errResultV2("native: malformed v2 request (input)",
+			int64(sp), int64(heapBase))
+	}
+	if inLen > 0 {
+		opts.Input = req[pos : pos+int(inLen)]
+	}
+	_ = pos
+
+	res := engine.RunV2(opts)
+	if res == nil {
+		return errResultV2("native: no result", int64(sp), int64(heapBase))
+	}
+	return marshalResultV2(res)
 }
 
 //export codecin_free

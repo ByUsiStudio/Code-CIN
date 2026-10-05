@@ -1,134 +1,38 @@
 import struct
-from typing import Dict, Iterator, Optional, Tuple
+from typing import Dict, Iterator, List, Optional, Tuple
 
 from .console import Console, Table
-from .errors import MemoryAccessError, PageFaultError
+from .errors import MemoryAccessError
 
-# ==================== MMU / 分页 (B1) ====================
+# ==================== 稀疏内存 ====================
+# 程序内存按需分配: 逻辑大小可达 1 GiB, 只有被写过的 4 KiB 页才占真实内存。
+# 这与 Go 原生引擎的 make([]byte, memSize) (OS 懒提交) 行为一致:
+# 读未写过的地址返回 0, 写入时才真正落页。
 
 
-class Mmu:
-    """扁平 4K 页表: vpn -> (ppn, perms)。
-
-    - 默认按需 identity 映射 (vpn == ppn, perms='rwx');
-    - unmap 后访问触发 PageFaultError; 权限位按 'r'/'w'/'x' 检查。
-    """
-
+class FastMemory:
     PAGE_BITS = 12
     PAGE_SIZE = 1 << PAGE_BITS
     PAGE_MASK = PAGE_SIZE - 1
 
-    def __init__(self, mem_size: int):
-        self.mem_size = mem_size
-        self.pages: Dict[int, Tuple[int, str]] = {}
-        self._blacklist = set()   # 显式 unmap 的 vpn (禁止 identity 回填)
-        self._identity = True     # 未显式配置/未 unmap 的页按 identity 映射
-
-    def _page_count(self) -> int:
-        return (self.mem_size + self.PAGE_SIZE - 1) // self.PAGE_SIZE
-
-    def reset(self, mem_size: Optional[int] = None) -> None:
-        if mem_size is not None:
-            self.mem_size = mem_size
-        self.pages = {}
-        self._blacklist = set()
-
-    def map(self, vpn: int, ppn: Optional[int] = None,
-            perms: str = 'rwx') -> None:
-        """映射 vpn; 缺省 ppn 采用 identity (ppn = vpn)。"""
-        if ppn is None:
-            ppn = vpn
-        self.pages[vpn] = (ppn, perms)
-        self._blacklist.discard(vpn)
-
-    def map_page(self, vaddr: int, paddr: int, perms: str = 'rwx') -> None:
-        self.map(vaddr >> self.PAGE_BITS, paddr >> self.PAGE_BITS, perms)
-
-    def unmap(self, vaddr: int) -> bool:
-        vpn = vaddr >> self.PAGE_BITS
-        self._blacklist.add(vpn)
-        return self.pages.pop(vpn, None) is not None
-
-    def protect(self, vaddr: int, perms: str) -> None:
-        vpn = vaddr >> self.PAGE_BITS
-        if vpn in self.pages:
-            ppn, _ = self.pages[vpn]
-        elif vpn in self._blacklist:
-            raise MemoryAccessError(
-                f"Cannot protect unmapped page {vpn} (0x{vaddr:x})")
-        else:
-            ppn = vpn
-        self.pages[vpn] = (ppn, perms)
-        self._blacklist.discard(vpn)
-
-    def is_mapped(self, vaddr: int) -> bool:
-        vpn = vaddr >> self.PAGE_BITS
-        return vpn in self.pages or (self._identity and vpn not in self._blacklist)
-
-    def translate(self, vaddr: int, access: str) -> int:
-        vpn = vaddr >> self.PAGE_BITS
-        off = vaddr & self.PAGE_MASK
-        ent = self.pages.get(vpn)
-        if ent is None:
-            if self._identity and vpn not in self._blacklist:
-                ent = (vpn, 'rwx')     # 懒 identity
-                self.pages[vpn] = ent
-            else:
-                raise PageFaultError(
-                    f"Page fault at virtual 0x{vaddr:x} (page {vpn} unmapped)")
-        ppn, perms = ent
-        if access not in perms:
-            raise MemoryAccessError(
-                f"Page protection violation at 0x{vaddr:x} for '{access}'")
-        paddr = (ppn << self.PAGE_BITS) | off
-        if not 0 <= paddr < self.mem_size:
-            raise PageFaultError(
-                f"Physical address 0x{paddr:x} out of memory (size "
-                f"0x{self.mem_size:x})")
-        return paddr
-
-
-# ==================== 内存 ====================
-
-
-class FastMemory:
-    def __init__(self, size: int = 64 * 1024):
+    def __init__(self, size: int = 1 << 30):
         self._size = size
-        self._memory = bytearray(size)
-        self._view = memoryview(self._memory)
+        self._pages: Dict[int, bytearray] = {}
         self._protection: Dict[int, str] = {}
-        # B1: 可选 MMU (None = 关)
-        self._mmu: Optional[Mmu] = None
         # 调试日志钩子 (DEBUG 级别记录每次读写)
         self._log = None
 
-    # ---------------- MMU ----------------
+    # ---------------- 页管理 ----------------
 
-    def attach_mmu(self, mmu: Optional[Mmu]) -> None:
-        self._mmu = mmu
+    def _page(self, idx: int) -> Optional[bytearray]:
+        return self._pages.get(idx)
 
-    @property
-    def mmu(self) -> Optional[Mmu]:
-        return self._mmu
-
-    def _phys(self, addr: int, access: str) -> int:
-        if self._mmu is None:
-            return addr
-        return self._mmu.translate(addr, access)
-
-    def _chunks(self, addr: int, size: int, access: str
-                ) -> Iterator[Tuple[int, int]]:
-        """把 [addr, addr+size) 翻译为物理分块 (含 MMU 分页)。"""
-        if self._mmu is None:
-            yield addr, size
-            return
-        end = addr + size
-        while addr < end:
-            paddr = self._mmu.translate(addr, access)
-            step = min(self._mmu.PAGE_SIZE - (addr & self._mmu.PAGE_MASK),
-                       end - addr)
-            yield paddr, step
-            addr += step
+    def _ensure_page(self, idx: int) -> bytearray:
+        page = self._pages.get(idx)
+        if page is None:
+            page = bytearray(self.PAGE_SIZE)
+            self._pages[idx] = page
+        return page
 
     def attach_logger(self, logger) -> None:
         """挂接日志器, DEBUG 级别下记录所有内存读写。"""
@@ -149,25 +53,21 @@ class FastMemory:
     def size(self) -> int:
         return self._size
 
+    @property
+    def resident_bytes(self) -> int:
+        """实际占用的物理内存字节数 (已分配页)。"""
+        return len(self._pages) * self.PAGE_SIZE
+
     def reset(self, size: Optional[int] = None) -> None:
         if size is not None:
             self._size = size
-        self._memory = bytearray(self._size)
-        self._view = memoryview(self._memory)
+        self._pages.clear()
         self._protection.clear()
-        if self._mmu is not None:
-            self._mmu.reset(self._size)
 
     def resize(self, new_size: int) -> None:
         if new_size <= self._size:
             return
-        new_mem = bytearray(new_size)
-        new_mem[:self._size] = self._memory
-        self._memory = new_mem
-        self._view = memoryview(self._memory)
         self._size = new_size
-        if self._mmu is not None:
-            self._mmu.reset(self._size)
 
     def set_protection(self, addr: int, perms: str, size: int = 1) -> None:
         for i in range(size):
@@ -207,109 +107,118 @@ class FastMemory:
     # ---------------- 单字节 ----------------
 
     def read_byte(self, addr: int) -> int:
-        p = self._phys(addr, 'r')
-        self._check_bounds(p)
-        self._check_protection(p, 'r')
-        v = self._view[p]
+        self._check_bounds(addr)
+        self._check_protection(addr, 'r')
+        page = self._page(addr >> self.PAGE_BITS)
+        v = page[addr & self.PAGE_MASK] if page is not None else 0
         if self._mem_trace:
             self._trace_mem('RD', addr, v, 1)
         return v
 
     def write_byte(self, addr: int, value: int) -> None:
-        p = self._phys(addr, 'w')
-        self._check_bounds(p)
-        self._check_protection(p, 'w')
-        self._view[p] = value & 0xFF
+        self._check_bounds(addr)
+        self._check_protection(addr, 'w')
+        self._ensure_page(addr >> self.PAGE_BITS)[addr & self.PAGE_MASK] = value & 0xFF
         if self._mem_trace:
             self._trace_mem('WR', addr, value & 0xFF, 1)
 
-    # ---------------- 定宽多字节 (要求不跨页) ----------------
-
-    def _rw_phys(self, addr: int, width: int, access: str) -> int:
-        p = self._phys(addr, access)
-        self._check_bounds(p, width)
-        self._check_protection(p, access)
-        return p
+    # ---------------- 定宽多字节 (4 KiB 页内不跨页的问题与旧实现一致) ----------------
 
     def read_word(self, addr: int) -> int:
-        p = self._rw_phys(addr, 2, 'r')
-        v = struct.unpack_from('<H', self._view, p)[0]
-        if self._mem_trace:
-            self._trace_mem('RD', addr, v, 2)
-        return v
+        self._check_bounds(addr, 2)
+        self._check_protection(addr, 'r')
+        return self._read_into(addr, 2, '<H')
 
     def write_word(self, addr: int, value: int) -> None:
-        p = self._rw_phys(addr, 2, 'w')
-        struct.pack_into('<H', self._view, p, value & 0xFFFF)
-        if self._mem_trace:
-            self._trace_mem('WR', addr, value & 0xFFFF, 2)
+        self._check_bounds(addr, 2)
+        self._check_protection(addr, 'w')
+        self._write_from(addr, 2, struct.pack('<H', value & 0xFFFF))
 
     def read_dword(self, addr: int) -> int:
-        p = self._rw_phys(addr, 4, 'r')
-        v = struct.unpack_from('<I', self._view, p)[0]
-        if self._mem_trace:
-            self._trace_mem('RD', addr, v, 4)
-        return v
+        self._check_bounds(addr, 4)
+        self._check_protection(addr, 'r')
+        return self._read_into(addr, 4, '<I')
 
     def write_dword(self, addr: int, value: int) -> None:
-        p = self._rw_phys(addr, 4, 'w')
-        struct.pack_into('<I', self._view, p, value & 0xFFFFFFFF)
-        if self._mem_trace:
-            self._trace_mem('WR', addr, value & 0xFFFFFFFF, 4)
+        self._check_bounds(addr, 4)
+        self._check_protection(addr, 'w')
+        self._write_from(addr, 4, struct.pack('<I', value & 0xFFFFFFFF))
 
     def read_qword(self, addr: int) -> int:
-        p = self._rw_phys(addr, 8, 'r')
-        v = struct.unpack_from('<Q', self._view, p)[0]
-        if self._mem_trace:
-            self._trace_mem('RD', addr, v, 8)
-        return v
+        self._check_bounds(addr, 8)
+        self._check_protection(addr, 'r')
+        return self._read_into(addr, 8, '<Q')
 
     def write_qword(self, addr: int, value: int) -> None:
-        p = self._rw_phys(addr, 8, 'w')
-        struct.pack_into('<Q', self._view, p, value & 0xFFFFFFFFFFFFFFFF)
-        if self._mem_trace:
-            self._trace_mem('WR', addr, value & 0xFFFFFFFFFFFFFFFF, 8)
+        self._check_bounds(addr, 8)
+        self._check_protection(addr, 'w')
+        self._write_from(addr, 8, struct.pack('<Q', value & 0xFFFFFFFFFFFFFFFF))
 
     def read_float(self, addr: int) -> float:
-        p = self._rw_phys(addr, 4, 'r')
-        return struct.unpack_from('<f', self._view, p)[0]
+        self._check_bounds(addr, 4)
+        self._check_protection(addr, 'r')
+        return struct.unpack('<f', self._raw_read(addr, 4))[0]
 
     def write_float(self, addr: int, value: float) -> None:
-        p = self._rw_phys(addr, 4, 'w')
-        struct.pack_into('<f', self._view, p, value)
+        self._check_bounds(addr, 4)
+        self._check_protection(addr, 'w')
+        self._write_from(addr, 4, struct.pack('<f', value))
 
     def read_double(self, addr: int) -> float:
-        p = self._rw_phys(addr, 8, 'r')
-        return struct.unpack_from('<d', self._view, p)[0]
+        self._check_bounds(addr, 8)
+        self._check_protection(addr, 'r')
+        return struct.unpack('<d', self._raw_read(addr, 8))[0]
 
     def write_double(self, addr: int, value: float) -> None:
-        p = self._rw_phys(addr, 8, 'w')
-        struct.pack_into('<d', self._view, p, value)
+        self._check_bounds(addr, 8)
+        self._check_protection(addr, 'w')
+        self._write_from(addr, 8, struct.pack('<d', value))
+
+    def _raw_read(self, addr: int, size: int) -> bytes:
+        """读 [addr, addr+size); 未分配页返回 0。"""
+        out = bytearray(size)
+        pos = 0
+        while pos < size:
+            a = addr + pos
+            page = self._page(a >> self.PAGE_BITS)
+            if page is not None:
+                off = a & self.PAGE_MASK
+                n = min(self.PAGE_SIZE - off, size - pos)
+                out[pos:pos + n] = page[off:off + n]
+                pos += n
+            else:
+                pos += self.PAGE_SIZE - (a & self.PAGE_MASK)
+        return bytes(out)
+
+    def _raw_write(self, addr: int, data: bytes) -> None:
+        """写 [addr, addr+len(data)); 按需分配页。"""
+        pos = 0
+        while pos < len(data):
+            a = addr + pos
+            page = self._ensure_page(a >> self.PAGE_BITS)
+            off = a & self.PAGE_MASK
+            n = min(self.PAGE_SIZE - off, len(data) - pos)
+            page[off:off + n] = data[pos:pos + n]
+            pos += n
+
+    def _read_into(self, addr: int, width: int, fmt: str) -> int:
+        return struct.unpack(fmt, self._raw_read(addr, width))[0]
+
+    def _write_from(self, addr: int, width: int, raw: bytes) -> None:
+        self._raw_write(addr, raw)
 
     # ---------------- 块 / 字符串 ----------------
 
     def read_block(self, addr: int, size: int) -> bytes:
         self._check_bounds(addr, size)
         self._check_protection_range(addr, size, 'r')
-        if self._mmu is None:
-            return bytes(self._view[addr:addr + size])
-        parts = []
-        for p, step in self._chunks(addr, size, 'r'):
-            parts.append(bytes(self._view[p:p + step]))
-        return b''.join(parts)
+        return self._raw_read(addr, size)
 
     def write_block(self, addr: int, data) -> None:
         size = len(data)
         self._check_bounds(addr, size)
         self._check_protection_range(addr, size, 'w')
-        if self._mmu is None:
-            self._view[addr:addr + size] = data
-            return
-        src = bytes(data)
-        off = 0
-        for p, step in self._chunks(addr, size, 'w'):
-            self._view[p:p + step] = src[off:off + step]
-            off += step
+        self._raw_write(addr, bytes(data))
 
     def read_string(self, addr: int, max_len: int = 4096) -> str:
         chars = []
@@ -346,10 +255,37 @@ class FastMemory:
     def load_bytes(self, addr: int, data) -> None:
         self.write_block(addr, bytes(data))
 
+    def snapshot_segments(self) -> List[Tuple[int, bytes]]:
+        """返回全部已分配内容为 (页起始地址, 数据) 列表, 按地址升序。
+
+        段式格式 (CROM v4 / bin v3 / native v2 ABI) 的统一出口。
+        """
+        segs = []
+        for idx in sorted(self._pages):
+            segs.append((idx << self.PAGE_BITS, bytes(self._pages[idx])))
+        return segs
+
+    def load_segments(self, segs: List[Tuple[int, bytes]]) -> None:
+        """用 (addr, data) 列表恢复内容 (不清空现有页)。"""
+        for addr, data in segs:
+            self.write_block(addr, data)
+
     def get_snapshot(self, start: int = 0, count: int = -1) -> bytes:
-        if count < 0:
-            count = self._size - start
-        return bytes(self._view[start:start + count])
+        """读取一段连续内容 (未分配页为 0)。
+
+        count < 0 时读到最后一个已写字节为止 (稀疏友好: 不会输出
+        整个逻辑空间的零填充, 与旧的整块快照在测试语义上兼容)。
+        """
+        if count >= 0:
+            return self._raw_read(start, count)
+        end = start
+        for idx in self._pages:
+            page_end = (idx << self.PAGE_BITS) + self.PAGE_SIZE
+            if page_end > end:
+                end = page_end
+        if end <= start:
+            return b''
+        return self._raw_read(start, end - start)
 
     def display_memory(self, title: str = "Memory Dump", start: int = 0,
                        count: int = 32, console: Optional[Console] = None) -> None:
@@ -362,7 +298,7 @@ class FastMemory:
         table.add_column("Prot")
         end = min(start + count, self._size)
         for i in range(start, end, 16):
-            chunk = self._view[i:min(i + 16, end)]
+            chunk = self._raw_read(i, min(16, end - i))
             hex_str = ' '.join(f'{b:02X}' for b in chunk)
             ascii_str = ''.join(chr(b) if 32 <= b <= 126 else '.' for b in chunk)
             perm = self._protection.get(i, 'rwx')

@@ -3,10 +3,11 @@
 通过 ctypes 加载 Go 编译的共享库 (Windows: codecin_native.dll,
 Linux/Termux: libcodecin_native.so, macOS: libcodecin_native.dylib),
 提供:
-  1. 原生字节码 VM (codecin_run)  -- 整程序高速执行
+  1. 原生字节码 VM (codecin_run_v2) -- 整程序高速执行 (段式内存 ABI)
   2. CROM 压缩/解压 (codecin_crom_pack / codecin_crom_unpack)
 
-库不存在或加载失败时所有接口返回 None, 调用方自动回退纯 Python。
+v2 ABI: 程序内存默认 1 GiB, 不再整块传输 -- 调用方只传初始内存段,
+原生执行后只回传脏段 (64 KiB 页粒度合并)。
 
 字节码格式 (UCBC):
   头部: magic[4]='UCBC' version u8 entry u32 instr_count u32
@@ -215,14 +216,14 @@ class NativeEngine:
 
     def _configure(self) -> None:
         lib = self.lib
-        lib.codecin_run.argtypes = [
-            ctypes.c_void_p, ctypes.c_int,       # bytecode, len
-            ctypes.c_void_p, ctypes.c_int,       # mem, len
-            ctypes.c_longlong, ctypes.c_longlong, ctypes.c_longlong,  # entry, sp, heap
-            ctypes.c_void_p, ctypes.c_int,       # input, len
-            ctypes.c_longlong,                   # max steps
+        lib.codecin_run_v2.argtypes = [
+            ctypes.c_void_p, ctypes.c_int,       # 请求缓冲 (bc+段+输入), len
+            ctypes.c_longlong, ctypes.c_longlong,  # entry, sp
+            ctypes.c_longlong, ctypes.c_longlong,  # heapBase, memSize
+            ctypes.c_longlong,                   # maxSteps
+            ctypes.c_longlong, ctypes.c_longlong,  # seed, flags (bit0=sandbox)
         ]
-        lib.codecin_run.restype = ctypes.c_void_p
+        lib.codecin_run_v2.restype = ctypes.c_void_p
         lib.codecin_free.argtypes = [ctypes.c_void_p]
         lib.codecin_free.restype = None
         lib.codecin_crom_pack.argtypes = [
@@ -251,80 +252,110 @@ class NativeEngine:
         except Exception:
             return "unknown"
 
-    # ---------------- 原生 VM ----------------
+    # ---------------- 原生 VM (v2 段式 ABI) ----------------
 
-    def run(self, bytecode: bytes, mem: bytes, entry: int, sp: int,
-            heap_base: int, input_data: bytes, max_steps: int,
-            args: Optional[List[str]] = None) -> Optional[Dict[str, Any]]:
-        bc_buf = ctypes.create_string_buffer(bytecode)
-        mem_buf = ctypes.create_string_buffer(bytes(mem), len(mem))
-        in_buf = ctypes.create_string_buffer(input_data) if input_data else None
+    def _build_request_v2(self, bytecode: bytes, segments, input_data: bytes) -> bytes:
+        """打包 v2 请求缓冲:
+        bc_len u32 | bc | seg_count u32 | 每段 (addr u64 + len u32 + data) |
+        in_len u32 | input
+        (与 native/main.go codecin_run_v2 的解析严格一致)
+        """
+        out = bytearray()
+        out += struct.pack('<I', len(bytecode))
+        out += bytecode
+        segs = [(int(a), bytes(d)) for a, d in (segments or []) if d]
+        out += struct.pack('<I', len(segs))
+        for addr, data in segs:
+            out += struct.pack('<QI', addr, len(data))
+            out += data
+        out += struct.pack('<I', len(input_data))
+        out += input_data
+        return bytes(out)
+
+    def run_v2(self, bytecode: bytes, segments, entry: int, sp: int,
+               heap_base: int, mem_size: int, input_data: bytes = b'',
+               max_steps: int = 0, args: Optional[List[str]] = None,
+               seed: Optional[int] = None, sandbox: bool = False
+               ) -> Optional[Dict[str, Any]]:
+        req = self._build_request_v2(bytecode, segments, input_data)
+        req_buf = ctypes.create_string_buffer(req, len(req))
 
         # 命令行参数注入 (arg_count/arg 的数据源)。每次运行都注入 (空列表
-        # 即清空), 避免同一进程内多次运行时上一次的参数残留; 旧库无此导出
-        # 时跳过 (arg_count 恒 0)。
+        # 即清空), 避免同一进程内多次运行时上一次的参数残留。
         if self._set_args is not None:
             enc = [a.encode('utf-8') for a in (args or [])]
             arr = (ctypes.c_char_p * len(enc))(*enc)
             self._set_args(arr, len(enc))
 
-        ptr = self.lib.codecin_run(
-            ctypes.cast(bc_buf, ctypes.c_void_p), len(bytecode),
-            ctypes.cast(mem_buf, ctypes.c_void_p), len(mem),
-            entry, sp, heap_base,
-            ctypes.cast(in_buf, ctypes.c_void_p) if in_buf else None,
-            len(input_data),
+        flags = 1 if sandbox else 0
+        ptr = self.lib.codecin_run_v2(
+            ctypes.cast(req_buf, ctypes.c_void_p), len(req),
+            entry, sp, heap_base, mem_size,
             max_steps,
+            int(seed) if seed else 0,
+            flags,
         )
         if not ptr:
             return None
         try:
-            return self._parse_result(ptr)
+            return self._parse_result_v2(ptr)
         finally:
             self.lib.codecin_free(ptr)
 
-    def _parse_result(self, ptr: int) -> Dict[str, Any]:
+    def _parse_result_v2(self, ptr: int) -> Dict[str, Any]:
         base = ptr
-        view = ctypes.string_at(base, 64)
-        status = view[0]
-        pc, sp, heap_ptr, steps = struct.unpack_from('<QQQQ', view, 4)
-        off = 4 + 32
+        head = ctypes.string_at(base, 36)
+        status = head[0]
+        flg = head[1]
+        pc, sp, heap_ptr, steps = struct.unpack_from('<QQQQ', head, 4)
+        off = 36
         regs_raw = ctypes.string_at(base + off, 33 * 8)
         off += 33 * 8
         vec_raw = ctypes.string_at(base + off, 32 * 4 * 8)
         off += 32 * 4 * 8
-        mem_len = struct.unpack_from('<Q', ctypes.string_at(base + off, 8), 0)[0]
+        seg_count = struct.unpack_from(
+            '<Q', ctypes.string_at(base + off, 8), 0)[0]
         off += 8
-        mem_data = bytes(ctypes.string_at(base + off, mem_len)) if mem_len else b''
-        off += mem_len
+        segments: List[Tuple[int, bytes]] = []
+        for _ in range(seg_count):
+            hdr = ctypes.string_at(base + off, 16)
+            seg_addr, seg_len = struct.unpack('<QQ', hdr)
+            off += 16
+            data = bytes(ctypes.string_at(base + off, seg_len)) if seg_len else b''
+            off += seg_len
+            segments.append((seg_addr, data))
         out_len = struct.unpack_from('<Q', ctypes.string_at(base + off, 8), 0)[0]
         off += 8
         out_data = bytes(ctypes.string_at(base + off, out_len)) if out_len else b''
         off += out_len
         err_len = struct.unpack_from('<H', ctypes.string_at(base + off, 2), 0)[0]
         off += 2
-        err_msg = ctypes.string_at(base + off, err_len).decode('utf-8', 'replace') if err_len else ''
+        err_msg = ctypes.string_at(base + off, err_len).decode(
+            'utf-8', 'replace') if err_len else ''
 
         regs = list(struct.unpack('<33Q', regs_raw))
         vec_flat = struct.unpack(f'<{32 * 4}d', vec_raw)
         vec_regs = [list(vec_flat[i * 4:(i + 1) * 4]) for i in range(32)]
 
+        flags = {'N': bool(flg & 1), 'Z': bool(flg & 2),
+                 'C': bool(flg & 4), 'V': bool(flg & 8)}
+
         error = None
         if status == 2:
-            error = 'unsupported'
+            error = err_msg or 'unsupported instruction'
         elif status == 3:
             error = err_msg or 'runtime error'
 
         return {
             'status': status,
-            'halted': status == 0,
+            'flags': flags,
             'pc': pc,
             'sp': sp,
             'heap_ptr': heap_ptr,
             'steps': steps,
             'regs': regs,
             'vec_regs': vec_regs,
-            'mem': mem_data,
+            'segments': segments,
             'output': out_data.decode('utf-8', 'replace'),
             'error': error,
         }
@@ -379,7 +410,7 @@ def get_engine(logger=None) -> Optional[NativeEngine]:
         except (OSError, AttributeError) as e:
             # OSError: 架构不符 / 依赖缺失 / 不是动态库
             # AttributeError: 能加载但缺导出符号或 ABI 版本不符 (例如旁边的旧库)
-            # 两种情况都应继续尝试下一个候选并最终回退纯 Python, 而不是让整个运行炸掉。
+            # 两种情况都应继续尝试下一个候选, 而不是让整个运行炸掉。
             failures.append((path, e))
             if logger:
                 logger.debug(f"Failed to load native library {path}: {e}")
@@ -387,7 +418,8 @@ def get_engine(logger=None) -> Optional[NativeEngine]:
 
     if engine is None and failures and logger:
         path, err = failures[-1]
-        logger.warning(f"原生库不可用, 回退纯 Python 解释执行: {path} ({err})")
+        logger.warning(f"原生库不可用 (v5.9.0 起无解释器回退, 请重建原生库): "
+                       f"{path} ({err})")
 
     _LIB_CACHE = engine
     return engine

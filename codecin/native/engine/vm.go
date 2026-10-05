@@ -47,6 +47,7 @@ type vmState struct {
 	entry     int
 	mem       []byte
 	regs      [33]uint64
+	vec       [32][4]float64
 	sp        uint64
 	pc        int
 	heapPtr   uint64
@@ -63,6 +64,66 @@ type vmState struct {
 	inPos     int
 	args      []string // 传给 CIN 程序的命令行参数 (arg_count / arg)
 	emptyStr  uint64   // 预留空串地址 (宿主调用返回失败时的安全空串)
+	sandbox   bool     // 沙箱模式: 屏蔽宿主能力系统调用
+	// 脏页位图 (稀疏内存回传用): 64KB 页, 每 bit 一页。
+	dirtyBits  []uint64
+	lastHTTPSt int64 // 最近一次 http_req 的状态码 (-1 无请求)
+}
+
+// dirtyPageBits 每页一个 bit; 1 GiB 内存 = 16384 页 = 2 KiB 位图。
+const dirtyPageShift = 16 // 2^16 = 64 KiB
+
+// touch 标记 [addr, addr+n) 覆盖的页为脏 (写内存必须经过这里)。
+// 位图不足时自动扩容 (手工构造的 vmState / 高地址写入均安全)。
+func (vm *vmState) touch(addr, n uint64) {
+	if n == 0 {
+		n = 1
+	}
+	first := addr >> dirtyPageShift
+	last := (addr + n - 1) >> dirtyPageShift
+	for p := first; p <= last; p++ {
+		idx := p >> 6
+		if idx >= uint64(len(vm.dirtyBits)) {
+			grow := make([]uint64, idx+1)
+			copy(grow, vm.dirtyBits)
+			vm.dirtyBits = grow
+		}
+		vm.dirtyBits[idx] |= 1 << (p & 63)
+	}
+}
+
+// dirtySegments 收集脏页并合并成相邻段 (按地址升序)。
+func (vm *vmState) dirtySegments() []MemSeg {
+	var segs []MemSeg
+	n := uint64(len(vm.dirtyBits)) * 64
+	memLen := uint64(len(vm.mem))
+	start, end := uint64(0), uint64(0) // 当前合并段 [start, end) 页号
+	flush := func() {
+		if end > start {
+			lo := start << dirtyPageShift
+			if lo >= memLen {
+				return
+			}
+			hi := end << dirtyPageShift
+			if hi > memLen {
+				hi = memLen // 末页可能超出实际内存大小
+			}
+			segs = append(segs, MemSeg{Addr: lo, Data: vm.mem[lo:hi:hi]})
+		}
+	}
+	for p := uint64(0); p < n; p++ {
+		if vm.dirtyBits[p>>6]&(1<<(p&63)) == 0 {
+			continue
+		}
+		if end == p { // 连续: 扩段
+			end = p + 1
+			continue
+		}
+		flush()
+		start, end = p, p+1
+	}
+	flush()
+	return segs
 }
 
 // maxOutputBytes 限制单次运行的输出总量: 程序用无限打印不能把宿主 OOM。
@@ -121,16 +182,40 @@ func (vm *vmState) enterDirectOut() {
 	}
 }
 
-// Result 是 Run 的执行结果。
+// MemSeg 是一段连续内存: [Addr, Addr+len(Data))。
+type MemSeg struct {
+	Addr uint64
+	Data []byte
+}
+
+// Result 是 RunV2 的执行结果。
 type Result struct {
-	Status  int
-	Pc      int
-	Sp      uint64
-	HeapPtr uint64
-	Steps   uint64
-	Regs    [33]uint64
-	Output  string
-	ErrMsg  string
+	Status   int
+	Pc       int
+	Sp       uint64
+	HeapPtr  uint64
+	Steps    uint64
+	Regs     [33]uint64
+	Vec      [32][4]float64
+	Flags    struct{ N, Z, C, V bool }
+	Output   string
+	ErrMsg   string
+	Segments []MemSeg // 脏页合并段 (稀疏内存回传)
+	MemSize  int64
+}
+
+// RunOptions 是 RunV2 的参数。
+type RunOptions struct {
+	BC       []byte   // UCBC 字节码
+	Segments []MemSeg // 初始内存段 (数据段 / .crom 恢复内容)
+	Entry    int64
+	SP       int64
+	HeapBase int64
+	MemSize  int64 // 逻辑内存大小 (引擎按此分配, OS 懒提交)
+	Input    []byte
+	MaxSteps int64
+	Sandbox  bool  // 沙箱: 屏蔽宿主能力系统调用
+	Seed     int64 // 随机种子; 0 = 时间随机
 }
 
 func decodeBytecode(bc []byte) ([]instruction, int, bool) {
@@ -188,28 +273,58 @@ func decodeBytecode(bc []byte) ([]instruction, int, bool) {
 	return prog, int(entry), true
 }
 
-// Run 执行程序字节码, 返回结果快照。mem 会被原地修改 (数据段/堆/栈写入)。
-func Run(bc []byte, mem []byte, entry, sp, heapBase int64, inData []byte,
-	maxSteps int64) *Result {
-
-	prog, ent, ok := decodeBytecode(bc)
+// RunV2 执行程序字节码, 返回结果快照。内存按 MemSize 由引擎分配 (稀疏:
+// OS 懒提交), 初始内容来自 Segments, 执行后按脏页回传 Segments。
+func RunV2(opts *RunOptions) *Result {
+	prog, ent, ok := decodeBytecode(opts.BC)
 	if !ok {
 		return &Result{Status: StatusError, ErrMsg: "bad bytecode"}
 	}
+	entry := int(opts.Entry)
 	if entry >= 0 {
-		ent = int(entry)
+		ent = entry
+	}
+	memSize := opts.MemSize
+	if memSize < 256 {
+		memSize = 256
+	}
+	if memSize > 1<<40 {
+		memSize = 1 << 40
+	}
+	mem := make([]byte, memSize)
+	for _, seg := range opts.Segments {
+		if seg.Addr >= uint64(memSize) || len(seg.Data) == 0 {
+			continue
+		}
+		n := uint64(len(seg.Data))
+		if seg.Addr+n > uint64(memSize) {
+			n = uint64(memSize) - seg.Addr
+		}
+		copy(mem[seg.Addr:seg.Addr+n], seg.Data)
 	}
 	vm := &vmState{
 		prog:     prog,
 		entry:    ent,
 		mem:      mem,
-		sp:       uint64(sp),
+		sp:       uint64(opts.SP),
 		pc:       ent,
-		heapPtr:  uint64(heapBase),
-		heapBase: uint64(heapBase),
+		heapPtr:  uint64(opts.HeapBase),
+		heapBase: uint64(opts.HeapBase),
 		rng:      rand.New(rand.NewSource(time.Now().UnixNano())),
-		inData:   inData,
+		inData:   opts.Input,
 		args:     currentProgramArgs(),
+		sandbox:  opts.Sandbox,
+	}
+	if opts.Seed != 0 {
+		vm.rng.Seed(opts.Seed)
+	}
+	vm.dirtyBits = make([]uint64,
+		(uint64(memSize)+(1<<(dirtyPageShift+6))-1)>>(dirtyPageShift+6))
+	// 初始段视为已写内容: 数据段通常会被改写, 直接并入脏位图, 免去逐字节 touch。
+	for _, seg := range opts.Segments {
+		if seg.Addr < uint64(memSize) && len(seg.Data) > 0 {
+			vm.touch(seg.Addr, uint64(len(seg.Data)))
+		}
 	}
 
 	// 键盘监听可能切换终端 raw mode, 任何出口都必须恢复 (幂等)
@@ -223,24 +338,29 @@ func Run(bc []byte, mem []byte, entry, sp, heapBase int64, inData []byte,
 				errMsg = "output limit exceeded (16 MiB)"
 			}
 		}
-		return &Result{
+		r := &Result{
 			Status:  status,
 			Pc:      vm.pc,
 			Sp:      vm.sp,
 			HeapPtr: vm.heapPtr,
 			Steps:   vm.steps,
 			Regs:    vm.regs,
+			Vec:     vm.vec,
 			Output:  vm.out.String(),
 			ErrMsg:  errMsg,
+			MemSize: memSize,
 		}
+		r.Flags.N, r.Flags.Z, r.Flags.C, r.Flags.V = vm.flags.N, vm.flags.Z, vm.flags.C, vm.flags.V
+		r.Segments = vm.dirtySegments()
+		return r
 	}
 
 	for {
-		if maxSteps > 0 && int64(vm.steps) >= maxSteps {
+		if opts.MaxSteps > 0 && int64(vm.steps) >= opts.MaxSteps {
 			// 步数用尽不等于正常停机: 旧实现返回 StatusDone, 与 HALT 无法区分,
 			// 于是被截断的程序在 Python 侧被当成 halted=true 正常结束。
 			return finish(StatusError,
-				fmt.Sprintf("instruction limit reached (%d steps)", maxSteps))
+				fmt.Sprintf("instruction limit reached (%d steps)", opts.MaxSteps))
 		}
 		if vm.pc < 0 || vm.pc >= len(vm.prog) {
 			return finish(StatusDone, "")
@@ -249,11 +369,12 @@ func Run(bc []byte, mem []byte, entry, sp, heapBase int64, inData []byte,
 		if !opcodeSupported(ins.opcode) {
 			return finish(StatusUnsupported, "")
 		}
-		// 未知 SYS 功能号: 交给解释器 (pc 不自增)
+		// 未知 SYS 功能号: 直接报错 (解释器已删除, 无回退路径)
 		if ins.opcode == opSYS {
 			if len(ins.args) == 0 || ins.args[0].kind != kindImm ||
 				!syscallSupported(uint64(ins.args[0].value)) {
-				return finish(StatusUnsupported, "")
+				return finish(StatusError, fmt.Sprintf(
+					"unsupported SYS call id: %d", ins.args[0].value))
 			}
 		}
 		// 与解释器一致: 先自增 pc
@@ -269,20 +390,43 @@ func Run(bc []byte, mem []byte, entry, sp, heapBase int64, inData []byte,
 	}
 }
 
-func opcodeSupported(op uint8) bool {
-	switch op {
-	case opMOV, opLOAD, opSTORE, opADD, opSUB, opMUL, opDIV, opAND, opOR, opXOR,
-		opSHL, opSHR, opINC, opDEC, opCMP, opJMP, opJZ, opJNZ, opJE, opJL, opJG,
-		opPUSH, opPOP, opCALL, opRET, opIN, opOUT, opHALT, opLSL, opLSR, opASR,
-		opMVN, opB, opBL, opNOP, opLB, opLH, opLW, opLD, opSB, opSH, opSW, opSD,
-		opADDI, opXORI, opORI, opANDI, opSYS:
-		return true
+// Run 是 v1 兼容入口: 调用方提供整块内存 (原地修改), 内部转成单段输入,
+// 执行后把脏段写回。仅供旧 Go 测试与 AOT 旧路径使用。
+func Run(bc []byte, mem []byte, entry, sp, heapBase int64, inData []byte,
+	maxSteps int64) *Result {
+	opts := &RunOptions{
+		BC:       bc,
+		Segments: []MemSeg{{Addr: 0, Data: mem}},
+		Entry:    entry,
+		SP:       sp,
+		HeapBase: heapBase,
+		MemSize:  int64(len(mem)),
+		Input:    inData,
+		MaxSteps: maxSteps,
 	}
-	return false
+	res := RunV2(opts)
+	if res == nil {
+		return nil
+	}
+	for _, seg := range res.Segments {
+		if seg.Addr < uint64(len(mem)) {
+			n := uint64(len(seg.Data))
+			if seg.Addr+n > uint64(len(mem)) {
+				n = uint64(len(mem)) - seg.Addr
+			}
+			copy(mem[seg.Addr:seg.Addr+n], seg.Data)
+		}
+	}
+	return res
+}
+
+// opcodeSupported: 全部 ISA 指令都在 Go 引擎内实现 (解释器已删除, 无回退)。
+func opcodeSupported(op uint8) bool {
+	return int(op) < len(argCounts)
 }
 
 func syscallSupported(id uint64) bool {
-	return id <= sysTIMENS
+	return id <= sysDNSLOOKUP
 }
 
 func (vm *vmState) reg(n int) uint64 {
@@ -336,8 +480,11 @@ func (vm *vmState) val(op operand) (uint64, bool) {
 			return 1, true
 		}
 		return 0, true
-	case kindVec, kindVecLane:
-		return 0, false
+	case kindVec:
+		// 与 Python 解释器一致: 标量读 lane0 并截断为 int
+		return uint64(int64(vm.vec[op.value&31][0])), true
+	case kindVecLane:
+		return uint64(int64(vm.vec[op.value&31][op.extra&3])), true
 	}
 	return 0, false
 }
@@ -367,6 +514,7 @@ func (vm *vmState) writeQ(addr, v uint64) string {
 		return e
 	}
 	binary.LittleEndian.PutUint64(vm.mem[addr:addr+8], v)
+	vm.touch(addr, 8)
 	return ""
 }
 
@@ -476,6 +624,7 @@ func (vm *vmState) writeString(addr uint64, s string) string {
 	}
 	copy(vm.mem[addr:addr+uint64(len(s))], s)
 	vm.mem[addr+uint64(len(s))] = 0
+	vm.touch(addr, uint64(len(s))+1)
 	return ""
 }
 
@@ -666,6 +815,7 @@ func (vm *vmState) execute(ins instruction) (bool, string) {
 		}
 		rs := vm.reg(int(args[0].value))
 		binary.LittleEndian.PutUint32(vm.mem[addr:addr+4], uint32(rs))
+		vm.touch(addr, 4)
 	case opLD:
 		addr, e := vm.loadStoreAddr(args[1])
 		if e != "" {
@@ -720,6 +870,7 @@ func (vm *vmState) execute(ins instruction) (bool, string) {
 			return false, e
 		}
 		vm.mem[addr] = byte(vm.reg(int(args[0].value)) & 0xFF)
+		vm.touch(addr, 1)
 	case opSH:
 		addr, e := vm.loadStoreAddr(args[1])
 		if e != "" {
@@ -729,6 +880,7 @@ func (vm *vmState) execute(ins instruction) (bool, string) {
 			return false, e
 		}
 		binary.LittleEndian.PutUint16(vm.mem[addr:addr+2], uint16(vm.reg(int(args[0].value))&0xFFFF))
+		vm.touch(addr, 2)
 	// 立即数算术
 	case opADDI:
 		rd, rs := int(args[0].value), int(args[1].value)
@@ -767,6 +919,9 @@ func (vm *vmState) execute(ins instruction) (bool, string) {
 		if e := vm.doSyscall(uint64(args[0].value)); e != "" {
 			return false, e
 		}
+	default:
+		// 其余 ISA 指令 (ARM64/RISC-V 扩展/向量/浮点) 在 ops_ext.go
+		return vm.execExt(ins)
 	}
 	return false, ""
 }
@@ -884,7 +1039,31 @@ func (vm *vmState) flushOut() {
 
 // ---------------- SYS ----------------
 
+// coreSyscalls 是沙箱模式下仍放行的核心 VM 机制 (非宿主能力)。
+// 与解释器 cpu.py 的 _CORE_SYS_CALLS 保持一致。
+var coreSyscalls = map[uint64]bool{
+	sysALLOCFRAME: true,
+	sysTIMEUS:     true,
+	sysTIMENS:     true,
+}
+
+// syscallName 返回 SYS 功能号的可读名 (生成表, 与 isa.py Syscall 名一致)。
+func syscallName(id int) string {
+	if id >= 0 && id < len(syscallNames) && syscallNames[id] != "" {
+		return syscallNames[id]
+	}
+	return "UNKNOWN"
+}
+
 func (vm *vmState) doSyscall(id uint64) string {
+	// 沙箱模式: 拦截全部宿主能力 (音频/画布/GUI/文件/进程/环境/网络/FFI/
+	// Termux/键盘...), 只放行核心 VM 机制 (ALLOCFRAME/TIMEUS/TIMENS) 与
+	// AUDIOPLAY 以下的纯计算类内建。文本与原解释器 cpu.py 保持一致。
+	if vm.sandbox && id >= sysAUDIOPLAY && !coreSyscalls[id] {
+		return "Host capability disabled in sandbox mode (SYS " +
+			intToString(int(id)) + ": " + syscallName(int(id)) + ")"
+	}
+
 	x0 := vm.reg(0)
 	x1 := vm.reg(1)
 	x2 := vm.reg(2)
@@ -978,6 +1157,7 @@ func (vm *vmState) doSyscall(id uint64) string {
 				break
 			}
 		}
+		vm.touch(dst, i)
 		vm.setReg(0, x0)
 	case sysMALLOC:
 		size := (x0 + 15) &^ uint64(15)
@@ -1033,6 +1213,7 @@ func (vm *vmState) doSyscall(id uint64) string {
 			return e
 		}
 		copy(vm.mem[ptr:ptr+uint64(len(data))], data)
+		vm.touch(ptr, uint64(len(data)))
 		vm.setReg(0, ptr)
 	case sysBOOLSTR:
 		addr := vm.sysBuffer()
@@ -1357,6 +1538,67 @@ func (vm *vmState) doSyscall(id uint64) string {
 		vm.setReg(0, uint64(time.Now().UnixNano()/1000))
 	case sysTIMENS:
 		vm.setReg(0, uint64(time.Now().UnixNano()))
+	// ---- FFI 动态库调用 ----
+	case sysDLOPEN:
+		vm.setReg(0, vm.ffiOpen(vm.readCString(x0)))
+	case sysDLSYM:
+		vm.setReg(0, vm.ffiSym(x0, vm.readCString(x1)))
+	case sysFFICALL:
+		r, e := vm.ffiCall(x0, x1, x2, false)
+		if e != "" {
+			return e
+		}
+		vm.setReg(0, r)
+	case sysFFICALLF:
+		r, e := vm.ffiCall(x0, x1, x2, true)
+		if e != "" {
+			return e
+		}
+		vm.setReg(0, r)
+	case sysLIBCLOSE:
+		vm.setReg(0, vm.ffiClose(x0))
+	// ---- 网络: HTTP 扩展 / TCP / UDP / DNS ----
+	// 传参约定: 与编译器 _gen_host_sys 一致, 参数按自然顺序放入 x0..x(n-1);
+	// 字符串参数为 NUL 结尾堆串指针, 返回字符串为新堆串指针。
+	case sysHTTPREQ:
+		vm.setReg(0, vm.httpReq(vm.readCString(x0), vm.readCString(x1),
+			vm.readCString(x2), vm.readCString(x3)))
+	case sysHTTPCODE:
+		if vm.lastHTTPSt < 0 {
+			vm.setReg(0, mask64)
+		} else {
+			vm.setReg(0, uint64(vm.lastHTTPSt))
+		}
+	case sysTCPDIAL:
+		vm.setReg(0, vm.tcpDial(vm.readCString(x0), int(x1)))
+	case sysTCPSEND:
+		vm.setReg(0, vm.tcpSend(x0, x1, int(x2)))
+	case sysTCPRECV:
+		n, e := vm.tcpRecv(x0, x1, int(x2))
+		if e != "" {
+			return e
+		}
+		vm.setReg(0, n)
+	case sysTCPCLOSE:
+		vm.setReg(0, vm.tcpClose(x0))
+	case sysTCPLISTEN:
+		vm.setReg(0, vm.tcpListen(x0))
+	case sysTCPACCEPT:
+		vm.setReg(0, vm.tcpAccept(x0))
+	case sysUDPOPEN:
+		vm.setReg(0, vm.udpOpen(x0))
+	case sysUDPSENDTO:
+		vm.setReg(0, vm.udpSendTo(x0, vm.readCString(x1), int(x2), x3, int(x4)))
+	case sysUDPRECVFROM:
+		n, e := vm.udpRecvFrom(x0, x1, int(x2), x3)
+		if e != "" {
+			return e
+		}
+		vm.setReg(0, n)
+	case sysUDPCLOSE:
+		vm.setReg(0, vm.udpClose(x0))
+	case sysDNSLOOKUP:
+		vm.setReg(0, vm.dnsLookup(vm.readCString(x0)))
 	default:
 		return "Unknown SYS call id"
 	}
@@ -1383,6 +1625,7 @@ func (vm *vmState) heapDupString(s string) (uint64, string) {
 		return 0, e
 	}
 	copy(vm.mem[ptr:ptr+uint64(len(data))], data)
+	vm.touch(ptr, uint64(len(data)))
 	return ptr, ""
 }
 

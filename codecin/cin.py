@@ -266,6 +266,29 @@ HOST_BUILTINS = {
     'arg_count': (Syscall.ARGC, 0, 'int'),
     'arg': (Syscall.ARGV, 1, 'string'),
     'input_str': (Syscall.READLINE, 0, 'string'),
+    # FFI 动态库调用 (dlopen/dlsym/call, 最多 8 个 int64 参数)
+    'dlopen': (Syscall.DLOPEN, 1, 'int'),
+    'dlsym': (Syscall.DLSYM, 2, 'int'),
+    'ffi_call': (Syscall.FFICALL, 3, 'int'),
+    'ffi_callf': (Syscall.FFICALLF, 3, 'float'),
+    'lib_close': (Syscall.LIBCLOSE, 1, 'int'),
+    # 网络: HTTP 请求扩展 (GET/POST 之外的自定义方法与头部)
+    'http_req': (Syscall.HTTPREQ, 4, 'string'),
+    'http_code': (Syscall.HTTPCODE, 0, 'int'),
+    # 网络: TCP 客户端与服务端
+    'tcp_dial': (Syscall.TCPDIAL, 2, 'int'),
+    'tcp_send': (Syscall.TCPSEND, 3, 'int'),
+    'tcp_recv': (Syscall.TCPRECV, 3, 'int'),
+    'tcp_close': (Syscall.TCPCLOSE, 1, 'int'),
+    'tcp_listen': (Syscall.TCPLISTEN, 1, 'int'),
+    'tcp_accept': (Syscall.TCPACCEPT, 1, 'int'),
+    # 网络: UDP 数据报
+    'udp_open': (Syscall.UDPOPEN, 1, 'int'),
+    'udp_sendto': (Syscall.UDPSENDTO, 5, 'int'),
+    'udp_recvfrom': (Syscall.UDPRECVFROM, 4, 'int'),
+    'udp_close': (Syscall.UDPCLOSE, 1, 'int'),
+    # 网络: DNS 解析
+    'dns_lookup': (Syscall.DNSLOOKUP, 1, 'string'),
 }
 
 BUILTIN_MIN_ARGS = {
