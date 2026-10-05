@@ -45,18 +45,15 @@ function main() -> int {
     return 0
 }'''
 
-
 def _write(workdir, name, text):
     path = os.path.join(workdir, name)
     with open(path, 'w', encoding='utf-8') as f:
         f.write(text)
     return path
 
-
 def _run(exe, timeout=120):
     return subprocess.run([exe], capture_output=True, text=True,
                           encoding='utf-8', errors='replace', timeout=timeout)
-
 
 def _elf_is_static(path):
     """ELF 是否静态链接: 无 PT_INTERP 段。"""
@@ -72,30 +69,25 @@ def _elf_is_static(path):
             return False
     return True
 
-
 # ---------------- 目标解析 (不需要 Go) ----------------
 
 def test_parse_target_valid():
     assert aot.parse_target('linux/amd64') == ('linux', 'amd64')
     assert aot.parse_target('windows/arm64') == ('windows', 'arm64')
 
-
 @pytest.mark.parametrize('bad', ['linux', 'linux/', '/amd64', '', 'a/b/c'])
 def test_parse_target_invalid(bad):
     with pytest.raises(aot.AotError):
         aot.parse_target(bad)
-
 
 def test_host_target_looks_valid():
     goos, goarch = aot.parse_target(aot.host_target())
     assert goos in ('windows', 'linux', 'darwin')
     assert goarch
 
-
 def test_exe_suffix():
     assert aot.exe_suffix('windows') == '.exe'
     assert aot.exe_suffix('linux') == ''
-
 
 def test_stub_template_is_shared_with_go():
     """Python 侧与 Go 侧必须共用同一份 main.go 模板 (防漂移)。"""
@@ -106,7 +98,6 @@ def test_stub_template_is_shared_with_go():
     go_src = os.path.join(ROOT, 'codecin', 'native', 'aot', 'aot.go')
     with open(go_src, encoding='utf-8') as f:
         assert 'stub_main.go.txt' in f.read(), 'Go 侧未引用共享模板'
-
 
 # ---------------- 实际构建 ----------------
 
@@ -132,7 +123,6 @@ def test_build_host_executable(workdir):
         assert ref.returncode == 0, ref.stderr
         assert ref.stdout.strip() == r.stdout.strip()
 
-
 def _go_cli():
     for rel in ('codecin/native/codecin.exe', 'codecin/native/codecin',
                 'codecin/codecin.exe', 'codecin/codecin'):
@@ -140,7 +130,6 @@ def _go_cli():
         if os.path.exists(p):
             return p
     return None
-
 
 @needs_go
 def test_build_respects_error_exit_code(workdir):
@@ -160,7 +149,6 @@ function main() -> int {
     assert r.returncode != 0, '运行期错误必须返回非 0 退出码'
     assert 'runtime error' in r.stderr.lower()
 
-
 @needs_go
 @needs_aot_all
 @pytest.mark.parametrize('target', ['linux/amd64', 'linux/arm64', 'darwin/arm64'])
@@ -178,7 +166,6 @@ def test_cross_compile_targets(workdir, target):
     elif target.startswith('darwin'):
         assert head[:4] in (b'\xcf\xfa\xed\xfe', b'\xca\xfe\xba\xbe')
 
-
 @needs_go
 def test_cross_compile_linux_amd64_is_static(workdir):
     """关键声明: Linux 产物静态链接 (无 PT_INTERP, 不依赖 glibc)。
@@ -194,20 +181,17 @@ def test_cross_compile_linux_amd64_is_static(workdir):
         assert f.read(4) == b'\x7fELF'
     assert _elf_is_static(built)
 
-
 @needs_go
 def test_build_rejects_bad_target(workdir):
     src = _write(workdir, 'prog.cin', PROGRAM)
     with pytest.raises(aot.AotError):
         aot.build_program(src, out=os.path.join(workdir, 'x'), target='linux')
 
-
 def test_build_reports_compile_error(workdir):
     """语法/语义错误应报 CompilerError, 而不是留下半成品。"""
     src = _write(workdir, 'bad.cin', 'function main() -> int { return foo() }')
     with pytest.raises((CompilerError, aot.AotError)):
         aot.build_program(src, out=os.path.join(workdir, 'bad'))
-
 
 # ---------------- 临时构建目录的生命周期 (§3.3) ----------------
 #
@@ -218,7 +202,6 @@ def test_build_reports_compile_error(workdir):
 
 STALE = 99 * 3600            # 远超默认 6 小时
 FRESH = 0.0                  # mtime = 现在
-
 
 class _RecordingLogger:
     """最小 logger 替身: 记录 (level, message)。"""
@@ -244,7 +227,6 @@ class _RecordingLogger:
     def warnings(self):
         return [m for lvl, m in self.records if lvl == 'warning']
 
-
 class _Proc:
     """subprocess.CompletedProcess 的替身。"""
 
@@ -252,7 +234,6 @@ class _Proc:
         self.returncode = returncode
         self.stdout = stdout
         self.stderr = stderr
-
 
 @pytest.fixture()
 def fake_native(workdir, monkeypatch):
@@ -262,7 +243,6 @@ def fake_native(workdir, monkeypatch):
     _write(d, 'go.mod', 'module codecin-native\n')
     monkeypatch.setattr(aot, '_NATIVE_DIR', d)
     return d
-
 
 def _make_temp_dir(root, name, age_seconds=FRESH):
     """在 root 下造一个临时目录, 用 os.utime 把 mtime 调旧 (不等待)。"""
@@ -274,7 +254,6 @@ def _make_temp_dir(root, name, age_seconds=FRESH):
         os.utime(path, (stamp, stamp))
     return path
 
-
 def _fake_go_build():
     """_run_go_build 替身: 不调用 go, 直接按 -o 参数写出一个假产物。"""
     def _run(cmd, mod, env, logger):
@@ -284,22 +263,18 @@ def _fake_go_build():
         return _Proc(0), ''
     return _run
 
-
 def _temp_entries(root):
     return sorted(n for n in os.listdir(root)
                   if n.startswith(aot.TEMP_DIR_PREFIXES))
-
 
 def test_repo_native_has_no_aot_leftovers():
     """仓库守卫: codecin/native/ 下不得有 .aotbuild-* / .aotprobe-* 残留。"""
     left = _temp_entries(NATIVE_DIR)
     assert left == [], f'codecin/native/ 存在 AOT 残留目录: {left}'
 
-
 @pytest.mark.parametrize('name', ['.aotbuild-abc123', '.aotprobe-abc123'])
 def test_is_temp_dir_name_accepts_own_prefixes(name):
     assert aot._is_temp_dir_name(name)
-
 
 @pytest.mark.parametrize('name', [
     '', '.', '..', 'aotbuild-abc123', '.aotbuildX-abc123',
@@ -309,7 +284,6 @@ def test_is_temp_dir_name_accepts_own_prefixes(name):
 def test_is_temp_dir_name_rejects_traversal_and_foreign_names(name):
     """只认自己的前缀, 且显式拒绝 .. / 路径分隔符 / 绝对路径。"""
     assert not aot._is_temp_dir_name(name)
-
 
 def test_sweep_removes_stale_dirs(fake_native):
     """陈旧目录 (含历史遗留的 .aotprobe-) 会被删除。"""
@@ -324,7 +298,6 @@ def test_sweep_removes_stale_dirs(fake_native):
     assert not os.path.exists(stale) and not os.path.exists(probe)
     assert _temp_entries(fake_native) == []
 
-
 def test_sweep_keeps_fresh_dirs(fake_native):
     """刚建的目录是并发构建的, 绝不能被误删。"""
     fresh = _make_temp_dir(fake_native, '.aotbuild-fresh01', age_seconds=FRESH)
@@ -334,7 +307,6 @@ def test_sweep_keeps_fresh_dirs(fake_native):
 
     assert res.removed == [] and res.failed == []
     assert os.path.isdir(fresh)
-
 
 def test_sweep_only_touches_own_direct_children(fake_native, workdir):
     """前缀不符 / 不是目录 / 不在本目录下的一律不动。"""
@@ -354,7 +326,6 @@ def test_sweep_only_touches_own_direct_children(fake_native, workdir):
     assert os.path.isdir(no_dash)
     assert os.path.isdir(outside), 'sweep 越界删除了 native/ 之外的目录'
 
-
 def test_sweep_reports_undeletable_dir_without_raising(fake_native, monkeypatch):
     """删不掉的目录: 不抛异常, 记 warning 并出现在 failed 里。"""
     stale = _make_temp_dir(fake_native, '.aotbuild-locked', age_seconds=STALE)
@@ -373,7 +344,6 @@ def test_sweep_reports_undeletable_dir_without_raising(fake_native, monkeypatch)
     assert any(stale in m for m in warns), warns
     assert any('Remove-Item' in m and 'rm -rf' in m for m in warns), warns
 
-
 def test_sweep_missing_root_is_reported_not_raised(workdir, monkeypatch):
     """扫描根不存在: 不抛异常, 但要有告警 (不静默)。"""
     monkeypatch.setattr(aot, '_NATIVE_DIR', os.path.join(workdir, 'nope'))
@@ -383,7 +353,6 @@ def test_sweep_missing_root_is_reported_not_raised(workdir, monkeypatch):
 
     assert res.removed == [] and res.failed == []
     assert log.warnings(), '扫描失败被静默吞掉了'
-
 
 def test_build_leaves_no_temp_dir(fake_native, monkeypatch, workdir):
     """构建结束后 native/ 里不残留本次的 .aotbuild-* 目录。"""
@@ -398,7 +367,6 @@ def test_build_leaves_no_temp_dir(fake_native, monkeypatch, workdir):
     assert _temp_entries(fake_native) == []
     assert os.listdir(fake_native) == ['go.mod']
 
-
 def test_build_sweeps_stale_leftover_first(fake_native, monkeypatch, workdir):
     """build() 在创建新临时目录之前会清掉陈旧残留。"""
     stale = _make_temp_dir(fake_native, '.aotbuild-veryold', age_seconds=STALE)
@@ -409,7 +377,6 @@ def test_build_sweeps_stale_leftover_first(fake_native, monkeypatch, workdir):
 
     assert not os.path.exists(stale)
     assert _temp_entries(fake_native) == []
-
 
 def test_build_warns_when_cleanup_fails(fake_native, monkeypatch, workdir):
     """rmtree 失败必须 warning (含绝对路径 + 手动删除提示), 且不掩盖构建结果。"""

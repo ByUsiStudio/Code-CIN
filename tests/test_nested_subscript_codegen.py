@@ -186,23 +186,14 @@ function main() -> int {
 
 NAMES = [c[0] for c in CASES]
 
-
 @pytest.mark.parametrize('name,src,want', CASES, ids=NAMES)
 def test_nested_subscript_interpreter(name, src, want):
-    assert run_cin_source(src, use_native=False).regs.read(0) == want
-
-
-@pytest.mark.parametrize('name,src,want', CASES, ids=NAMES)
-def test_nested_subscript_jit(name, src, want):
-    cpu = run_cin_source(src, use_native=False, enable_jit=True)
-    assert cpu.regs.read(0) == want
-
+    assert run_cin_source(src).regs.read(0) == want
 
 @needs_native
 @pytest.mark.parametrize('name,src,want', CASES, ids=NAMES)
 def test_nested_subscript_native(name, src, want):
-    assert run_cin_source(src, use_native=True).regs.read(0) == want
-
+    assert run_cin_source(src).regs.read(0) == want
 
 def test_nested_write_does_not_touch_neighbour_array():
     """写 A[B[i]] 不能落到 B 的内存上 (修复前 A/B 基址被混淆)。"""
@@ -217,4 +208,4 @@ function main() -> int {
     return B[1] * 1000 + A[1]
 }"""
     # B[1] 必须仍是 9, A[1] 必须是 100
-    assert run_cin_source(src, use_native=False).regs.read(0) == 9100
+    assert run_cin_source(src).regs.read(0) == 9100

@@ -16,8 +16,7 @@ BASIC_CIN = os.path.join(ROOT, 'basic.cin')
 def test_help_returns_zero(capsys):
     assert cli.main(['--help']) == 0
     out = capsys.readouterr().out
-    assert '--sandbox' in out and '--optimize' in out and '--cache-assoc' in out
-    assert '--no-native' in out
+    assert '--sandbox' in out and '--optimize' in out and '--strict' in out
 
 
 def test_missing_program_returns_error(capsys):
@@ -43,32 +42,17 @@ def test_unknown_option_returns_error_code(capsys):
     assert code in (1, 2)
 
 
-def test_run_cin_no_native(capsys, workdir):
-    code = cli.main([BASIC_CIN, '--no-native', '--log-level', 'ERROR'])
-    assert code == 0
-
-
 def test_instruction_limit_is_reported_as_failure(capsys, workdir):
-    """步数用尽不再伪装成正常结束 (两条路径都必须失败)。
+    """步数用尽不再伪装成正常结束。
 
     旧行为: 解释器只 warning + break, 原生 VM 返回 StatusDone,
     于是被截断的程序以退出码 0 报告成功。
     """
-    code = cli.main([BASIC_CIN, '--no-native', '--max-instructions', '2000',
+    code = cli.main([BASIC_CIN, '--max-instructions', '2000',
                      '--log-level', 'ERROR'])
     assert code == 1
     out = capsys.readouterr().out
     assert 'instruction limit' in out.lower()
-
-
-def test_instruction_limit_is_reported_as_failure_native(capsys, workdir):
-    """原生路径同样必须报失败 (需要原生库)。"""
-    from codecin import native
-    if native.get_engine() is None:
-        pytest.skip('native library not built')
-    code = cli.main([BASIC_CIN, '--max-instructions', '2000',
-                     '--log-level', 'ERROR'])
-    assert code == 1
 
 
 def test_compile_only_creates_bin(workdir):
@@ -88,10 +72,11 @@ def test_missing_file_returns_load_error(capsys):
 def test_parser_exposes_all_expected_options():
     parser = cli.build_parser()
     actions = {a.dest for a in parser._actions}
-    for expected in ('program', 'debug', 'step', 'no_native', 'enable_jit',
-                     'profile', 'compile_to_bin', 'compile_only', 'output',
-                     'crom', 'mem_size', 'max_instructions', 'cache_size',
-                     'cache_assoc', 'optimize', 'log_level', 'log_file',
-                     'auto_save_crom', 'compress_crom', 'sandbox',
-                     'strict', 'no_io'):
+    for expected in ('program', 'show_help', 'build_info', 'json_output',
+                     'list_libs', 'log_level', 'log_file', 'sandbox',
+                     'mem_size', 'max_instructions', 'compile_to_bin',
+                     'compile_only', 'output', 'crom', 'auto_save_crom',
+                     'compress_crom', 'optimize', 'strict', 'seed',
+                     'bounds_check', 'disasm', 'build_exe', 'build_target',
+                     'build_keep_temp'):
         assert expected in actions, f'missing option dest: {expected}'

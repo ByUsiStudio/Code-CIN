@@ -10,9 +10,7 @@ r"""CIN 语法扩展回归测试 (本次新增的语法特性)。
   5. 字符串转义   —— \x / \u / \U / \a\b\f\v\0 的字节语义 / 错误
   6. 多参数 print/println
 
-每条语义用例都在两条执行路径上各跑一遍并断言结果一致:
-    interp = Python 编译器 + Python 解释器 (use_native=False)
-    native = Python 编译器 + Go 原生 VM   (use_native=True)
+每条语义用例在 Go 原生引擎 (唯一执行路径) 上跑一遍。
 
 断言约定 (与 tests/test_switch_semantics.py 一致):
   * stdout 断言: cpu._capture_output = True 后读 ''.join(cpu.output_buffer)
@@ -28,19 +26,14 @@ from codecin.errors import CompilerError
 needs_native = pytest.mark.skipif(
     native.get_engine() is None, reason="native Go library not built")
 
-PATHS = (False, True)
-PATH_IDS = ('interp', 'native')
-
-
-def run_cin(src: str, use_native: bool):
+def run_cin(src: str):
     """编译并运行 CIN 源码, 返回 (x0, stdout, native_used)。
 
     注意: CPU.run() 会把执行期异常记日志后吞掉, 因此这里显式检查
     execution_failed, 否则"程序执行失败但 x0 恰好是期望值"会变成假通过。
     """
     res = CINCompiler().compile_source(src)
-    cfg = Config(interactive_mode=False, log_level='ERROR',
-                 use_native=use_native)
+    cfg = Config(log_level='ERROR')
     cpu = CPU(cfg)
     cpu.instructions = res.instructions
     cpu.labels = res.labels
@@ -54,7 +47,6 @@ def run_cin(src: str, use_native: bool):
     assert not cpu.execution_failed, \
         '程序执行失败 (ExecutionError 被 CPU.run 吞掉)'
     return cpu.regs.read(0), ''.join(cpu.output_buffer), cpu.native_used
-
 
 # ====================================================================
 # 1. enum
@@ -387,7 +379,6 @@ function main() -> int {
 
 PRINT_MULTI_EXPECTED = "a1true\na1true\n\n\nsolo\nsolo\nn=7\nn=7\n"
 
-
 # ====================================================================
 # 用例表
 # ====================================================================
@@ -477,25 +468,20 @@ function main() -> int {
      'out of unicode range'),
 ]
 
-
 @pytest.mark.parametrize('name,src,expected', RETURN_CASES,
                          ids=[c[0] for c in RETURN_CASES])
-@pytest.mark.parametrize('use_native', PATHS, ids=PATH_IDS)
-def test_syntax_returns(name, src, expected, use_native):
-    """返回值语义: 两条执行路径结果必须一致。"""
-    rc, out, _native = run_cin(src, use_native)
+def test_syntax_returns(name, src, expected):
+    """返回值语义: 原生引擎执行结果必须一致。"""
+    rc, out, _native = run_cin(src)
     assert rc == expected, f'{name}: x0={rc} (期望 {expected}), stdout={out!r}'
-
 
 @pytest.mark.parametrize('name,src,expected_out', OUT_CASES,
                          ids=[c[0] for c in OUT_CASES])
-@pytest.mark.parametrize('use_native', PATHS, ids=PATH_IDS)
-def test_syntax_output(name, src, expected_out, use_native):
-    """stdout 语义: 两条执行路径输出必须逐字节一致。"""
-    rc, out, _native = run_cin(src, use_native)
+def test_syntax_output(name, src, expected_out):
+    """stdout 语义: 原生引擎输出必须逐字节一致。"""
+    rc, out, _native = run_cin(src)
     assert rc == 0, f'{name}: x0={rc}, stdout={out!r}'
     assert out == expected_out, f'{name}: stdout={out!r}'
-
 
 @pytest.mark.parametrize('name,src,needle', ERROR_CASES,
                          ids=[c[0] for c in ERROR_CASES])
@@ -505,7 +491,6 @@ def test_syntax_compile_errors(name, src, needle):
         CINCompiler().compile_source(src)
     assert needle in str(ei.value).lower(), \
         f'{name}: 错误消息 {str(ei.value)!r} 不含 {needle!r}'
-
 
 def test_rangefor_array_element_type_is_compile_error():
     r"""元素类型写成 int[]: 必须是编译错误。
@@ -525,9 +510,8 @@ function main() -> int {
     with pytest.raises(CompilerError):
         CINCompiler().compile_source(src)
 
-
 @needs_native
 def test_native_path_is_really_used():
-    """确认 use_native=True 分支在原生库存在时真的走了原生 VM。"""
-    _rc, _out, native_used = run_cin(SW_RANGE_BOUNDARY, use_native=True)
-    assert native_used is True, '原生引擎未生效: 结果只是解释路径的重复'
+    """确认执行真的走了 Go 原生 VM。"""
+    _rc, _out, native_used = run_cin(SW_RANGE_BOUNDARY)
+    assert native_used is True, '原生引擎未生效'

@@ -13,13 +13,11 @@ import pytest
 
 from tests.helpers import run_cin_file
 
-
 def _run(workdir, source, name='lib_graph_test.cin', **cfg):
     path = os.path.join(workdir, name)
     with open(path, 'w', encoding='utf-8') as f:
         f.write(source)
     return run_cin_file(path, **cfg)
-
 
 GRAPH_SRC = '''
 import "graph.cin"
@@ -318,7 +316,6 @@ function main() -> int {
     return 0
 }'''
 
-
 TOGETHER_SRC = '''
 import "graph.cin"
 import "dp.cin"
@@ -336,18 +333,13 @@ function main() -> int {
     return 0
 }'''
 
-
-@pytest.mark.parametrize('use_native', (False, True), ids=('interp', 'native'))
-def test_graph_lib(workdir, use_native):
-    cpu = _run(workdir, GRAPH_SRC, use_native=use_native)
+def test_graph_lib(workdir):
+    cpu = _run(workdir, GRAPH_SRC)
     assert not cpu.execution_failed
     assert cpu.regs.read(0) == 0
 
-
-@pytest.mark.parametrize('use_native', (False, True), ids=('interp', 'native'))
-def test_graph_and_dp_importable_together(workdir, use_native):
+def test_graph_and_dp_importable_together(workdir):
     """两个新库同时导入不得冲突 (全局符号/名称)。"""
-    cpu = _run(workdir, TOGETHER_SRC, name='lib_graph_dp_together.cin',
-               use_native=use_native)
+    cpu = _run(workdir, TOGETHER_SRC, name='lib_graph_dp_together.cin')
     assert not cpu.execution_failed
     assert cpu.regs.read(0) == 0

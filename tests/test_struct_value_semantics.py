@@ -26,19 +26,13 @@ from codecin.cin import CINCompiler
 from codecin.errors import CompilerError
 from tests.helpers import run_cin_source
 
-PATHS = (False, True)
-PATH_IDS = ('interp', 'native')
-
-
 def _main_only(body: str, prelude: str = '') -> str:
     return f'{prelude}function main() -> int {{ {body} }}'
-
 
 P2 = 'struct P { int x; int y }\n'
 P3 = 'struct P { int a; int b; int c }\n'
 IN = 'struct I { int a; int b }\n'
 OUT = 'struct O { I i; int c }\n'
-
 
 # ==========================================================================
 # 1. 整体赋值 = 值拷贝
@@ -102,21 +96,10 @@ ASSIGN_CASES = [
      34),
 ]
 
-
 @pytest.mark.parametrize('name,src,expected', ASSIGN_CASES,
                          ids=[c[0] for c in ASSIGN_CASES])
-@pytest.mark.parametrize('use_native', PATHS, ids=PATH_IDS)
-def test_struct_whole_assignment_is_value_copy(name, src, expected, use_native):
-    assert run_cin_source(src, use_native=use_native).regs.read(0) == expected
-
-
-@pytest.mark.parametrize('name,src,expected', ASSIGN_CASES,
-                         ids=[c[0] for c in ASSIGN_CASES])
-def test_struct_whole_assignment_is_value_copy_jit(name, src, expected):
-    """第三条路径: JIT 必须给出同样的值拷贝结果。"""
-    cpu = run_cin_source(src, use_native=False, enable_jit=True)
-    assert cpu.regs.read(0) == expected
-
+def test_struct_whole_assignment_is_value_copy(name, src, expected):
+    assert run_cin_source(src).regs.read(0) == expected
 
 # ==========================================================================
 # 2. 数组元素赋值 = 值拷贝 (元素槽里存的是各自的堆对象指针)
@@ -169,21 +152,10 @@ ARRAY_CASES = [
                 'return ps[0].x * 10 + ps[1].x', P2), 43),
 ]
 
-
 @pytest.mark.parametrize('name,src,expected', ARRAY_CASES,
                          ids=[c[0] for c in ARRAY_CASES])
-@pytest.mark.parametrize('use_native', PATHS, ids=PATH_IDS)
-def test_struct_array_element_assignment_is_value_copy(name, src, expected,
-                                                       use_native):
-    assert run_cin_source(src, use_native=use_native).regs.read(0) == expected
-
-
-@pytest.mark.parametrize('name,src,expected', ARRAY_CASES,
-                         ids=[c[0] for c in ARRAY_CASES])
-def test_struct_array_element_assignment_is_value_copy_jit(name, src, expected):
-    cpu = run_cin_source(src, use_native=False, enable_jit=True)
-    assert cpu.regs.read(0) == expected
-
+def test_struct_array_element_assignment_is_value_copy(name, src, expected):
+    assert run_cin_source(src).regs.read(0) == expected
 
 # ==========================================================================
 # 3. 嵌套 struct 字段赋值 = 值拷贝 (字段是值内嵌, 字段地址就是对象地址)
@@ -254,21 +226,10 @@ NESTED_CASES = [
                 'struct Box { I i; int n }\n'), 923),
 ]
 
-
 @pytest.mark.parametrize('name,src,expected', NESTED_CASES,
                          ids=[c[0] for c in NESTED_CASES])
-@pytest.mark.parametrize('use_native', PATHS, ids=PATH_IDS)
-def test_nested_struct_field_assignment_is_value_copy(name, src, expected,
-                                                      use_native):
-    assert run_cin_source(src, use_native=use_native).regs.read(0) == expected
-
-
-@pytest.mark.parametrize('name,src,expected', NESTED_CASES,
-                         ids=[c[0] for c in NESTED_CASES])
-def test_nested_struct_field_assignment_is_value_copy_jit(name, src, expected):
-    cpu = run_cin_source(src, use_native=False, enable_jit=True)
-    assert cpu.regs.read(0) == expected
-
+def test_nested_struct_field_assignment_is_value_copy(name, src, expected):
+    assert run_cin_source(src).regs.read(0) == expected
 
 # ==========================================================================
 # 4. 反向护栏: 传参 / 数组参数元素 = 引用可见 (文档第 154/161 行)
@@ -297,22 +258,11 @@ REFERENCE_CASES = [
                 'function touch(P p) -> void { p.x = 7 }\n'), 17),
 ]
 
-
 @pytest.mark.parametrize('name,src,expected', REFERENCE_CASES,
                          ids=[c[0] for c in REFERENCE_CASES])
-@pytest.mark.parametrize('use_native', PATHS, ids=PATH_IDS)
-def test_struct_parameters_stay_reference_visible(name, src, expected,
-                                                  use_native):
+def test_struct_parameters_stay_reference_visible(name, src, expected):
     """文档把传参定义为"引用可见"(同一块存储): 值拷贝修复不得改变它。"""
-    assert run_cin_source(src, use_native=use_native).regs.read(0) == expected
-
-
-@pytest.mark.parametrize('name,src,expected', REFERENCE_CASES,
-                         ids=[c[0] for c in REFERENCE_CASES])
-def test_struct_parameters_stay_reference_visible_jit(name, src, expected):
-    cpu = run_cin_source(src, use_native=False, enable_jit=True)
-    assert cpu.regs.read(0) == expected
-
+    assert run_cin_source(src).regs.read(0) == expected
 
 # ==========================================================================
 # 5. 返回值: 每次调用都是新对象 (与文档"值拷贝返回"等价的可观测行为)
@@ -335,20 +285,10 @@ RETURN_CASES = [
      78),
 ]
 
-
 @pytest.mark.parametrize('name,src,expected', RETURN_CASES,
                          ids=[c[0] for c in RETURN_CASES])
-@pytest.mark.parametrize('use_native', PATHS, ids=PATH_IDS)
-def test_struct_return_values_are_fresh_objects(name, src, expected, use_native):
-    assert run_cin_source(src, use_native=use_native).regs.read(0) == expected
-
-
-@pytest.mark.parametrize('name,src,expected', RETURN_CASES,
-                         ids=[c[0] for c in RETURN_CASES])
-def test_struct_return_values_are_fresh_objects_jit(name, src, expected):
-    cpu = run_cin_source(src, use_native=False, enable_jit=True)
-    assert cpu.regs.read(0) == expected
-
+def test_struct_return_values_are_fresh_objects(name, src, expected):
+    assert run_cin_source(src).regs.read(0) == expected
 
 # ==========================================================================
 # 6. 边界检查打开时也必须是值拷贝 (值拷贝路径里的下标求值也要走 bounds-check)
@@ -364,14 +304,11 @@ BOUNDS_CASES = [
      _main_only('O o; I k = {5, 6}; o.i = k; k.a = 9; return o.i.a', IN + OUT), 5),
 ]
 
-
 @pytest.mark.parametrize('name,src,expected', BOUNDS_CASES,
                          ids=[c[0] for c in BOUNDS_CASES])
-@pytest.mark.parametrize('use_native', PATHS, ids=PATH_IDS)
-def test_value_copy_with_bounds_check_enabled(name, src, expected, use_native):
-    cpu = run_cin_source(src, use_native=use_native, bounds_check=True)
+def test_value_copy_with_bounds_check_enabled(name, src, expected):
+    cpu = run_cin_source(src, bounds_check=True)
     assert cpu.regs.read(0) == expected
-
 
 # ==========================================================================
 # 7. 取址形态与错误的干净报错
@@ -384,13 +321,11 @@ def test_struct_assign_to_const_is_rejected():
             'function main() -> int { N = 2; return 0 }')
     assert 'Cannot assign to const' in str(ei.value)
 
-
 def test_struct_decl_init_from_scalar_is_rejected():
     with pytest.raises(CompilerError) as ei:
         CINCompiler().compile_source(
             'struct P { int x }\nfunction main() -> int { P p = 1; return 0 }')
     assert 'Cannot initialize struct' in str(ei.value)
-
 
 def test_struct_assign_from_scalar_is_rejected():
     with pytest.raises(CompilerError) as ei:
@@ -399,14 +334,12 @@ def test_struct_assign_from_scalar_is_rejected():
             'function main() -> int { P p; p = 5; return 0 }')
     assert 'Cannot assign value of type' in str(ei.value)
 
-
 def test_struct_assign_from_other_struct_type_is_rejected():
     with pytest.raises(CompilerError) as ei:
         CINCompiler().compile_source(
             'struct P { int x }\nstruct Q { int y }\n'
             'function main() -> int { P p; Q q; p = q; return 0 }')
     assert 'different struct types' in str(ei.value)
-
 
 def test_struct_decl_init_from_other_struct_type_is_rejected():
     with pytest.raises(CompilerError) as ei:
@@ -415,7 +348,6 @@ def test_struct_decl_init_from_other_struct_type_is_rejected():
             'function main() -> int { Q q; P p = q; return 0 }')
     assert 'struct' in str(ei.value) and 'P' in str(ei.value)
 
-
 def test_copy_assign_into_scalar_array_element_is_rejected():
     with pytest.raises(CompilerError) as ei:
         CINCompiler().compile_source(
@@ -423,14 +355,12 @@ def test_copy_assign_into_scalar_array_element_is_rejected():
             'function main() -> int { int a[2]; P p; a[0] = p; return 0 }')
     assert 'Cannot assign struct value' in str(ei.value)
 
-
 def test_struct_into_scalar_variable_is_rejected():
     with pytest.raises(CompilerError) as ei:
         CINCompiler().compile_source(
             'struct P { int x }\n'
             'function main() -> int { P p; int n; n = p; return 0 }')
     assert 'Cannot assign struct value' in str(ei.value)
-
 
 def test_empty_struct_value_copy_is_not_silently_wrong():
     """空 struct 的槽数为 0; 整体赋值不得静默走"拷贝 0 槽"的路径。"""

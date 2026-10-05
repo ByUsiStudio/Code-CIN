@@ -10,16 +10,13 @@ import pytest
 
 from tests.helpers import run_cin_file
 
-
 def _run(workdir, source, name='lib_frac_test.cin', **cfg):
     path = os.path.join(workdir, name)
     with open(path, 'w', encoding='utf-8') as f:
         f.write(source)
     return run_cin_file(path, **cfg)
 
-
-@pytest.mark.parametrize('use_native', (False, True), ids=('interp', 'native'))
-def test_frac_construct_normalizes(workdir, use_native):
+def test_frac_construct_normalizes(workdir):
     src = '''
 import "frac.cin"
 
@@ -51,11 +48,9 @@ function main() -> int {
     return 0
 }
 '''
-    assert _run(workdir, src, use_native=use_native).regs.read(0) == 0
+    assert _run(workdir, src).regs.read(0) == 0
 
-
-@pytest.mark.parametrize('use_native', (False, True), ids=('interp', 'native'))
-def test_frac_arith_golden(workdir, use_native):
+def test_frac_arith_golden(workdir):
     src = '''
 import "frac.cin"
 
@@ -84,11 +79,9 @@ function main() -> int {
     return 0
 }
 '''
-    assert _run(workdir, src, use_native=use_native).regs.read(0) == 0
+    assert _run(workdir, src).regs.read(0) == 0
 
-
-@pytest.mark.parametrize('use_native', (False, True), ids=('interp', 'native'))
-def test_frac_compare_equals(workdir, use_native):
+def test_frac_compare_equals(workdir):
     src = '''
 import "frac.cin"
 
@@ -111,11 +104,9 @@ function main() -> int {
     return 0
 }
 '''
-    assert _run(workdir, src, use_native=use_native).regs.read(0) == 0
+    assert _run(workdir, src).regs.read(0) == 0
 
-
-@pytest.mark.parametrize('use_native', (False, True), ids=('interp', 'native'))
-def test_frac_zero_denominator_error(workdir, use_native):
+def test_frac_zero_denominator_error(workdir):
     src = '''
 import "frac.cin"
 
@@ -146,11 +137,9 @@ function main() -> int {
     return 0
 }
 '''
-    assert _run(workdir, src, use_native=use_native).regs.read(0) == 0
+    assert _run(workdir, src).regs.read(0) == 0
 
-
-@pytest.mark.parametrize('use_native', (False, True), ids=('interp', 'native'))
-def test_frac_to_float(workdir, use_native):
+def test_frac_to_float(workdir):
     src = '''
 import "frac.cin"
 
@@ -167,11 +156,9 @@ function main() -> int {
     return 0
 }
 '''
-    assert _run(workdir, src, use_native=use_native).regs.read(0) == 0
+    assert _run(workdir, src).regs.read(0) == 0
 
-
-@pytest.mark.parametrize('use_native', (False, True), ids=('interp', 'native'))
-def test_frac_loops_keep_exact(workdir, use_native):
+def test_frac_loops_keep_exact(workdir):
     src = '''
 import "frac.cin"
 
@@ -198,4 +185,4 @@ function main() -> int {
     return 0
 }
 '''
-    assert _run(workdir, src, use_native=use_native).regs.read(0) == 0
+    assert _run(workdir, src).regs.read(0) == 0

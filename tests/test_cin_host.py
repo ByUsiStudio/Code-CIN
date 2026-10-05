@@ -10,7 +10,6 @@ from tests.helpers import run_cin_source
 needs_native = pytest.mark.skipif(
     native.get_engine() is None, reason="native Go library not built")
 
-
 @needs_native
 def test_canvas_renders_png(workdir):
     out = os.path.join(workdir, 'canvas.png').replace('\\', '/')
@@ -27,11 +26,10 @@ function main() -> int {{
     draw_text(2, 2, "HI")
     return save_png("{out}")
 }}'''
-    cpu = run_cin_source(src, use_native=True)
+    cpu = run_cin_source(src)
     assert cpu.regs.read(0) == 0
     assert os.path.exists(out), f"PNG not written to {out}"
     assert os.path.getsize(out) > 0
-
 
 @needs_native
 def test_audio_play_missing_file_returns_neg1():
@@ -39,9 +37,8 @@ def test_audio_play_missing_file_returns_neg1():
 function main() -> int {
     return audio_play("/nonexistent/no_such_file.wav")
 }'''
-    cpu = run_cin_source(src, use_native=True)
+    cpu = run_cin_source(src)
     assert cpu.regs.read(0) == (1 << 64) - 1  # -1
-
 
 def test_audio_canvas_builtins_compile_without_native():
     """编译含 GUI/音频内建的源码 (解释路径运行会报错, 但编译本身应成功)。"""
@@ -58,7 +55,6 @@ function main() -> int {
     assert res is not None
     assert any(i[0] == 'SYS' for i in res.instructions)
 
-
 @needs_native
 def test_audio_controls_no_playback_native():
     """音频控制增强: 无播放时查询与控制的约定返回值。"""
@@ -71,9 +67,8 @@ function main() -> int {
     if (audio_resume() != -1) { return 5 }
     return 0
 }'''
-    cpu = run_cin_source(src, use_native=True)
+    cpu = run_cin_source(src)
     assert cpu.regs.read(0) == 0
-
 
 def test_audio_controls_builtins_compile_without_native():
     """5 个音频控制内建可编译并映射到 SYS 调用。
@@ -101,7 +96,6 @@ function main() -> int {
     assert set(sys_ids) <= audio_ids | {Syscall.ALLOCFRAME}
     assert sum(1 for x in sys_ids if x in audio_ids) == 5
 
-
 def test_host_builtins_error_includes_install_hint():
     """解释路径调用宿主内建报错时附带平台安装提示。"""
     import logging
@@ -113,7 +107,7 @@ function main() -> int {
 }'''
     # 先建 CPU 再挂捕获 handler (Logger.__init__ 会清空 'codecin' 的 handler)
     res = CINCompiler().compile_source(src)
-    cpu = new_cpu(use_native=False)
+    cpu = new_cpu()
     cpu.instructions = res.instructions
     cpu.labels = res.labels
     cpu.data_labels = res.data_labels

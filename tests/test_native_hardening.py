@@ -18,7 +18,6 @@ from codecin import native
 needs_native = pytest.mark.skipif(native.get_engine() is None,
                                   reason='native library not built')
 
-
 def _bc(entry=0, instructions=b'', version=1, count=None):
     """手工构造 UCBC 字节流 (magic + version + entry + count + body)。"""
     if count is None:
@@ -26,13 +25,11 @@ def _bc(entry=0, instructions=b'', version=1, count=None):
     return b'UCBC' + bytes([version]) + struct.pack('<I', entry) + \
         struct.pack('<I', count) + instructions
 
-
 @needs_native
 def test_bad_magic_rejected():
     eng = native.get_engine()
     res = eng.run(b'XXXX' + bytes(60), b'\x00' * 4096, 0, 4096, 2048, b'', 1000)
     assert res is not None and res['error']
-
 
 @needs_native
 def test_wrong_version_rejected():
@@ -42,7 +39,6 @@ def test_wrong_version_rejected():
     res = eng.run(bc, b'\x00' * 4096, 0, 4096, 2048, b'', 1000)
     assert res is not None and res['error']
 
-
 @needs_native
 def test_huge_instruction_count_does_not_oom():
     """13 字节输入声明 0xFFFFFFFF 条指令: 旧实现按此预分配 ~137GB。"""
@@ -51,7 +47,6 @@ def test_huge_instruction_count_does_not_oom():
         struct.pack('<I', 0xFFFFFFFF)
     res = eng.run(bc, b'\x00' * 4096, 0, 4096, 2048, b'', 1000)
     assert res is not None and res['error']
-
 
 @needs_native
 def test_argc_mismatch_rejected():
@@ -63,7 +58,6 @@ def test_argc_mismatch_rejected():
     res = eng.run(bc, b'\x00' * 4096, 0, 4096, 2048, b'', 1000)
     assert res is not None and res['error']
 
-
 @needs_native
 def test_unknown_opcode_rejected():
     eng = native.get_engine()
@@ -71,7 +65,6 @@ def test_unknown_opcode_rejected():
     bc = _bc(count=1, instructions=body)
     res = eng.run(bc, b'\x00' * 4096, 0, 4096, 2048, b'', 1000)
     assert res is not None and res['error']
-
 
 @needs_native
 def test_truncated_operand_rejected():
@@ -81,7 +74,6 @@ def test_truncated_operand_rejected():
     bc = _bc(count=1, instructions=body)
     res = eng.run(bc, b'\x00' * 4096, 0, 4096, 2048, b'', 1000)
     assert res is not None and res['error']
-
 
 @needs_native
 def test_crom_zip_bomb_rejected():
@@ -94,7 +86,6 @@ def test_crom_zip_bomb_rejected():
     blob = header + payload
     assert eng.crom_unpack(blob) is None
 
-
 @needs_native
 def test_crom_mem_size_mismatch_rejected():
     """头部 mem_size 与实际载荷长度不符时必须拒绝。"""
@@ -105,7 +96,6 @@ def test_crom_mem_size_mismatch_rejected():
         bytes([0x01]) + struct.pack('<I', zlib.crc32(payload)) + b'\x00\x00'
     assert eng.crom_unpack(header + payload) is None
 
-
 @needs_native
 def test_crom_roundtrip_still_works():
     """正常 CROM 打包/解包必须仍然可用 (防止加固把合法路径也拒了)。"""
@@ -114,7 +104,6 @@ def test_crom_roundtrip_still_works():
     packed = eng.crom_pack(data, True)
     assert packed is not None
     assert eng.crom_unpack(packed) == data
-
 
 @needs_native
 def test_step_limit_is_an_error_not_silent_success():
@@ -132,7 +121,6 @@ def test_step_limit_is_an_error_not_silent_success():
     assert res['error'], '步数用尽必须是错误, 不能伪装成正常结束'
     assert 'limit' in res['error'].lower()
 
-
 # ---------------- Python 侧 (zlib 回退路径) 的同类加固 ----------------
 
 def _write(workdir, blob):
@@ -141,7 +129,6 @@ def _write(workdir, blob):
     with open(p, 'wb') as f:
         f.write(blob)
     return p
-
 
 def test_python_crom_zip_bomb_rejected(workdir):
     """Python 回退路径同样必须限制解压大小 (旧实现 zlib.decompress 无上限)。"""
@@ -156,7 +143,6 @@ def test_python_crom_zip_bomb_rejected(workdir):
     path = _write(workdir, header + payload)
     with pytest.raises(CPUSimulatorError):
         load_crom(FastMemory(4096), path)
-
 
 def test_python_crom_garbage_rejected(workdir):
     """非 CROM 文件不再被静默当作旧版内存镜像载入。"""

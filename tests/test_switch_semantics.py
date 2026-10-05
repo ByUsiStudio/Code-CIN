@@ -25,7 +25,6 @@ GO_CLI_CANDIDATES = (
     'codecin/codecin.exe', 'codecin/codecin',
 )
 
-
 def _go_cli():
     for rel in GO_CLI_CANDIDATES:
         p = os.path.join(ROOT, rel)
@@ -33,17 +32,15 @@ def _go_cli():
             return p
     return None
 
-
 needs_go_cli = pytest.mark.skipif(
     _go_cli() is None,
     reason='Go CLI 已于 5.5.0 下线 (Python 是唯一 CLI 入口); '
            '待 Go 编译器经原生库暴露后恢复双编译器对照')
 
-
-def _run_python(src: str, use_native: bool = True) -> str:
+def _run_python(src: str) -> str:
     """编译并运行, 返回程序 stdout。"""
     res = CINCompiler().compile_source(src)
-    cfg = Config(interactive_mode=False, log_level='ERROR', use_native=use_native)
+    cfg = Config(log_level='ERROR')
     cpu = CPU(cfg)
     cpu.instructions = res.instructions
     cpu.labels = res.labels
@@ -56,14 +53,12 @@ def _run_python(src: str, use_native: bool = True) -> str:
     cpu.run()
     return ''.join(cpu.output_buffer)
 
-
 def _run_go(src: str, workdir: str):
     path = os.path.join(workdir, 'switch_probe.cin')
     with open(path, 'w', encoding='utf-8') as f:
         f.write(src)
     return subprocess.run([_go_cli(), path], capture_output=True, text=True,
                           encoding='utf-8', errors='replace', cwd=ROOT, timeout=180)
-
 
 NEGATIVE_CASE = '''
 function main() -> int {
@@ -131,7 +126,6 @@ function main() -> int {
     return 0
 }'''
 
-
 def _switch_continue(n: int) -> str:
     return f'''
 function main() -> int {{
@@ -147,7 +141,6 @@ function main() -> int {{
     println("R=" + int_to_str(hits))
     return 0
 }}'''
-
 
 def _nested_switch_continue(n: int) -> str:
     return f'''
@@ -170,7 +163,6 @@ function main() -> int {{
     return 0
 }}'''
 
-
 # 语义正确性用例 (轻量, 三条执行路径都跑)
 SEMANTIC_CASES = [
     ('negative_case', NEGATIVE_CASE, 'R=10'),
@@ -186,20 +178,17 @@ LEAK_CASES = [
     ('nested_switch_continue', _nested_switch_continue, 10000, 'R=9998'),
 ]
 
-
 @pytest.mark.parametrize('name,src,expected', SEMANTIC_CASES,
                          ids=[c[0] for c in SEMANTIC_CASES])
 def test_switch_semantics_native(name, src, expected):
     """Python 编译器 + Go 原生 VM。"""
-    assert expected in _run_python(src, use_native=True)
-
+    assert expected in _run_python(src)
 
 @pytest.mark.parametrize('name,src,expected', SEMANTIC_CASES,
                          ids=[c[0] for c in SEMANTIC_CASES])
 def test_switch_semantics_interpreter(name, src, expected):
     """Python 编译器 + 纯解释执行 (两条执行路径必须一致)。"""
-    assert expected in _run_python(src, use_native=False)
-
+    assert expected in _run_python(src)
 
 @pytest.mark.parametrize('name,src,expected', SEMANTIC_CASES,
                          ids=[c[0] for c in SEMANTIC_CASES])
@@ -210,13 +199,11 @@ def test_switch_semantics_go_cli(name, src, expected, workdir):
     assert r.returncode == 0, r.stderr
     assert expected in r.stdout, f'期望 {expected}, 实际 stdout={r.stdout!r}'
 
-
 @pytest.mark.parametrize('name,make_src,n,expected', LEAK_CASES,
                          ids=[c[0] for c in LEAK_CASES])
 def test_switch_continue_does_not_leak_stack_native(name, make_src, n, expected):
     """switch 内 continue 不得泄漏选择器栈槽 (原生路径)。"""
-    assert expected in _run_python(make_src(n), use_native=True)
-
+    assert expected in _run_python(make_src(n))
 
 @pytest.mark.parametrize('name,make_src,n,expected', LEAK_CASES,
                          ids=[c[0] for c in LEAK_CASES])
@@ -228,18 +215,15 @@ def test_switch_continue_does_not_leak_stack_go_cli(name, make_src, n, expected,
     assert r.returncode == 0, r.stderr
     assert expected in r.stdout, f'期望 {expected}, 实际 stdout={r.stdout!r}'
 
-
 def test_switch_continue_does_not_leak_stack_interpreter():
     """解释路径再校验一次 (次数调低以免拖慢测试套件)。"""
-    assert 'R=5999' in _run_python(_switch_continue(6000), use_native=False)
-
+    assert 'R=5999' in _run_python(_switch_continue(6000))
 
 def test_nonconstant_case_is_compile_error_python():
     """非常量 case 必须编译报错, 而不是静默生成错误分派。"""
     with pytest.raises(CompilerError) as ei:
         CINCompiler().compile_source(NONCONST_CASE)
     assert 'constant' in str(ei.value).lower()
-
 
 @needs_go_cli
 def test_nonconstant_case_is_compile_error_go(workdir):

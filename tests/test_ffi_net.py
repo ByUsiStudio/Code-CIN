@@ -5,23 +5,35 @@
 """
 
 import http.server
+import os
 import socket
 import struct
 import sys
 import threading
+import uuid
 
 import pytest
 
 from codecin import native
 from codecin.cin import CINCompiler
+from tests.conftest import TMP_ROOT
 from tests.helpers import new_cpu
 
 IS_WINDOWS = sys.platform == 'win32'
 
+def _run_cin_capture(src: str, allow_fail: bool = False, **cfg):
+    """编译并运行 CIN 源码, 捕获 stdout, 返回 cpu。
 
-def _run_cin_capture(src: str, **cfg):
-    """编译并运行 CIN 源码, 捕获 stdout, 返回 cpu (断言执行未失败)。"""
-    res = CINCompiler().compile_source(src)
+    源码先写入临时文件再经 CINCompiler.compile 编译 —— import 展开
+    ("ffi.cin"/"net.cin") 只在 load_program_source_mapped (文件路径)
+    中进行, compile_source 不展开 import。
+    allow_fail=True 时不断言 execution_failed (供沙箱拦截用例)。
+    """
+    os.makedirs(TMP_ROOT, exist_ok=True)
+    path = os.path.join(TMP_ROOT, f'ffi_net_{uuid.uuid4().hex}.cin')
+    with open(path, 'w', encoding='utf-8') as f:
+        f.write(src)
+    res = CINCompiler().compile(path)
     cpu = new_cpu(**cfg)
     cpu.instructions = res.instructions
     cpu.labels = res.labels
@@ -32,9 +44,9 @@ def _run_cin_capture(src: str, **cfg):
     cpu.pc = 0
     cpu._capture_output = True
     cpu.run()
-    assert not cpu.execution_failed, ''.join(cpu.output_buffer)
+    if not allow_fail:
+        assert not cpu.execution_failed, ''.join(cpu.output_buffer)
     return cpu
-
 
 # ==================== FFI (SYS 140-144) ====================
 
@@ -62,20 +74,17 @@ function main() -> float {{
     return r
 }}'''
 
-
 @pytest.mark.skipif(not IS_WINDOWS, reason='Windows 专属库')
 def test_ffi_call_gettickcount64_windows():
     cpu = _run_cin_capture(
         FFI_LIB_SRC.format(lib='kernel32.dll', sym='GetTickCount64'))
     assert cpu.regs.read(0) > 0                    # 开机以来的毫秒数
 
-
 @pytest.mark.skipif(IS_WINDOWS, reason='POSIX 专属库')
 def test_ffi_call_getpid_posix():
     cpu = _run_cin_capture(
         FFI_LIB_SRC.format(lib='libc.so.6', sym='getpid'))
     assert cpu.regs.read(0) > 0
-
 
 @pytest.mark.skipif(not IS_WINDOWS, reason='Windows 专属库')
 def test_ffi_callf_pow_windows():
@@ -85,7 +94,6 @@ def test_ffi_callf_pow_windows():
     val = struct.unpack('<d', struct.pack('<Q', bits))[0]
     assert abs(val - 81.0) < 1e-9                  # pow(3, 4)
 
-
 @pytest.mark.skipif(IS_WINDOWS, reason='POSIX 专属库')
 def test_ffi_callf_pow_posix():
     cpu = _run_cin_capture(
@@ -94,7 +102,6 @@ def test_ffi_callf_pow_posix():
     val = struct.unpack('<d', struct.pack('<Q', bits))[0]
     assert abs(val - 81.0) < 1e-9
 
-
 def test_ffi_load_missing_library_returns_zero():
     cpu = _run_cin_capture(
         'import "ffi.cin"\n'
@@ -102,7 +109,6 @@ def test_ffi_load_missing_library_returns_zero():
         '    return ffi_load("no_such_lib_xyz_123.dll")\n'
         '}')
     assert cpu.regs.read(0) == 0
-
 
 def test_ffi_find_missing_symbol_returns_zero():
     lib = 'kernel32.dll' if IS_WINDOWS else 'libc.so.6'
@@ -115,7 +121,6 @@ def test_ffi_find_missing_symbol_returns_zero():
         '}')
     assert cpu.regs.read(0) == 0
 
-
 def test_ffi_call_bad_handle_returns_zero():
     cpu = _run_cin_capture(
         'import "ffi.cin"\n'
@@ -124,7 +129,6 @@ def test_ffi_call_bad_handle_returns_zero():
         '}')
     # 无效句柄: 引擎返回错误 (execution_failed) 或 0, 都不应崩溃
     assert cpu.regs.read(0) == 0 or cpu.execution_failed
-
 
 # ==================== DNS (SYS 157) ====================
 
@@ -138,7 +142,6 @@ def test_dns_lookup_localhost():
         '}')
     assert cpu.regs.read(0) == 1
 
-
 def test_dns_lookup_invalid_host_returns_empty():
     cpu = _run_cin_capture(
         'import "net.cin"\n'
@@ -148,7 +151,6 @@ def test_dns_lookup_invalid_host_returns_empty():
     # 失败返回空串: x0 指向空堆串, 断言执行未失败即可 (空串长度 0)
     ip = cpu.memory.read_cstr_bytes(cpu.regs.read(0))
     assert ip == b''
-
 
 # ==================== TCP (SYS 147-152) ====================
 
@@ -178,7 +180,6 @@ def _echo_server_once():
     t.start()
     return holder, t
 
-
 def test_tcp_client_send_recv_echo():
     holder, thread = _echo_server_once()
     cpu = _run_cin_capture(f'''
@@ -198,7 +199,6 @@ function main() -> int {{
     assert holder['data'] == b'hello'
     assert cpu.regs.read(0) == 1
 
-
 def _cin_tcp_server_src(port: int) -> str:
     return f'''
 import "net.cin"
@@ -215,7 +215,6 @@ function main() -> int {{
     tcp_close(lfd)
     return sent
 }}'''
-
 
 def test_tcp_server_listen_accept_echo():
     """CIN 侧 tcp_listen/tcp_accept: Python 客户端连入, CIN 回显。"""
@@ -252,7 +251,6 @@ def test_tcp_server_listen_accept_echo():
     assert result['reply'] == b'ping\n'
     assert cpu.regs.read(0) == 5                   # 回显 5 字节
 
-
 def test_tcp_dial_refused_returns_minus_one():
     # 端口 1 上的连接几乎必然被拒绝 (保留端口, 无监听)
     cpu = _run_cin_capture(
@@ -262,7 +260,6 @@ def test_tcp_dial_refused_returns_minus_one():
         '}')
     assert cpu.regs.read(0) == 0xFFFFFFFFFFFFFFFF or \
         cpu.regs.read(0) == 0xFFFFFFFF
-
 
 # ==================== UDP (SYS 153-156) ====================
 
@@ -300,7 +297,6 @@ function main() -> int {{
     assert result['from'] == b'hi'
     assert cpu.regs.read(0) == 2 * 1000 + 4        # sent=2, recv=4 ("pong")
 
-
 def test_udp_send_str_hostname():
     """udp_send_str 支持主机名 (localhost 解析为 127.0.0.1)。"""
     peer = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -331,7 +327,6 @@ function main() -> int {{
     assert got['data'] == b'by-name'
     assert cpu.regs.read(0) == 7
 
-
 # ==================== HTTP (SYS 145-146) ====================
 
 class _Handler(http.server.BaseHTTPRequestHandler):
@@ -355,7 +350,6 @@ class _Handler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-
 @pytest.fixture(scope='module')
 def http_server():
     srv = http.server.ThreadingHTTPServer(('127.0.0.1', 0), _Handler)
@@ -365,7 +359,6 @@ def http_server():
     yield port
     srv.shutdown()
     srv.server_close()
-
 
 def test_http_get_and_status_code(http_server):
     cpu = _run_cin_capture(f'''
@@ -378,7 +371,6 @@ function main() -> int {{
     return code * 10 + found
 }}''')
     assert cpu.regs.read(0) == 200 * 10 + 1
-
 
 def test_http_post_custom_headers(http_server):
     cpu = _run_cin_capture(f'''
@@ -393,7 +385,6 @@ function main() -> int {{
 }}''')
     assert cpu.regs.read(0) == 201 * 10 + 1
 
-
 def test_http_req_custom_method_and_headers(http_server):
     cpu = _run_cin_capture(f'''
 import "net.cin"
@@ -407,17 +398,17 @@ function main() -> int {{
 }}''')
     assert cpu.regs.read(0) == 200
 
-
 # ==================== 沙箱 ====================
 
 def test_sandbox_blocks_host_syscalls():
+    # 沙箱拦宿主 SYS: 引擎报错 -> ExecutionError -> execution_failed
     cpu = _run_cin_capture(
         'function main() -> int {\n'
         '    return http_get("http://127.0.0.1:1/x")\n'
         '}',
+        allow_fail=True,
         sandbox_mode=True)
     assert cpu.execution_failed
-
 
 def test_sandbox_allows_core_computation():
     cpu = _run_cin_capture(

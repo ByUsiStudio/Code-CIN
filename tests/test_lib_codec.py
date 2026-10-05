@@ -91,7 +91,6 @@ function main() -> int {
     return 0
 }'''
 
-
 def _run(workdir, source, name='lib_codec_test.cin', **cfg):
     path = os.path.join(workdir, name)
     # 注意: 必须以文本 + 原始转义写入, 让 \xHH 原样进入 .cin
@@ -99,20 +98,11 @@ def _run(workdir, source, name='lib_codec_test.cin', **cfg):
         f.write(source)
     return run_cin_file(path, **cfg)
 
-
-@pytest.mark.parametrize('use_native', (False, True), ids=('interp', 'native'))
-def test_codec_lib(workdir, use_native):
-    cpu = _run(workdir, CODEC_SRC, use_native=use_native)
+def test_codec_lib(workdir):
+    cpu = _run(workdir, CODEC_SRC)
     assert not cpu.execution_failed
     code = cpu.regs.read(0)
     assert code == 0, f'codec 第 {code} 条断言失败'
-
-
-def test_codec_lib_jit(workdir):
-    cpu = _run(workdir, CODEC_SRC, use_native=False, enable_jit=True)
-    assert not cpu.execution_failed
-    assert cpu.regs.read(0) == 0
-
 
 BYTE_ZERO_SRC = r'''
 import "codec.cin"
@@ -130,18 +120,13 @@ function main() -> int {
     return 0
 }'''
 
-
-@pytest.mark.parametrize('use_native', (False, True), ids=('interp', 'native'))
-def test_codec_byte_zero_is_not_representable(workdir, use_native):
+def test_codec_byte_zero_is_not_representable(workdir):
     """字节 0 不可表示 —— 断言的是"限制", 不是"缺陷"。"""
-    cpu = _run(workdir, BYTE_ZERO_SRC, name='lib_codec_nul.cin',
-               use_native=use_native)
+    cpu = _run(workdir, BYTE_ZERO_SRC, name='lib_codec_nul.cin')
     assert not cpu.execution_failed
     assert cpu.regs.read(0) == 0
 
-
-@pytest.mark.parametrize('use_native', (False, True), ids=('interp', 'native'))
-def test_codec_importable_with_other_libs(workdir, use_native):
+def test_codec_importable_with_other_libs(workdir):
     """与其它库同时导入不冲突 (符号 / 全局变量)。"""
     src = r'''
 import "codec.cin"
@@ -158,7 +143,6 @@ function main() -> int {
     if (val_is_digit('7') != 1) { return 6 }
     return 0
 }'''
-    cpu = _run(workdir, src, name='lib_codec_together.cin',
-               use_native=use_native)
+    cpu = _run(workdir, src, name='lib_codec_together.cin')
     assert not cpu.execution_failed
     assert cpu.regs.read(0) == 0

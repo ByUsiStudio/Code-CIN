@@ -5,7 +5,7 @@
 "全部一起 import 会不会撞名 / 撞全局变量 / 撞数据段"。本文件补上这条。
 
 约定:
-  * 参与合并的是**纯 CIN 库**（只调用语言内建, 三条路径一致）;
+  * 参与合并的是**纯 CIN 库**（只调用语言内建, 原生引擎单路径）;
   * `io` / `gui` / `termux` / `key` 依赖宿主能力, 只做 import（不调用）, 单独一组;
   * `test.cin` 与 `time.cin` 共用 `t_` 前缀, 文档明确写了"勿同时导入", 因此排除
     `test.cin`（它是断言工具, 不是被调用的功能库）。
@@ -62,7 +62,6 @@ PURE_LIB_CALLS = [
                 '{ return %d }'),
 ]
 
-
 def _source(libs):
     """生成 import 列表 + 依次调用（返回第一个失败点编号）。"""
     imports = '\n'.join(f'import "{name}"' for name, _ in libs)
@@ -72,26 +71,21 @@ def _source(libs):
     return f'{imports}\n\nfunction main() -> int {{\n' + '\n'.join(body) + \
            '\n    return 0\n}'
 
-
 def _run(workdir, src, name, **cfg):
     path = os.path.join(workdir, name)
     with open(path, 'w', encoding='utf-8') as f:
         f.write(src)
     return run_cin_file(path, **cfg)
 
-
-@pytest.mark.parametrize('use_native', (False, True), ids=('interp', 'native'))
-def test_all_pure_libs_importable_together(workdir, use_native):
-    """30+ 个纯 CIN 库同时导入且各调用一个接口, 两条路径都必须返回 0。"""
-    cpu = _run(workdir, _source(PURE_LIB_CALLS), 'all_libs.cin',
-               use_native=use_native)
+def test_all_pure_libs_importable_together(workdir):
+    """30+ 个纯 CIN 库同时导入且各调用一个接口, 原生引擎执行必须返回 0。"""
+    cpu = _run(workdir, _source(PURE_LIB_CALLS), 'all_libs.cin')
     assert not cpu.execution_failed
     code = cpu.regs.read(0)
     if code:
         idx = code - 1
         who = PURE_LIB_CALLS[idx][0] if 0 <= idx < len(PURE_LIB_CALLS) else '?'
         pytest.fail(f'合并导入失败于第 {code} 项: {who}')
-
 
 def test_pure_lib_list_matches_directory():
     """新库加入 codecin/lib 时必须同步进本用例, 否则这条护栏会悄悄失效。"""

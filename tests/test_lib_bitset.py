@@ -12,13 +12,11 @@ import pytest
 
 from tests.helpers import run_cin_file
 
-
 def _run(workdir, source, name='lib_bitset_test.cin', **cfg):
     path = os.path.join(workdir, name)
     with open(path, 'w', encoding='utf-8') as f:
         f.write(source)
     return run_cin_file(path, **cfg)
-
 
 BS_SRC = '''
 import "bitset.cin"
@@ -464,9 +462,7 @@ function main() -> int {
     return 0
 }'''
 
-
-@pytest.mark.parametrize('use_native', (False, True), ids=('interp', 'native'))
-def test_bitset_lib(workdir, use_native):
-    cpu = _run(workdir, BS_SRC, use_native=use_native)
+def test_bitset_lib(workdir):
+    cpu = _run(workdir, BS_SRC)
     assert not cpu.execution_failed
     assert cpu.regs.read(0) == 0

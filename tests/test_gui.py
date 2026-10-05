@@ -2,10 +2,9 @@ r"""GUI 窗口 (SYS 119..125, 128) 与音频扩展 (SYS 126..127) 回归测试�
 
 覆盖点:
   1. HOST_BUILTINS 注册: gui_* / mouse_* / audio_pos / beep 编译为对应 SYS
-  2. 解释器路径 (--no-native): 宿主 SYS 报 "require the native Go runtime"
-  3. sandbox 模式: 同样被拦截
-  4. 原生路径无显示服务 / 无窗口: gui_* 优雅失败, mouse_* = -1
-  5. 音频参数校验 (三平台一致, 不触碰设备) 与 lib/gui.cin 封装
+  2. sandbox 模式: 宿主 SYS 被 Go 引擎拦截 -> execution_failed
+  3. 无显示服务 / 无窗口: gui_* 优雅失败, mouse_* = -1
+  4. 音频参数校验 (三平台一致, 不触碰设备) 与 lib/gui.cin 封装
 
 注意: 测试绝不调用 gui_new (Windows 开发机上会真的弹出窗口),
 也不调用参数合法的 beep (会真的发声); 只测"无窗口优雅失败"与
@@ -23,11 +22,9 @@ from tests.helpers import run_cin_file
 needs_native = pytest.mark.skipif(
     native.get_engine() is None, reason="native Go library not built")
 
-
-def build_cpu(src: str, use_native: bool, **cfg_kwargs) -> CPU:
+def build_cpu(src: str, **cfg_kwargs) -> CPU:
     res = CINCompiler().compile_source(src)
-    cfg = Config(interactive_mode=False, log_level='ERROR',
-                 use_native=use_native, **cfg_kwargs)
+    cfg = Config(log_level='ERROR', **cfg_kwargs)
     cpu = CPU(cfg)
     cpu.instructions = res.instructions
     cpu.labels = res.labels
@@ -38,7 +35,6 @@ def build_cpu(src: str, use_native: bool, **cfg_kwargs) -> CPU:
     cpu.pc = 0
     cpu._capture_output = True
     return cpu
-
 
 # ====================================================================
 # 1. HOST_BUILTINS 注册 -> SYS 功能号
@@ -61,9 +57,8 @@ def test_gui_audio_builtins_compile_to_sys_ids():
                if ins[0] == 'SYS']
         assert ('SYS', sys_id) in ops, f"{name}() 应编译为 SYS {sys_id}"
 
-
 # ====================================================================
-# 2/3. 解释器路径与 sandbox: 宿主 SYS 明确报错
+# 2. sandbox: 宿主 SYS 被 Go 引擎拦截
 # ====================================================================
 
 GUI_SRC = '''
@@ -75,18 +70,14 @@ function main() -> int {
     return mx + p * 0
 }'''
 
-
-@pytest.mark.parametrize('use_native, sandbox', ((False, False), (False, True)),
-                         ids=('interp', 'sandbox'))
-def test_non_native_paths_reject_gui_sys(use_native, sandbox):
-    cpu = build_cpu(GUI_SRC, use_native=use_native, sandbox_mode=sandbox)
+def test_sandbox_rejects_gui_sys():
+    cpu = build_cpu(GUI_SRC, sandbox_mode=True)
     cpu.run()
     # CPU.run 会把执行期异常记日志后吞掉, 用 execution_failed 判定
     assert cpu.execution_failed
 
-
 # ====================================================================
-# 4. 原生路径无窗口: 优雅失败 (不阻塞、不弹窗)
+# 3. 无窗口: 优雅失败 (不阻塞、不弹窗)
 # ====================================================================
 
 @needs_native
@@ -103,11 +94,10 @@ function main() -> int {
     if (mouse_button() != -1) { return 7 }
     if (audio_pos() != -1) { return 8 }
     return 0
-}''', use_native=True)
+}''')
     cpu.run()
     assert not cpu.execution_failed
     assert cpu.regs.read(0) == 0
-
 
 @needs_native
 def test_native_beep_argument_validation():
@@ -118,11 +108,10 @@ function main() -> int {
     if (beep(20001, 100) != -1) { return 2 }   // 频率过高
     if (beep(440, 0) != -1) { return 3 }       // 时长为 0
     return 0
-}''', use_native=True)
+}''')
     cpu.run()
     assert not cpu.execution_failed
     assert cpu.regs.read(0) == 0
-
 
 # ====================================================================
 # 5. lib/gui.cin 封装 (无窗口路径) 与 lib/key.cin 扩展键码
@@ -145,10 +134,9 @@ function main() -> int {
     path = os.path.join(workdir, 'gui_lib.cin')
     with open(path, 'w', encoding='utf-8') as f:
         f.write(src)
-    cpu = run_cin_file(path, use_native=True)
+    cpu = run_cin_file(path)
     assert not cpu.execution_failed
     assert cpu.regs.read(0) == 0
-
 
 KEY_EXT_SRC = '''
 import "key.cin"
@@ -165,13 +153,11 @@ function main() -> int {
     return 0
 }'''
 
-
-@pytest.mark.parametrize('use_native', (False, True), ids=('interp', 'native'))
-def test_key_lib_extended_constants(workdir, use_native):
+def test_key_lib_extended_constants(workdir):
     """5.8.0 新增键码: F11/F12 与 Ctrl/Shift 修饰组合, 纯常量两条路径一致。"""
     path = os.path.join(workdir, 'key_ext.cin')
     with open(path, 'w', encoding='utf-8') as f:
         f.write(KEY_EXT_SRC)
-    cpu = run_cin_file(path, use_native=use_native)
+    cpu = run_cin_file(path)
     assert not cpu.execution_failed
     assert cpu.regs.read(0) == 0

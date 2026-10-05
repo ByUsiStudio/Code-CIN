@@ -28,11 +28,9 @@ main:
 buf: .dq 0
 """
 
-
 def _assemble(source: str):
     asm = Assembler(FastMemory(4096))
     return asm.assemble_source(source)
-
 
 def test_equ_in_instruction_operands():
     instructions, labels, _ = _assemble(ASM_EQU)
@@ -41,27 +39,22 @@ def test_equ_in_instruction_operands():
     imms = [ins[1][2][1] for ins in instructions[:6]]
     assert imms == [100, 5, 9, 16, 1, 10]
 
-
 def test_equ_with_comma_separator():
     instructions, _, _ = _assemble(".equ SIZE, 8\naddi x0, x0, SIZE\nhalt\n")
     assert instructions[0][1][2][1] == 8
-
 
 def test_symbol_arithmetic_operand():
     instructions, _, _ = _assemble(
         ".equ A, 10\n.equ B, 2\naddi x0, x0, A*B+B+1\nhalt\n")
     assert instructions[0][1][2][1] == 23
 
-
 def test_forward_equ_reference_is_error():
     with pytest.raises(AssemblerError):
         _assemble(".equ X, Y+1\naddi x0, x0, X\nhalt\n")
 
-
 def test_undefined_equ_symbol_is_error():
     with pytest.raises(AssemblerError):
         _assemble("addi x0, x0, UNDEF\nhalt\n")
-
 
 def test_data_directive_expression():
     asm = Assembler(FastMemory(4096))
@@ -73,17 +66,15 @@ def test_data_directive_expression():
     assert asm.memory.read_qword(8) == 21
     assert asm.memory.read_qword(16) == 32
 
-
 def test_asm_end_to_end_interpreter_and_native(workdir):
     cpu = asm_program(ASM_EQU, workdir)
     cpu.run()
     assert cpu.regs.read(0) == 141
     assert cpu.regs.read(5) == 77
-    cpu2 = asm_program(ASM_EQU, workdir, name='prog2.asm', use_native=True)
+    cpu2 = asm_program(ASM_EQU, workdir, name='prog2.asm')
     cpu2.run()
     assert cpu2.regs.read(0) == 141
     assert cpu2.regs.read(5) == 77
-
 
 def test_label_plus_offset_operand(workdir):
     src = """.text
@@ -98,12 +89,10 @@ target:
     # target 位于 index 2 (main 两指令后)
     assert cpu.regs.read(0) == 3
 
-
 def test_equ_must_be_dot_prefixed():
     # PL 关键字 'set' 是 MOV, 不能当作 .equ 误解析
     instructions, _, _ = _assemble("set x0, 5\nhalt\n")
     assert instructions[0][0] == 'MOV'
-
 
 # --- 立即数后缀与进制前缀的交互 (回归: #0x1F 曾被解析成 1) ---
 
@@ -126,7 +115,6 @@ def test_equ_must_be_dot_prefixed():
 ])
 def test_parse_immediate_radix_and_suffix(literal, expected):
     assert Assembler.parse_immediate(literal) == expected
-
 
 def test_hex_immediate_keeps_trailing_f_in_operand():
     """指令操作数里的 #0x1F 必须按 31 编码 (曾因剥后缀变成 1)。"""

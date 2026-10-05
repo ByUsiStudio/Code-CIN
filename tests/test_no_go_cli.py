@@ -9,7 +9,6 @@ import os
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 NATIVE = os.path.join(ROOT, 'codecin', 'native')
 
-
 def _go_files():
     out = []
     for base, dirs, files in os.walk(NATIVE):
@@ -19,7 +18,6 @@ def _go_files():
             if name.endswith('.go'):
                 out.append(os.path.join(base, name))
     return out
-
 
 def test_only_allowed_main_package_is_shared_lib_entry():
     mains = []
@@ -32,13 +30,11 @@ def test_only_allowed_main_package_is_shared_lib_entry():
         'Go 侧出现了额外的 CLI 入口 (package main): '
         f'{mains}; 唯一允许的是 c-shared 库入口 codecin/native/main.go')
 
-
 def test_shared_lib_entry_is_cgo_shared_library():
     with open(os.path.join(NATIVE, 'main.go'), encoding='utf-8') as f:
         src = f.read()
     assert '#include <stdlib.h>' in src, 'main.go 不再是 cgo c-shared 库入口'
     assert 'import "C"' in src
-
 
 def test_no_go_cli_binary_committed():
     for name in ('codecin', 'codecin.exe', 'libcodecin_native.so',

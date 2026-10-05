@@ -11,7 +11,6 @@ from tests.helpers import run_cin_file, run_cin_source
 EXAMPLES = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                         'examples')
 
-
 # ---------------- 字符串内建 ----------------
 
 def test_substr_clamps_and_indexof():
@@ -28,7 +27,6 @@ function main() -> int {
     cpu = run_cin_source(src)
     assert cpu.regs.read(0) == 3203
 
-
 def test_upper_lower():
     src = """
 function main() -> int {
@@ -37,7 +35,6 @@ function main() -> int {
     return strlen(a) * 100 + strlen(b) * 10 + 1
 }"""
     assert run_cin_source(src).regs.read(0) == 531
-
 
 def test_string_builtins_three_paths():
     src = """
@@ -48,18 +45,13 @@ function main() -> int {
     return strlen(tail) * 10 + strlen(lower("AB"))
 }"""
     expected = 5 * 10 + 2
-    assert run_cin_source(src, use_native=False).regs.read(0) == expected
-    assert run_cin_source(src, use_native=False,
-                          enable_jit=True).regs.read(0) == expected
-    assert run_cin_source(src, use_native=True).regs.read(0) == expected
-
+    assert run_cin_source(src).regs.read(0) == expected
 
 # ---------------- import ----------------
 
 MOD_B = 'function mod_b(int x) -> int { return x * 2 }\n'
 MOD_A = ('function mod_a(int x) -> int { return x + mod_b(x) }\n'
          'import "./mod_b.cin"\n')
-
 
 def test_import_single_file(workdir):
     with open(os.path.join(workdir, 'mod_b.cin'), 'w', encoding='utf-8') as f:
@@ -72,7 +64,6 @@ def test_import_single_file(workdir):
     cpu = run_cin_file(os.path.join(workdir, 'main.cin'))
     assert cpu.regs.read(0) == 30          # 10 + 2*10
 
-
 def test_duplicate_import_is_idempotent(workdir):
     # 同一文件 import 两次仍能编译 (防重复包含)
     with open(os.path.join(workdir, 'mod_b.cin'), 'w', encoding='utf-8') as f:
@@ -82,7 +73,6 @@ def test_duplicate_import_is_idempotent(workdir):
                 'function main() -> int { return mod_b(5) }\n')
     cpu = run_cin_file(os.path.join(workdir, 'main.cin'))
     assert cpu.regs.read(0) == 10
-
 
 def test_import_stdlib_math_and_str(workdir):
     src = ('import "math.cin"\nimport "str.cin"\n'
@@ -104,7 +94,6 @@ def test_import_stdlib_math_and_str(workdir):
     # a=3 b=2 c=10 d=1 e=1 f=1 g=6
     assert cpu.regs.read(0) == 3301116
 
-
 def test_circular_import_error(workdir):
     a = os.path.join(workdir, 'circ_a.cin')
     b = os.path.join(workdir, 'circ_b.cin')
@@ -115,14 +104,12 @@ def test_circular_import_error(workdir):
     with pytest.raises(CompilerError):
         CINCompiler().compile(a)
 
-
 def test_missing_import_error(workdir):
     p = os.path.join(workdir, 'missing.cin')
     with open(p, 'w', encoding='utf-8') as f:
         f.write('import "no_such.cin"\nfunction main() -> int { return 0 }\n')
     with pytest.raises(CompilerError):
         CINCompiler().compile(p)
-
 
 # ---------------- B3: 新的 import 解析规则 ----------------
 
@@ -136,7 +123,6 @@ def test_relative_import_requires_dot_prefix(workdir):
                 'function main() -> int { return triple(7) }\n')
     assert run_cin_file(p).regs.read(0) == 21
 
-
 def test_relative_import_subdir(workdir):
     """`import "./sub/x.cin"` 支持子目录。"""
     sub = os.path.join(workdir, 'sub')
@@ -148,7 +134,6 @@ def test_relative_import_subdir(workdir):
         f.write('import "./sub/helper.cin"\n'
                 'function main() -> int { return add4(10) }\n')
     assert run_cin_file(p).regs.read(0) == 14
-
 
 def test_bare_name_resolves_to_builtin_not_sibling(workdir):
     """裸名字 (无 "./" 前缀) 一律走 codecin 内置库, 不会命中同名兄弟文件。"""
@@ -162,7 +147,6 @@ def test_bare_name_resolves_to_builtin_not_sibling(workdir):
     # 内置 math.cin 的 f_abs 才是真的绝对值 -> f_floor(3.7) == 3
     assert run_cin_file(p).regs.read(0) == 3
 
-
 def test_builtin_lib_prefix_alias_still_works(workdir):
     """兼容旧写法: `import "lib/str.cin"` 仍解析到内置库。"""
     p = os.path.join(workdir, 'aliasmain.cin')
@@ -170,7 +154,6 @@ def test_builtin_lib_prefix_alias_still_works(workdir):
         f.write('import "lib/str.cin"\n'
                 'function main() -> int { return s_contains("hello", "ell") }\n')
     assert run_cin_file(p).regs.read(0) == 1
-
 
 def test_relative_import_missing_reports_relative_error(workdir):
     p = os.path.join(workdir, 'relmissing.cin')
@@ -182,7 +165,6 @@ def test_relative_import_missing_reports_relative_error(workdir):
     assert 'nope.cin' in msg
     assert '相对引用' in msg
 
-
 def test_builtin_import_missing_reports_library_error(workdir):
     p = os.path.join(workdir, 'libmissing.cin')
     with open(p, 'w', encoding='utf-8') as f:
@@ -191,7 +173,6 @@ def test_builtin_import_missing_reports_library_error(workdir):
     with pytest.raises(CompilerError) as exc:
         CINCompiler().compile(p)
     assert '内置标准库' in str(exc.value)
-
 
 def test_example_modules_demo_runs():
     path = os.path.join(EXAMPLES, 'modules_demo.cin')

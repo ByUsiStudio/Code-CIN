@@ -10,7 +10,6 @@ from tests.helpers import run_cin_source
 needs_native = pytest.mark.skipif(
     native.get_engine() is None, reason="native Go library not built")
 
-
 @needs_native
 def test_file_io_roundtrip(workdir):
     p = os.path.join(workdir, 'io_test.txt').replace('\\', '/')
@@ -26,8 +25,7 @@ function main() -> int {{
     if (file_exists("{p}") != 0) {{ return 8 }}
     return 0
 }}'''
-    assert run_cin_source(src, use_native=True).regs.read(0) == 0
-
+    assert run_cin_source(src).regs.read(0) == 0
 
 @needs_native
 def test_mkdir_and_dir_list(workdir):
@@ -38,9 +36,8 @@ function main() -> int {{
     if (file_exists("{d}") != 1) {{ return 2 }}
     return 0
 }}'''
-    assert run_cin_source(src, use_native=True).regs.read(0) == 0
+    assert run_cin_source(src).regs.read(0) == 0
     assert os.path.isdir(os.path.join(workdir, 'subdir'))
-
 
 @needs_native
 def test_system_info_and_env():
@@ -54,8 +51,7 @@ function main() -> int {
     if (strcmp(getenv("CC_ENV_TEST"), "hello") != 0) { return 6 }
     return 0
 }'''
-    assert run_cin_source(src, use_native=True).regs.read(0) == 0
-
+    assert run_cin_source(src).regs.read(0) == 0
 
 @needs_native
 def test_exec_and_output():
@@ -67,8 +63,7 @@ function main() -> int {
     if (indexof(out, "codecin_ok") < 0) { return 2 }
     return 0
 }'''
-    assert run_cin_source(src, use_native=True).regs.read(0) == 0
-
+    assert run_cin_source(src).regs.read(0) == 0
 
 @needs_native
 def test_termux_available_returns_flag():
@@ -79,8 +74,7 @@ function main() -> int {
     if (a == 1) { return 20 }
     return 30
 }'''
-    assert run_cin_source(src, use_native=True).regs.read(0) in (10, 20)
-
+    assert run_cin_source(src).regs.read(0) in (10, 20)
 
 def test_system_builtins_compile_without_native():
     """含系统内建的源码应能编译 (解释执行会报错, 仅验证编译)。"""

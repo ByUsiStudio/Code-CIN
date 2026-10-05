@@ -7,13 +7,11 @@ import os
 
 from tests.helpers import run_cin_file
 
-
 def _run(workdir, source, name='lib_ext_test.cin', **cfg):
     path = os.path.join(workdir, name)
     with open(path, 'w', encoding='utf-8') as f:
         f.write(source)
     return run_cin_file(path, **cfg)
-
 
 def test_bits_lib(workdir):
     src = '''
@@ -52,7 +50,6 @@ function main() -> int {
 }'''
     assert _run(workdir, src).regs.read(0) == 0
 
-
 def test_stat_lib(workdir):
     src = '''
 import "stat.cin"
@@ -84,7 +81,6 @@ function main() -> int {
 }'''
     assert _run(workdir, src).regs.read(0) == 0
 
-
 def test_hash_lib(workdir):
     src = '''
 import "hash.cin"
@@ -104,7 +100,6 @@ function main() -> int {
     return 0
 }'''
     assert _run(workdir, src).regs.read(0) == 0
-
 
 def test_validate_lib(workdir):
     src = '''
@@ -147,7 +142,6 @@ function main() -> int {
     return 0
 }'''
     assert _run(workdir, src).regs.read(0) == 0
-
 
 def test_matrix_lib(workdir):
     src = '''
@@ -195,7 +189,6 @@ function main() -> int {
     return 0
 }'''
     assert _run(workdir, src).regs.read(0) == 0
-
 
 def test_queue_lib(workdir):
     src = '''
@@ -246,7 +239,6 @@ function main() -> int {
     return 0
 }'''
     assert _run(workdir, src).regs.read(0) == 0
-
 
 def test_new_libs_are_importable_together(workdir):
     """多个新库同时导入不得冲突 (全局符号/名称)。"""

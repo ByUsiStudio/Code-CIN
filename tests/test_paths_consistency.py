@@ -23,7 +23,6 @@ FILES = [
     'enum_range_for.cin',
 ]
 
-
 @pytest.mark.parametrize('name', FILES)
 def test_three_paths_same_output(name):
     r = subprocess.run(

@@ -10,13 +10,11 @@ from tests.helpers import run_cin_file
 needs_native = pytest.mark.skipif(
     native.get_engine() is None, reason="native Go library not built")
 
-
 def _run(workdir, source, name='lib_test.cin', **cfg):
     path = os.path.join(workdir, name)
     with open(path, 'w', encoding='utf-8') as f:
         f.write(source)
     return run_cin_file(path, **cfg)
-
 
 def test_array_lib(workdir):
     src = '''
@@ -35,7 +33,6 @@ function main() -> int {
     return 0
 }'''
     assert _run(workdir, src).regs.read(0) == 0
-
 
 def test_sort_lib(workdir):
     src = '''
@@ -60,7 +57,6 @@ function main() -> int {
 }'''
     assert _run(workdir, src).regs.read(0) == 0
 
-
 def test_conv_lib(workdir):
     src = '''
 import "conv.cin"
@@ -79,7 +75,6 @@ function main() -> int {
 }'''
     assert _run(workdir, src).regs.read(0) == 0
 
-
 def test_vec_lib(workdir):
     src = '''
 import "vec.cin"
@@ -94,7 +89,6 @@ function main() -> int {
     return 0
 }'''
     assert _run(workdir, src).regs.read(0) == 0
-
 
 def test_rand_lib_in_range(workdir):
     src = '''
@@ -116,7 +110,6 @@ function main() -> int {
 }'''
     assert _run(workdir, src).regs.read(0) == 0
 
-
 def test_json_lib(workdir):
     src = '''
 import "json.cin"
@@ -132,7 +125,6 @@ function main() -> int {
 }'''
     assert _run(workdir, src).regs.read(0) == 0
 
-
 def test_time_lib(workdir):
     src = '''
 import "time.cin"
@@ -145,7 +137,6 @@ function main() -> int {
     return 0
 }'''
     assert _run(workdir, src).regs.read(0) == 0
-
 
 def test_test_lib(workdir):
     src = '''
@@ -161,7 +152,6 @@ function main() -> int {
 }'''
     # 全部通过时 t_report 返回 0
     assert _run(workdir, src).regs.read(0) == 0
-
 
 @needs_native
 def test_io_lib(workdir):
@@ -181,8 +171,7 @@ function main() -> int {{
     if (io_remove("{p}") != 0) {{ return 9 }}
     return 0
 }}'''
-    assert _run(workdir, src, use_native=True).regs.read(0) == 0
-
+    assert _run(workdir, src).regs.read(0) == 0
 
 @needs_native
 def test_gui_lib(workdir):
@@ -198,9 +187,8 @@ function main() -> int {{
     if (g_save("{p}") != 0) {{ return 3 }}
     return 0
 }}'''
-    assert _run(workdir, src, use_native=True).regs.read(0) == 0
+    assert _run(workdir, src).regs.read(0) == 0
     assert os.path.getsize(p) > 0
-
 
 @needs_native
 def test_termux_lib_present(workdir):
@@ -213,4 +201,4 @@ function main() -> int {
     return 30
 }'''
     # 非 Termux 环境返回 10; Termux 环境返回 20; 均视为正常
-    assert _run(workdir, src, use_native=True).regs.read(0) in (10, 20)
+    assert _run(workdir, src).regs.read(0) in (10, 20)

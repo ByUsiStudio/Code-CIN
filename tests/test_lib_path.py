@@ -6,13 +6,11 @@
           path_normalize("a//b/./c/../d") = "a/b/d"。
 
 命名说明: path_join / path_basename / path_dirname 是**宿主能力内建名**, CIN 编译器
-优先分派内建 (--no-native 下直接报 "host builtins ... require the native Go runtime"),
-同名用户函数永远不会被调用, 因此纯字符串版本命名为
+优先分派内建, 同名用户函数永远不会被调用, 因此纯字符串版本命名为
 path_str_join / path_str_basename / path_str_dirname。
 
 CIN 侧 main() 返回 0 表示全部通过, 非 0 为失败点编号。
 字符串断言一律用 strcmp (CIN 的 == 比较的是指针)。
-同一份用例分别跑解释路径 (interp) 与 Go 原生 VM (native)。
 """
 
 import os
@@ -21,13 +19,11 @@ import pytest
 
 from tests.helpers import run_cin_file
 
-
 def _run(workdir, source, name='lib_path_test.cin', **cfg):
     path = os.path.join(workdir, name)
     with open(path, 'w', encoding='utf-8') as f:
         f.write(source)
     return run_cin_file(path, **cfg)
-
 
 PATH_SRC = '''
 import "path.cin"
@@ -214,13 +210,10 @@ function main() -> int {
     return 0
 }'''
 
-
-@pytest.mark.parametrize('use_native', (False, True), ids=('interp', 'native'))
-def test_path_lib(workdir, use_native):
-    cpu = _run(workdir, PATH_SRC, use_native=use_native)
+def test_path_lib(workdir):
+    cpu = _run(workdir, PATH_SRC)
     assert not cpu.execution_failed
     assert cpu.regs.read(0) == 0
-
 
 TOGETHER_SRC = '''
 import "path.cin"
@@ -241,10 +234,7 @@ function main() -> int {
     return 0
 }'''
 
-
-@pytest.mark.parametrize('use_native', (False, True), ids=('interp', 'native'))
-def test_path_and_combin_importable_together(workdir, use_native):
-    cpu = _run(workdir, TOGETHER_SRC, name='lib_path_combin.cin',
-               use_native=use_native)
+def test_path_and_combin_importable_together(workdir):
+    cpu = _run(workdir, TOGETHER_SRC, name='lib_path_combin.cin')
     assert not cpu.execution_failed
     assert cpu.regs.read(0) == 0

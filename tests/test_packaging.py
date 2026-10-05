@@ -15,11 +15,9 @@ import re
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BINARY_SUFFIX = ('.dll', '.so', '.dylib')
 
-
 def _read(name):
     with open(os.path.join(ROOT, name), encoding='utf-8') as f:
         return f.read()
-
 
 def _section(name):
     """取 pyproject.toml 里 ``[name]`` 段的原文 (不含段头)。
@@ -36,23 +34,19 @@ def _section(name):
             out.append(line)
     return '\n'.join(out)
 
-
 def _package_data_patterns():
     """package-data 段里所有引号内的 glob。"""
     return re.findall(r'"([^"]+)"', _section('tool.setuptools.package-data'))
-
 
 def test_package_data_lists_stdlib():
     patterns = _package_data_patterns()
     assert any('lib/*.cin' in p for p in patterns), \
         f'内置标准库未列入 package-data: {patterns}'
 
-
 def test_package_data_has_no_native_binaries():
     """原生库是构建产物, 不能进包 (否则会带错平台/架构的库)。"""
     bad = [p for p in _package_data_patterns() if p.endswith(BINARY_SUFFIX)]
     assert not bad, f'package-data 仍在打包预编译原生库: {bad}'
-
 
 def test_manifest_ships_go_sources_but_not_binaries():
     """sdist 必须带 Go 源码 (安装时要编译), 但不能带预编译库。"""
@@ -66,7 +60,6 @@ def test_manifest_ships_go_sources_but_not_binaries():
                 any(ln.rstrip().endswith(s) for s in BINARY_SUFFIX)]
     assert not binaries, f'MANIFEST.in 仍在打包预编译原生库: {binaries}'
 
-
 def test_license_uses_spdx_string():
     """旧的 { text = "MIT" } 表格写法已弃用, 2027-02 起不再受支持。"""
     project = _section('project')
@@ -77,7 +70,6 @@ def test_license_uses_spdx_string():
     requires = _section('build-system')
     assert 'setuptools>=77' in requires, \
         'SPDX license 写法需要 setuptools>=77'
-
 
 def test_publish_scripts_upload_sdist_only():
     """发布脚本不能上传 wheel, 否则安装时的原生库编译会被跳过。"""
@@ -91,7 +83,6 @@ def test_publish_scripts_upload_sdist_only():
         for line in uploads:
             assert 'dist/*.tar.gz' in line, \
                 f'{name} 上传了非 sdist 产物: {line}'
-
 
 def test_setup_hook_installs_built_library():
     text = _read('setup.py')

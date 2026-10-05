@@ -53,30 +53,20 @@ function main() -> int {
 }
 """
 
-
 def _data():
     return sorted((i * 7919 + 13) % 10007 for i in range(500))
-
 
 def _expected():
     d = _data()
     return d[0] * 10007 + d[-1]
 
-
 def test_quicksort_with_float_subscript_interpreter():
     """issue #1: 浮点下标取枢轴的快排必须正常排序, 不再越界。"""
-    assert run_cin_source(QUICKSORT_SRC, use_native=False).regs.read(0) == _expected()
-
-
-def test_quicksort_with_float_subscript_jit():
-    assert run_cin_source(QUICKSORT_SRC, use_native=False,
-                          enable_jit=True).regs.read(0) == _expected()
-
+    assert run_cin_source(QUICKSORT_SRC).regs.read(0) == _expected()
 
 @needs_native
 def test_quicksort_with_float_subscript_native():
-    assert run_cin_source(QUICKSORT_SRC, use_native=True).regs.read(0) == _expected()
-
+    assert run_cin_source(QUICKSORT_SRC).regs.read(0) == _expected()
 
 def test_float_subscript_truncates_toward_zero():
     """float 下标按截断 (向零取整) 转 int, 与 `int x = 1.9` 一致。"""
@@ -95,8 +85,7 @@ function main() -> int {
     int ch = s[1.9]             // -> s[1] = 'B' = 66 (字符串下标)
     return r + a[2] + ch        // 20 + 99 + 66 = 185
 }"""
-    assert run_cin_source(src, use_native=False).regs.read(0) == 185
-
+    assert run_cin_source(src).regs.read(0) == 185
 
 def test_float_subscript_negative_truncates_toward_zero():
     """-0.5 截断为 0 (不是 -1): 截断语义必须发生在边界检查之前。"""
@@ -107,15 +96,13 @@ function main() -> int {
     float f = -0.5
     return a[f]
 }"""
-    assert run_cin_source(src, use_native=False).regs.read(0) == 7
-
+    assert run_cin_source(src).regs.read(0) == 7
 
 def test_float_subscript_out_of_range_trips_bounds_check(capsys):
     """float 下标先转 int 再查边界: 9.5 -> 9 >= 4 必须中止而非越界写。"""
     src = "function main() -> int { int a[4]\nfloat f = 9.5\na[f] = 1\nreturn 0 }\n"
     run_cin_source(src, bounds_check=True)
     assert 'length' in capsys.readouterr().out
-
 
 def test_int_subscript_unchanged():
     """int 下标的代码生成不受影响 (idiv 是标准库惯用写法)。"""
@@ -126,8 +113,7 @@ function main() -> int {
     int m = idiv(0 + 4, 2)
     return a[m]
 }"""
-    assert run_cin_source(src, use_native=False).regs.read(0) == 4
-
+    assert run_cin_source(src).regs.read(0) == 4
 
 def test_float_subscript_does_not_corrupt_memory():
     """修复前该程序会抛出越界地址 (垃圾高位 0x0379...), 现在必须正常结束。"""
@@ -137,6 +123,6 @@ function main() -> int {
     a[3] = 42
     return a[2 + 1.0]
 }"""
-    cpu = run_cin_source(src, use_native=False)
+    cpu = run_cin_source(src)
     assert cpu.regs.read(0) == 42
     assert cpu.execution_failed is False

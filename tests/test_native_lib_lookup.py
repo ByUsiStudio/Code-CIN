@@ -10,7 +10,6 @@ import platform
 
 from codecin import native
 
-
 def test_os_and_arch_slugs():
     assert native._os_slug() in ('windows', 'macos', 'linux')
     assert native._arch_slug() in ('x64', 'arm64', 'x86') or native._arch_slug()
@@ -18,7 +17,6 @@ def test_os_and_arch_slugs():
     sysname = platform.system()
     expected_os = {'Windows': 'windows', 'Darwin': 'macos'}.get(sysname, 'linux')
     assert native._os_slug() == expected_os
-
 
 def test_arch_specific_candidate_comes_first():
     machine = platform.machine().lower()
@@ -34,13 +32,11 @@ def test_arch_specific_candidate_comes_first():
         assert names[0] == specific[0], (
             f'架构专属库名未排在最前: {names[:3]}')
 
-
 def test_canonical_names_still_candidates():
     """通用名必须保留 (源码树构建 / 旧安装布局仍用通用名)。"""
     names = [os.path.basename(p) for p in native._lib_candidates()]
     assert any(n in ('codecin_native.dll', 'libcodecin_native.so',
                      'libcodecin_native.dylib') for n in names), names
-
 
 def test_env_override_wins(monkeypatch):
     monkeypatch.setenv('CODECIN_NATIVE_LIB', os.path.join('X:', 'custom.dll'))

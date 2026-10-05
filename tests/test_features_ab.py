@@ -22,20 +22,17 @@ function main() -> int {
 }"""
     assert run_cin_source(src).regs.read(0) == 7
 
-
 def test_assert_failure_aborts_with_message(capsys):
     src = "function main() -> int { assert(1 == 2, \"boom\")\nreturn 5 }\n"
     run_cin_source(src)
     out = capsys.readouterr().out
     assert 'Runtime abort' in out and 'boom' in out
 
-
 def test_assert_without_message_aborts(capsys):
     src = "function main() -> int { assert(false)\nreturn 1 }\n"
     run_cin_source(src)
     out = capsys.readouterr().out
     assert 'assertion failed' in out
-
 
 # ---------------- A1: --bounds-check ----------------
 
@@ -47,22 +44,18 @@ function main() -> int {
 }
 """
 
-
 def test_bounds_check_ok():
     assert run_cin_source(BOUNDS_OK, bounds_check=True).regs.read(0) == 7
-
 
 def test_bounds_check_negative_index_aborts(capsys):
     src = "function main() -> int { int a[4]\na[-1] = 1\nreturn 0 }\n"
     run_cin_source(src, bounds_check=True)
     assert 'negative array index' in capsys.readouterr().out
 
-
 def test_bounds_check_too_high_index_aborts(capsys):
     src = "function main() -> int { int a[4]\na[4] = 1\nreturn 0 }\n"
     run_cin_source(src, bounds_check=True)
     assert 'length' in capsys.readouterr().out
-
 
 def test_bounds_check_two_dimensions():
     src = """
@@ -73,18 +66,15 @@ function main() -> int {
 }"""
     assert run_cin_source(src, bounds_check=True).regs.read(0) == 9
 
-
 # ---------------- A2: --seed ----------------
 
 RAND_SRC = "function main() -> int { int a = rand()\nreturn a }\n"
-
 
 def test_seed_is_deterministic():
     def val(seed):
         return run_cin_source(RAND_SRC, seed=seed).regs.read(0)
     assert val(42) == val(42)
     assert val(42) != val(7)
-
 
 # ---------------- A3: --disasm ----------------
 
@@ -96,13 +86,11 @@ main:
     halt
 """
 
-
 def _bin_path(workdir, name='p.asm'):
     cpu = asm_program(ASM_SRC, workdir, name=name)
     out = os.path.join(workdir, 'p.bin')
     crom.save_bin(cpu, out)
     return cpu, out
-
 
 def test_disasm_file_contains_mnemonics(workdir):
     _cpu, path = _bin_path(workdir)
@@ -110,7 +98,6 @@ def test_disasm_file_contains_mnemonics(workdir):
     text = "\n".join(lines)
     assert 'MOV' in text and 'ADDI' in text and 'HALT' in text
     assert 'CPUSA binary' in lines[0]
-
 
 def test_disasm_roundtrip_matches_instructions(workdir):
     cpu, path = _bin_path(workdir)
@@ -120,7 +107,6 @@ def test_disasm_roundtrip_matches_instructions(workdir):
     instructions, _ = decode_program(bc)
     assert [tuple(i) for i in instructions] == \
         [tuple(i) for i in cpu.instructions]
-
 
 def test_disasm_rejects_wrong_magic():
     with pytest.raises(CPUSimulatorError):

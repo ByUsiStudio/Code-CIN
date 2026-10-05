@@ -10,16 +10,13 @@ import pytest
 
 from tests.helpers import run_cin_file
 
-
 def _run(workdir, source, name='lib_text_test.cin', **cfg):
     path = os.path.join(workdir, name)
     with open(path, 'w', encoding='utf-8') as f:
         f.write(source)
     return run_cin_file(path, **cfg)
 
-
-@pytest.mark.parametrize('use_native', (False, True), ids=('interp', 'native'))
-def test_text_predicates(workdir, use_native):
+def test_text_predicates(workdir):
     """txt_is_empty / txt_equals_ignore_case / txt_startswith_ignore_case。"""
     src = '''
 import "text.cin"
@@ -45,11 +42,9 @@ function main() -> int {
     if (txt_startswith_ignore_case("abc", "B") != 0) { return 19 }
     return 0
 }'''
-    assert _run(workdir, src, use_native=use_native).regs.read(0) == 0
+    assert _run(workdir, src).regs.read(0) == 0
 
-
-@pytest.mark.parametrize('use_native', (False, True), ids=('interp', 'native'))
-def test_text_search(workdir, use_native):
+def test_text_search(workdir):
     """txt_index_from / txt_last_index_of (字节下标, 越界裁剪, 重叠匹配)。"""
     src = '''
 import "text.cin"
@@ -83,11 +78,9 @@ function main() -> int {
     if (txt_index_from(zh, "\\xB8\\xAD", 0) != 1) { return 25 }
     return 0
 }'''
-    assert _run(workdir, src, use_native=use_native).regs.read(0) == 0
+    assert _run(workdir, src).regs.read(0) == 0
 
-
-@pytest.mark.parametrize('use_native', (False, True), ids=('interp', 'native'))
-def test_text_transforms(workdir, use_native):
+def test_text_transforms(workdir):
     """txt_reverse / txt_capitalize / txt_title / txt_swap_case / txt_word_count。"""
     src = '''
 import "text.cin"
@@ -127,11 +120,9 @@ function main() -> int {
     if (strcmp(txt_title("\\xE4\\xB8\\xADab"), "\\xE4\\xB8\\xADAb") != 0) { return 32 }
     return 0
 }'''
-    assert _run(workdir, src, use_native=use_native).regs.read(0) == 0
+    assert _run(workdir, src).regs.read(0) == 0
 
-
-@pytest.mark.parametrize('use_native', (False, True), ids=('interp', 'native'))
-def test_text_edits(workdir, use_native):
+def test_text_edits(workdir):
     """txt_replace / txt_replace_first / txt_remove / txt_slice / txt_insert /
     txt_delete_range 的常规与越界行为。"""
     src = '''
@@ -188,11 +179,9 @@ function main() -> int {
     if (strlen(txt_slice("\\xE4\\xB8\\xAD", 1, 3)) != 2) { return 46 }
     return 0
 }'''
-    assert _run(workdir, src, use_native=use_native).regs.read(0) == 0
+    assert _run(workdir, src).regs.read(0) == 0
 
-
-@pytest.mark.parametrize('use_native', (False, True), ids=('interp', 'native'))
-def test_text_long_strings(workdir, use_native):
+def test_text_long_strings(workdir):
     """长串 (120 字节) 上不分配/少分配堆块的路径。
 
     只调用不逐段重建结果串的接口: 字符串拼接不回收堆块, 逐字节重建的长串会
@@ -217,11 +206,9 @@ function main() -> int {
     if (strcmp(txt_remove(many, " "), "''' + 'ab' * 40 + '''") != 0) { return 12 }
     return 0
 }''')
-    assert _run(workdir, src, use_native=use_native).regs.read(0) == 0
+    assert _run(workdir, src).regs.read(0) == 0
 
-
-@pytest.mark.parametrize('use_native', (False, True), ids=('interp', 'native'))
-def test_text_long_rebuild(workdir, use_native):
+def test_text_long_rebuild(workdir):
     """长串 (90 字节, 30 个单词) 的全串重建: reverse / swap_case / title。
 
     规模刻意停在 90 字节: 每次拼接都新建堆块且不回收, 重建 n 字节约需 O(n^2)
@@ -243,4 +230,4 @@ function main() -> int {
     if (strcmp(txt_capitalize("''' + titled + '''"), "''' + ('Ab ' + 'ab ' * 29) + '''") != 0) { return 6 }
     return 0
 }''')
-    assert _run(workdir, src, use_native=use_native).regs.read(0) == 0
+    assert _run(workdir, src).regs.read(0) == 0

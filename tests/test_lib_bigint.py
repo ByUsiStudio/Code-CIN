@@ -10,16 +10,13 @@ import pytest
 
 from tests.helpers import run_cin_file
 
-
 def _run(workdir, source, name='lib_bigint_test.cin', **cfg):
     path = os.path.join(workdir, name)
     with open(path, 'w', encoding='utf-8') as f:
         f.write(source)
     return run_cin_file(path, **cfg)
 
-
-@pytest.mark.parametrize('use_native', (False, True), ids=('interp', 'native'))
-def test_bigint_construct_and_print(workdir, use_native):
+def test_bigint_construct_and_print(workdir):
     src = '''
 import "bigint.cin"
 
@@ -59,11 +56,9 @@ function main() -> int {
     return 0
 }
 '''
-    assert _run(workdir, src, use_native=use_native).regs.read(0) == 0
+    assert _run(workdir, src).regs.read(0) == 0
 
-
-@pytest.mark.parametrize('use_native', (False, True), ids=('interp', 'native'))
-def test_bigint_compare(workdir, use_native):
+def test_bigint_compare(workdir):
     src = '''
 import "bigint.cin"
 
@@ -92,11 +87,9 @@ function main() -> int {
     return 0
 }
 '''
-    assert _run(workdir, src, use_native=use_native).regs.read(0) == 0
+    assert _run(workdir, src).regs.read(0) == 0
 
-
-@pytest.mark.parametrize('use_native', (False, True), ids=('interp', 'native'))
-def test_bigint_add_sub(workdir, use_native):
+def test_bigint_add_sub(workdir):
     src = '''
 import "bigint.cin"
 
@@ -130,11 +123,9 @@ function main() -> int {
     return 0
 }
 '''
-    assert _run(workdir, src, use_native=use_native).regs.read(0) == 0
+    assert _run(workdir, src).regs.read(0) == 0
 
-
-@pytest.mark.parametrize('use_native', (False, True), ids=('interp', 'native'))
-def test_bigint_mul(workdir, use_native):
+def test_bigint_mul(workdir):
     src = '''
 import "bigint.cin"
 
@@ -159,11 +150,9 @@ function main() -> int {
     return 0
 }
 '''
-    assert _run(workdir, src, use_native=use_native).regs.read(0) == 0
+    assert _run(workdir, src).regs.read(0) == 0
 
-
-@pytest.mark.parametrize('use_native', (False, True), ids=('interp', 'native'))
-def test_bigint_fact_golden(workdir, use_native):
+def test_bigint_fact_golden(workdir):
     src = '''
 import "bigint.cin"
 
@@ -184,11 +173,9 @@ function main() -> int {
     return 0
 }
 '''
-    assert _run(workdir, src, use_native=use_native).regs.read(0) == 0
+    assert _run(workdir, src).regs.read(0) == 0
 
-
-@pytest.mark.parametrize('use_native', (False, True), ids=('interp', 'native'))
-def test_bigint_pow_golden(workdir, use_native):
+def test_bigint_pow_golden(workdir):
     src = '''
 import "bigint.cin"
 
@@ -208,11 +195,9 @@ function main() -> int {
     return 0
 }
 '''
-    assert _run(workdir, src, use_native=use_native).regs.read(0) == 0
+    assert _run(workdir, src).regs.read(0) == 0
 
-
-@pytest.mark.parametrize('use_native', (False, True), ids=('interp', 'native'))
-def test_bigint_overflow_saturates(workdir, use_native):
+def test_bigint_overflow_saturates(workdir):
     src = '''
 import "bigint.cin"
 
@@ -262,11 +247,9 @@ function main() -> int {
     return 0
 }
 '''
-    assert _run(workdir, src, use_native=use_native).regs.read(0) == 0
+    assert _run(workdir, src).regs.read(0) == 0
 
-
-@pytest.mark.parametrize('use_native', (False, True), ids=('interp', 'native'))
-def test_bigint_into_helpers_avoid_growth(workdir, use_native):
+def test_bigint_into_helpers_avoid_growth(workdir):
     """*_into 形式只写调用方提供的工作区, 长循环不产生新堆块。"""
     src = '''
 import "bigint.cin"
@@ -301,11 +284,9 @@ function main() -> int {
     return 0
 }
 '''
-    assert _run(workdir, src, use_native=use_native).regs.read(0) == 0
+    assert _run(workdir, src).regs.read(0) == 0
 
-
-@pytest.mark.parametrize('use_native', (False, True), ids=('interp', 'native'))
-def test_bigint_and_frac_coexist(workdir, use_native):
+def test_bigint_and_frac_coexist(workdir):
     """两个新库同时导入: 全局符号与 struct 名不得冲突。"""
     src = '''
 import "bigint.cin"
@@ -319,4 +300,4 @@ function main() -> int {
     return 0
 }
 '''
-    assert _run(workdir, src, use_native=use_native).regs.read(0) == 0
+    assert _run(workdir, src).regs.read(0) == 0

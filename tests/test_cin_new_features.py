@@ -1,5 +1,5 @@
 """CIN 新特性测试: 位运算符、整数除法 idiv、字符串单字符访问、
-min/max、floor/ceil/round、atoi、trim/ltrim/rtrim (解释/JIT/原生三路径)。"""
+min/max、floor/ceil/round、atoi、trim/ltrim/rtrim (原生引擎单路径)。"""
 
 import pytest
 
@@ -7,8 +7,6 @@ from codecin.cin import CINCompiler
 from codecin.errors import CompilerError
 from tests.helpers import run_cin_source
 
-
-# 解释路径默认 (use_native=False); 三路径一致见下方组合测试。
 def test_bitwise_operators():
     src = """
 function main() -> int {
@@ -22,7 +20,6 @@ function main() -> int {
     # a=8 b=14 c=6 d=16 e=-1 -> 80000+14000+600+160+1 = 94761
     assert run_cin_source(src).regs.read(0) == 94761
 
-
 def test_arithmetic_shift_right():
     src = """
 function main() -> int {
@@ -33,8 +30,7 @@ function main() -> int {
     # -4 + 4 = 0
     assert run_cin_source(src).regs.read(0) == 0
     # 同一程序在原生 VM 上同样成立 (回归: 原生 ASR 支持)
-    assert run_cin_source(src, use_native=True).regs.read(0) == 0
-
+    assert run_cin_source(src).regs.read(0) == 0
 
 def test_arithmetic_shift_right_prints():
     """>> 计算结果应可打印 (回归: 原生 VM 缺 ASR 会导致输出截断)。"""
@@ -48,10 +44,9 @@ function main() -> int {
     import io
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
-        cpu = run_cin_source(src, use_native=True)
+        cpu = run_cin_source(src)
     assert cpu.regs.read(0) == 0
     assert "asr=" in buf.getvalue()
-
 
 def test_bitwise_compound_assign():
     src = """
@@ -67,7 +62,6 @@ function main() -> int {
     # 7&3=3 |8=11 ^1=10 <<2=40 >>3=5
     assert run_cin_source(src).regs.read(0) == 5
 
-
 def test_idiv_integer_division():
     src = """
 function main() -> int {
@@ -82,7 +76,6 @@ function main() -> int {
         val -= (1 << 64)
     assert val == -3
 
-
 def test_string_char_index():
     src = """
 function main() -> int {
@@ -94,7 +87,6 @@ function main() -> int {
 }"""
     # 'H'=72 'W'=87 '!'=33 -> 72087 + 33? 72*1000=72000 + 87*10=870 + 33 = 72903
     assert run_cin_source(src).regs.read(0) == 72903
-
 
 def test_min_max_int_and_float():
     src = """
@@ -110,7 +102,6 @@ function main() -> int {
     # a=3 b=5 lo=1.5->1 hi=4.5->4 => 3*10000 + 5*1000 + 1*100 + 4 = 35104
     assert run_cin_source(src).regs.read(0) == 35104
 
-
 def test_floor_ceil_round():
     src = """
 function main() -> int {
@@ -123,7 +114,6 @@ function main() -> int {
     # 3, 4, 3(floor(3.0)), -4 => 3*1000 + 4*100 + 3*10 + (-4) = 3426
     assert run_cin_source(src).regs.read(0) == 3426
 
-
 def test_atoi():
     src = """
 function main() -> int {
@@ -134,7 +124,6 @@ function main() -> int {
 }"""
     # 42*100 + (-7)*10 + 0 = 4130
     assert run_cin_source(src).regs.read(0) == 4130
-
 
 def test_trim_builtins():
     src = """
@@ -149,7 +138,6 @@ function main() -> int {
 }"""
     # a=2 b=4 c=4 d=0 => 2400 + 40 + 0 = 2440
     assert run_cin_source(src).regs.read(0) == 2440
-
 
 def test_bitwise_and_index_three_paths():
     """位运算/字符串下标/idiv/min-max 组合: 解释/JIT/原生三路径一致。"""
@@ -167,35 +155,27 @@ function main() -> int {
 }"""
     # a=10|0=10 b=32 c=-1 ch='B'=66 d=4 e=7+6=13 neg=1 => 126
     expected = 10 + 32 + 66 + 4 + 13 + 1
-    assert run_cin_source(src, use_native=False).regs.read(0) == expected
-    assert run_cin_source(src, use_native=False,
-                          enable_jit=True).regs.read(0) == expected
-    assert run_cin_source(src, use_native=True).regs.read(0) == expected
-
+    assert run_cin_source(src).regs.read(0) == expected
 
 def test_bitwise_on_float_is_error():
     with pytest.raises(CompilerError):
         CINCompiler().compile_source(
             "function main() -> int { float f = 1.5\nint x = f & 3\nreturn 0 }\n")
 
-
 def test_bitnot_on_float_is_error():
     with pytest.raises(CompilerError):
         CINCompiler().compile_source(
             "function main() -> int { float f = 1.5\nint x = ~f\nreturn 0 }\n")
-
 
 def test_string_index_assign_is_error():
     with pytest.raises(CompilerError):
         CINCompiler().compile_source(
             "function main() -> int { string s = \"ab\"\ns[0] = 'c'\nreturn 0 }\n")
 
-
 def test_bitwise_compound_on_float_is_error():
     with pytest.raises(CompilerError):
         CINCompiler().compile_source(
             "function main() -> int { float f = 3.0\nf <<= 1\nreturn 0 }\n")
-
 
 def test_utf8_bom_is_tolerated():
     src = "\ufefffunction main() -> int { return 42 }\n"

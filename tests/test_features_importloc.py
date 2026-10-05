@@ -8,13 +8,11 @@ from codecin.cin import CINCompiler
 from codecin.errors import CompilerError
 from tests.helpers import run_cin_file
 
-
 def _write(workdir, name, text):
     p = os.path.join(workdir, name)
     with open(p, 'w', encoding='utf-8') as f:
         f.write(text)
     return p
-
 
 def test_tokenizer_error_reports_module_file_and_line(workdir):
     mod = _write(workdir, 'badmod.cin', (
@@ -31,7 +29,6 @@ def test_tokenizer_error_reports_module_file_and_line(workdir):
     assert os.path.basename(mod) in msg
     assert ':4' in msg
     assert '?' in msg
-
 
 def test_parser_error_reports_module_file_and_line(workdir):
     # 模块内表达式非法 token ';' -> Unexpected token, 错误 token 定位到模块第 2 行
@@ -50,7 +47,6 @@ def test_parser_error_reports_module_file_and_line(workdir):
     assert ':2' in msg
     assert 'SEMI' in msg or ';' in msg
 
-
 def test_assert_in_module_reports_module_line(workdir, capsys):
     mod = _write(workdir, 'amod.cin', (
         'function checked(int v) -> int {\n'
@@ -66,7 +62,6 @@ def test_assert_in_module_reports_module_line(workdir, capsys):
     assert os.path.basename(mod) in out
     assert ':2' in out
     assert 'positive required' in out
-
 
 def test_single_file_location_unaffected(workdir, capsys):
     p = _write(workdir, 'single.cin',

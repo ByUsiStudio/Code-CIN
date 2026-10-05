@@ -30,15 +30,10 @@ function main() -> int {
 }
 """
 
-
 def test_feature_suite_three_paths():
-    """复合特性组合: 解释 / JIT / 原生三路径结果一致 (=40)。"""
+    """复合特性组合: 原生引擎单路径结果一致 (=40)。"""
     expected = 40
-    assert run_cin_source(SRC_FEATURE, use_native=False).regs.read(0) == expected
-    assert run_cin_source(SRC_FEATURE, use_native=False,
-                          enable_jit=True).regs.read(0) == expected
-    assert run_cin_source(SRC_FEATURE, use_native=True).regs.read(0) == expected
-
+    assert run_cin_source(SRC_FEATURE).regs.read(0) == expected
 
 def test_break_continue_semantics():
     src = """
@@ -54,7 +49,6 @@ function main() -> int {
     # 0+2+4=6, +6=12 -> break; total=12
     assert run_cin_source(src).regs.read(0) == 12
 
-
 def test_dowhile_runs_at_least_once():
     src = """
 function main() -> int {
@@ -67,7 +61,6 @@ function main() -> int {
     return n
 }"""
     assert run_cin_source(src).regs.read(0) == 10
-
 
 def test_switch_no_default_and_fallthrough():
     src = """
@@ -84,7 +77,6 @@ function main() -> int {
     return s + miss
 }"""
     assert run_cin_source(src).regs.read(0) == 100
-
 
 def test_switch_break_does_not_break_outer_loop():
     src = """
@@ -103,7 +95,6 @@ function main() -> int {
     # i=0: +1 +100=101; i=1: +10+100=211; i=2:+20+100=331
     assert run_cin_source(src).regs.read(0) == 331
 
-
 def test_compound_assign_and_mod():
     src = """
 function main() -> int {
@@ -117,7 +108,6 @@ function main() -> int {
     # 25 -> 75 -> 70 -> 0
     assert run_cin_source(src).regs.read(0) == 0
 
-
 def test_prefix_postfix_incdec():
     src = """
 function main() -> int {
@@ -130,7 +120,6 @@ function main() -> int {
 }"""
     # a:5 -> 6(p=6) -> q=6,a=7 -> a=6 -> r=5,a=5; return 665
     assert run_cin_source(src).regs.read(0) == 665
-
 
 def test_float_compound():
     src = """
@@ -146,7 +135,6 @@ function main() -> int {
     # (1.5+2)=3.5 *2=7 -1=6 /3=2 -> 2
     assert run_cin_source(src).regs.read(0) == 2
 
-
 def test_ternary_int_and_float():
     src = """
 function main() -> int {
@@ -156,7 +144,6 @@ function main() -> int {
     return a + i
 }"""
     assert run_cin_source(src).regs.read(0) == 11
-
 
 def test_type_aliases_and_literals():
     src = """
@@ -175,7 +162,6 @@ function main() -> int {
     # hi=3; low=255+10+15+2+3=285 -> 3285
     assert run_cin_source(src).regs.read(0) == 3285
 
-
 def test_char_literal_escapes():
     src = """
 function main() -> int {
@@ -186,7 +172,6 @@ function main() -> int {
 }"""
     # 10 + 39 + 65 = 114
     assert run_cin_source(src).regs.read(0) == 114
-
 
 def test_string_conversion_builtins():
     src = """
@@ -205,7 +190,6 @@ function main() -> int {
     assert val >= 2000 + 100 + 40 + 1
     assert (val // 1000) == 2
 
-
 def test_number_underscores():
     src = """
 function main() -> int {
@@ -216,18 +200,15 @@ function main() -> int {
 }"""
     assert run_cin_source(src).regs.read(0) == 1000 + 16 + 10
 
-
 def test_break_outside_loop_is_compile_error():
     with pytest.raises(CompilerError):
         CINCompiler().compile_source(
             "function main() -> int { break }\n")
 
-
 def test_continue_outside_loop_is_compile_error():
     with pytest.raises(CompilerError):
         CINCompiler().compile_source(
             "function main() -> int { continue }\n")
-
 
 def test_switch_float_selector_is_error():
     with pytest.raises(CompilerError):
@@ -235,19 +216,16 @@ def test_switch_float_selector_is_error():
             "function main() -> int { float f = 1.5\n"
             "switch (f) { case 1: return 1 } return 0 }\n")
 
-
 def test_switch_nonconst_case_is_error():
     with pytest.raises(CompilerError):
         CINCompiler().compile_source(
             "function main() -> int { int i = 3\n"
             "switch (i) { case i: return 1 } return 0 }\n")
 
-
 def test_float_modulo_compound_is_error():
     with pytest.raises(CompilerError):
         CINCompiler().compile_source(
             "function main() -> int { float f = 3.0\nf %= 2.0\nreturn 0 }\n")
-
 
 def test_do_without_while_is_parse_error():
     with pytest.raises(CompilerError):

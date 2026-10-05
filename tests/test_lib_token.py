@@ -10,16 +10,13 @@ import pytest
 
 from tests.helpers import run_cin_file
 
-
 def _run(workdir, source, name='lib_token_test.cin', **cfg):
     path = os.path.join(workdir, name)
     with open(path, 'w', encoding='utf-8') as f:
         f.write(source)
     return run_cin_file(path, **cfg)
 
-
-@pytest.mark.parametrize('use_native', (False, True), ids=('interp', 'native'))
-def test_token_split_core(workdir, use_native):
+def test_token_split_core(workdir):
     """tok_count / tok_get / tok_len: 保留空 token、多字符分隔符、空 delim。"""
     src = '''
 import "token.cin"
@@ -65,11 +62,9 @@ function main() -> int {
     if (strcmp(tok_get(zh, "|", 1), "\\xE6\\x96\\x87") != 0) { return 37 }
     return 0
 }'''
-    assert _run(workdir, src, use_native=use_native).regs.read(0) == 0
+    assert _run(workdir, src).regs.read(0) == 0
 
-
-@pytest.mark.parametrize('use_native', (False, True), ids=('interp', 'native'))
-def test_token_find_and_ends(workdir, use_native):
+def test_token_find_and_ends(workdir):
     """tok_find / tok_first / tok_last, 含长串 (77 字节)。"""
     long_line = ','.join(c * 2 for c in 'abcdefghijklmnopqrstuvwxyz')
     src = ('''
@@ -106,11 +101,9 @@ function main() -> int {
     if (tok_count(long_line, ", ") != 1) { return 28 }
     return 0
 }''')
-    assert _run(workdir, src, use_native=use_native).regs.read(0) == 0
+    assert _run(workdir, src).regs.read(0) == 0
 
-
-@pytest.mark.parametrize('use_native', (False, True), ids=('interp', 'native'))
-def test_token_words(workdir, use_native):
+def test_token_words(workdir):
     """tok_word_count / tok_word_get: 连续空白算一个、忽略首尾、越界返回空串。"""
     long_words = ' '.join(['word'] * 50)      # 249 字节
     src = ('''
@@ -138,11 +131,9 @@ function main() -> int {
     if (strcmp(tok_word_get(long_words, 50), "") != 0) { return 19 }
     return 0
 }''')
-    assert _run(workdir, src, use_native=use_native).regs.read(0) == 0
+    assert _run(workdir, src).regs.read(0) == 0
 
-
-@pytest.mark.parametrize('use_native', (False, True), ids=('interp', 'native'))
-def test_text_token_prefixes_do_not_clash(workdir, use_native):
+def test_text_token_prefixes_do_not_clash(workdir):
     """text.cin 与 token.cin 同时导入: 前缀不同, 全局符号无冲突。"""
     src = '''
 import "text.cin"
@@ -155,4 +146,4 @@ function main() -> int {
     if (strcmp(txt_replace("a,b", ",", tok_last("x-y", "-")), "ayb") != 0) { return 5 }
     return 0
 }'''
-    assert _run(workdir, src, use_native=use_native).regs.read(0) == 0
+    assert _run(workdir, src).regs.read(0) == 0

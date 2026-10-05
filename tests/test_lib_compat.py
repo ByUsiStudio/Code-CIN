@@ -27,14 +27,9 @@ from tests.helpers import run_cin_file
 needs_native = pytest.mark.skipif(
     native.get_engine() is None, reason="native Go library not built")
 
-PATHS = (False, True)
-PATH_IDS = ('interp', 'native')
-
-
-def build_cpu(src: str, use_native: bool, **cfg_kwargs) -> CPU:
+def build_cpu(src: str, **cfg_kwargs) -> CPU:
     res = CINCompiler().compile_source(src)
-    cfg = Config(interactive_mode=False, log_level='ERROR',
-                 use_native=use_native, **cfg_kwargs)
+    cfg = Config(log_level='ERROR', **cfg_kwargs)
     cpu = CPU(cfg)
     cpu.instructions = res.instructions
     cpu.labels = res.labels
@@ -46,19 +41,16 @@ def build_cpu(src: str, use_native: bool, **cfg_kwargs) -> CPU:
     cpu._capture_output = True
     return cpu
 
-
 def _write_workdir(workdir, name, src):
     path = os.path.join(workdir, name)
     with open(path, 'w', encoding='utf-8') as f:
         f.write(src)
     return path
 
-
 def _run_ok(cpu):
     assert not cpu.execution_failed, '程序执行失败 (ExecutionError 被 CPU.run 吞掉)'
     assert cpu.regs.read(0) == 0, (
         f"检查失败, 错误码 {cpu.regs.read(0)} (见测试源码注释)")
-
 
 # ====================================================================
 # 1. cstd.cin — C 兼容层
@@ -128,13 +120,10 @@ function main() -> int {
     return 0
 }'''
 
-
-@pytest.mark.parametrize('use_native', PATHS, ids=PATH_IDS)
-def test_cstd_libc(workdir, use_native):
+def test_cstd_libc(workdir):
     path = _write_workdir(workdir, 't_cstd.cin', CSTD_SRC)
-    cpu = run_cin_file(path, use_native=use_native)
+    cpu = run_cin_file(path)
     _run_ok(cpu)
-
 
 # ====================================================================
 # 2. cppstd.cin — C++ STL 兼容层
@@ -216,13 +205,10 @@ function main() -> int {
     return 0
 }'''
 
-
-@pytest.mark.parametrize('use_native', PATHS, ids=PATH_IDS)
-def test_cppstd_stl(workdir, use_native):
+def test_cppstd_stl(workdir):
     path = _write_workdir(workdir, 't_cppstd.cin', CPPSTD_SRC)
-    cpu = run_cin_file(path, use_native=use_native)
+    cpu = run_cin_file(path)
     _run_ok(cpu)
-
 
 # ====================================================================
 # 3. gostd.cin — Go 标准库兼容层
@@ -281,13 +267,10 @@ function main() -> int {
     return 0
 }'''
 
-
-@pytest.mark.parametrize('use_native', PATHS, ids=PATH_IDS)
-def test_gostd_go(workdir, use_native):
+def test_gostd_go(workdir):
     path = _write_workdir(workdir, 't_gostd.cin', GOSTD_SRC)
-    cpu = run_cin_file(path, use_native=use_native)
+    cpu = run_cin_file(path)
     _run_ok(cpu)
-
 
 # ====================================================================
 # 3b. 兼容层 API 扩容 (5.8.0 新增函数, 双路径语义一致)
@@ -320,13 +303,10 @@ function main() -> int {
     return 0
 }'''
 
-
-@pytest.mark.parametrize('use_native', PATHS, ids=PATH_IDS)
-def test_cstd_extensions(workdir, use_native):
+def test_cstd_extensions(workdir):
     path = _write_workdir(workdir, 't_cstd_ext.cin', CSTD_EXT_SRC)
-    cpu = run_cin_file(path, use_native=use_native)
+    cpu = run_cin_file(path)
     _run_ok(cpu)
-
 
 CPPSTD_EXT_SRC = '''\
 import "cppstd.cin"
@@ -362,13 +342,10 @@ function main() -> int {
     return 0
 }'''
 
-
-@pytest.mark.parametrize('use_native', PATHS, ids=PATH_IDS)
-def test_cppstd_extensions(workdir, use_native):
+def test_cppstd_extensions(workdir):
     path = _write_workdir(workdir, 't_cppstd_ext.cin', CPPSTD_EXT_SRC)
-    cpu = run_cin_file(path, use_native=use_native)
+    cpu = run_cin_file(path)
     _run_ok(cpu)
-
 
 GOSTD_EXT_SRC = '''\
 import "gostd.cin"
@@ -403,13 +380,10 @@ function main() -> int {
     return 0
 }'''
 
-
-@pytest.mark.parametrize('use_native', PATHS, ids=PATH_IDS)
-def test_gostd_extensions(workdir, use_native):
+def test_gostd_extensions(workdir):
     path = _write_workdir(workdir, 't_gostd_ext.cin', GOSTD_EXT_SRC)
-    cpu = run_cin_file(path, use_native=use_native)
+    cpu = run_cin_file(path)
     _run_ok(cpu)
-
 
 # ====================================================================
 # 4. 三库同载 (互不冲突, 无函数名碰撞)
@@ -426,13 +400,10 @@ function main() -> int {
     return 0
 }'''
 
-
-@pytest.mark.parametrize('use_native', PATHS, ids=PATH_IDS)
-def test_all_compat_libs_together(workdir, use_native):
+def test_all_compat_libs_together(workdir):
     path = _write_workdir(workdir, 't_all_libs.cin', ALL_LIBS_SRC)
-    cpu = run_cin_file(path, use_native=use_native)
+    cpu = run_cin_file(path)
     _run_ok(cpu)
-
 
 # ====================================================================
 # 5. arg_count / arg — 命令行参数 (需原生路径)
@@ -448,14 +419,12 @@ function main() -> int {
     return 0
 }'''
 
-
 @needs_native
 def test_arg_count_and_arg():
-    cpu = build_cpu(ARGS_SRC, use_native=True,
+    cpu = build_cpu(ARGS_SRC,
                     program_args=['hello', '中文'])
     cpu.run()
     _run_ok(cpu)
-
 
 ARGS_EMPTY_SRC = '''\
 function main() -> int {
@@ -464,14 +433,12 @@ function main() -> int {
     return 0
 }'''
 
-
 @needs_native
 def test_arg_defaults_empty_without_args():
     """未注入参数时 arg_count()==0, arg(i) 为空串 (不残留上次运行的参数)。"""
-    cpu = build_cpu(ARGS_EMPTY_SRC, use_native=True)
+    cpu = build_cpu(ARGS_EMPTY_SRC)
     cpu.run()
     _run_ok(cpu)
-
 
 GOSTD_OS_SRC = '''\
 import "gostd.cin"
@@ -481,13 +448,11 @@ function main() -> int {
     return 0
 }'''
 
-
 @needs_native
 def test_go_os_args_wrapper(workdir):
     path = _write_workdir(workdir, 't_go_os.cin', GOSTD_OS_SRC)
-    cpu = run_cin_file(path, use_native=True, program_args=['beta'])
+    cpu = run_cin_file(path, program_args=['beta'])
     _run_ok(cpu)
-
 
 # ====================================================================
 # 6. input_str — 行输入 (预读缓冲; 需原生路径)
@@ -504,15 +469,13 @@ function main() -> int {
     return 0
 }'''
 
-
 @needs_native
 def test_input_str_reads_piped_buffer():
     """input_str 经预读缓冲逐行读取, 行尾 \\n 剥离, UTF-8 保持。"""
-    cpu = build_cpu(INPUT_STR_SRC, use_native=True)
+    cpu = build_cpu(INPUT_STR_SRC)
     cpu.input_buffer = "hello\nworld\n中文输入\n"
     cpu.run()
     _run_ok(cpu)
-
 
 # ====================================================================
 # 7. 新内建无原生库时可编译 (SYS 编码存在)

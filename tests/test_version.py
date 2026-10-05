@@ -51,7 +51,6 @@ BUMP_OWNED = (
 
 needs_tomllib = pytest.mark.skipif(tomllib is None, reason='tomllib 需要 Python 3.11+')
 
-
 @needs_tomllib
 def test_pyproject_has_no_static_version():
     with open(os.path.join(ROOT, 'pyproject.toml'), 'rb') as f:
@@ -60,7 +59,6 @@ def test_pyproject_has_no_static_version():
         'pyproject 不应再手写 version (会与 codecin.__version__ 漂移)'
     assert 'version' in cfg['project'].get('dynamic', [])
     assert cfg['project']['scripts']['codecin'] == 'codecin.cli:main'
-
 
 def test_go_generated_version_matches_python():
     import codecin
@@ -72,12 +70,10 @@ def test_go_generated_version_matches_python():
     assert m.group(1) == codecin.__version__, \
         f'Go 侧 {m.group(1)} != Python 侧 {codecin.__version__}'
 
-
 def test_version_looks_like_semver():
     import codecin
     assert re.fullmatch(r'\d+\.\d+\.\d+', codecin.__version__), \
         f'版本号不是 x.y.z 形式: {codecin.__version__!r}'
-
 
 def test_cli_version_flag(capsys):
     import codecin
@@ -87,7 +83,6 @@ def test_cli_version_flag(capsys):
     assert ei.value.code == 0
     assert codecin.__version__ in capsys.readouterr().out
 
-
 def test_cli_help_intro_leads_with_version(capsys):
     """--help 首行必须始终是当前版本号 (HELP_INTRO 由唯一真源生成)。"""
     import codecin
@@ -96,9 +91,7 @@ def test_cli_help_intro_leads_with_version(capsys):
     first_line = capsys.readouterr().out.splitlines()[0]
     assert codecin.__version__ in first_line, first_line
 
-
 # ==================== workstream C: 版本设施 (codecin/version.py) ====================
-
 
 def test_version_info_matches_dunder_version():
     """version_info() 必须与唯一真源 __version__ 完全一致。"""
@@ -109,7 +102,6 @@ def test_version_info_matches_dunder_version():
     assert version.version_info() == expected
     assert version.version_info() == version.version_tuple(codecin.__version__)
     assert version.current_version() == codecin.__version__
-
 
 def test_version_tuple_is_pure_and_strict():
     from codecin import version
@@ -124,7 +116,6 @@ def test_version_tuple_is_pure_and_strict():
         with pytest.raises(ValueError):
             version.version_tuple(bad)
 
-
 def test_compare_orders_versions_numerically():
     from codecin import version
 
@@ -135,7 +126,6 @@ def test_compare_orders_versions_numerically():
     assert version.compare('2.0.0', '10.0.0') == -1
     with pytest.raises(ValueError):
         version.compare('1.2', '1.2.3')
-
 
 def test_version_info_fails_loudly_on_non_semver(monkeypatch):
     """非 x.y.z 的 __version__ 必须显式失败 (不允许静默给 (0, 0, 0))。"""
@@ -148,14 +138,13 @@ def test_version_info_fails_loudly_on_non_semver(monkeypatch):
         version.version_info()
     assert version.try_version_tuple(codecin.__version__) is None
 
-
 def test_build_info_has_all_documented_fields():
     import codecin
     from codecin import version
 
     info = version.build_info()
     for key in ('version', 'version_info', 'python', 'platform', 'native',
-                'native_version', 'jit', 'package_path'):
+                'native_version', 'package_path'):
         assert key in info, f'build_info() 缺少字段: {key}'
     assert info['version'] == codecin.__version__
     assert info['version_info'] == list(version.version_info())
@@ -163,11 +152,9 @@ def test_build_info_has_all_documented_fields():
     assert isinstance(info['platform'], str) and info['platform']
     assert isinstance(info['native'], bool)
     assert info['native_version'] is None or isinstance(info['native_version'], str)
-    assert isinstance(info['jit'], bool)
     assert os.path.isdir(info['package_path'])
     assert os.path.isfile(os.path.join(info['package_path'], 'version.py'))
     json.dumps(info)                       # 必须可直接 JSON 序列化
-
 
 def test_build_info_covers_real_native_engine():
     """本机有 codecin_native.dll: 原生分支做真实覆盖 (没编译则跳过)。"""
@@ -182,7 +169,6 @@ def test_build_info_covers_real_native_engine():
     expected = info['version'] in info['native_version']
     assert info['native_version_matches'] is expected
 
-
 def test_build_info_degrades_when_native_missing(monkeypatch):
     """原生库不存在时必须优雅降级, 其余字段照常可用。"""
     from codecin import native, version
@@ -195,7 +181,6 @@ def test_build_info_degrades_when_native_missing(monkeypatch):
     assert info['native_version_matches'] is None
     assert info['version'] == version.current_version()
     assert '不可用' in version.format_build_info(info)
-
 
 def test_build_info_survives_broken_native_library(monkeypatch):
     """dlopen 失败 (OSError) 或 ABI/自报版本异常时, build_info() 绝不能抛异常。"""
@@ -219,7 +204,6 @@ def test_build_info_survives_broken_native_library(monkeypatch):
     assert info['native_version'] is None
     assert info['native_version_matches'] is None
 
-
 def test_build_info_survives_platform_probe_failure(monkeypatch):
     """任何探测函数炸掉时, build_info() 仍返回完整 dict。"""
     from codecin import version
@@ -230,14 +214,11 @@ def test_build_info_survives_platform_probe_failure(monkeypatch):
     monkeypatch.setattr(version, 'current_version', boom)
     monkeypatch.setattr(version.platform, 'python_version', boom)
     monkeypatch.setattr(version.platform, 'machine', boom)
-    monkeypatch.setattr(version, 'jit_available', boom)
     info = version.build_info()
     assert info['version'] == ''
     assert info['version_info'] is None
     assert info['machine'] == ''
-    assert info['jit'] is False
     assert info['python']                     # 回退到 sys.version
-
 
 def test_format_build_info_and_json_are_plain_text():
     import codecin
@@ -246,10 +227,9 @@ def test_format_build_info_and_json_are_plain_text():
     info = version.build_info()
     text = version.format_build_info(info)
     assert codecin.__version__ in text
-    assert 'native' in text and 'jit' in text
+    assert 'native' in text
     assert '\x1b[' not in text                 # 无 ANSI: 可重定向/贴报告
     assert json.loads(version.build_info_json(info))['version'] == codecin.__version__
-
 
 def test_cli_build_info_text(capsys):
     import codecin
@@ -261,7 +241,6 @@ def test_cli_build_info_text(capsys):
     assert 'native' in out and 'python' in out
     assert '\x1b[' not in out
 
-
 def test_cli_build_info_json(capsys):
     import codecin
     from codecin import cli, version
@@ -271,8 +250,6 @@ def test_cli_build_info_json(capsys):
     assert data['version'] == codecin.__version__
     assert data['version_info'] == list(version.version_info())
     assert isinstance(data['native'], bool)
-    assert isinstance(data['jit'], bool)
-
 
 def test_cli_json_flag_requires_build_info(capsys):
     from codecin import cli
@@ -280,7 +257,6 @@ def test_cli_json_flag_requires_build_info(capsys):
     assert cli.main(['--json']) != 0
     captured = capsys.readouterr()
     assert '--build-info' in (captured.err + captured.out)
-
 
 def test_changelog_lists_current_version():
     """发布链路门禁: CHANGELOG.md 必须存在当前版本的小节。"""
@@ -293,9 +269,7 @@ def test_changelog_lists_current_version():
         f'CHANGELOG.md 缺少 [{codecin.__version__}] 小节: 发布前请运行 '
         f'`python script/bump_version.py <新版本>` 并补齐内容')
 
-
 # ==================== workstream C: bump_version 发布链路 ====================
-
 
 def _snapshot(root, rels=BUMP_TARGETS):
     """(sha256, 字节数, mtime_ns) 快照: 未落盘的调用必须完全不变。"""
@@ -308,12 +282,10 @@ def _snapshot(root, rels=BUMP_TARGETS):
         snap[rel] = (hashlib.sha256(data).hexdigest(), len(data), stat.st_mtime_ns)
     return snap
 
-
 def _bump(*args, cwd=None):
     return subprocess.run(
         [sys.executable, BUMP_SCRIPT, *args], cwd=cwd or ROOT,
         capture_output=True, text=True, encoding='utf-8', errors='replace')
-
 
 def _make_repo_copy(dst):
     """复制一棵可真实运行 script/gen_native_isa.py 的最小仓库树。"""
@@ -331,7 +303,6 @@ def _make_repo_copy(dst):
         pytest.skip(f'副本复制失败 (并行编辑中?): {e}')
     return dst
 
-
 def test_bump_version_dry_run_does_not_touch_any_file():
     before = _snapshot(ROOT, BUMP_OWNED)
     r = _bump('--dry-run', '9.9.9')
@@ -339,7 +310,6 @@ def test_bump_version_dry_run_does_not_touch_any_file():
     assert '9.9.9' in r.stdout
     assert 'dry-run' in r.stdout
     assert _snapshot(ROOT, BUMP_OWNED) == before, '--dry-run 不允许改动任何文件'
-
 
 def test_bump_version_dry_run_on_repo_copy(workdir):
     """在 workdir 的副本上试算: 打印骨架, 且一个字节都不落盘。"""
@@ -351,7 +321,6 @@ def test_bump_version_dry_run_on_repo_copy(workdir):
     assert '### 新增 (Added)' in r.stdout
     assert _snapshot(repo) == before, '--dry-run 不允许改动副本文件'
 
-
 @pytest.mark.parametrize('bad', ['abc', '5.6', '1.2.3.4', '5.6.0-rc1', 'v5.7.0'])
 def test_bump_version_rejects_invalid_version_arguments(bad):
     before = _snapshot(ROOT, BUMP_OWNED)
@@ -359,13 +328,11 @@ def test_bump_version_rejects_invalid_version_arguments(bad):
     assert r.returncode != 0, f'{bad!r} 应被拒绝 (stdout={r.stdout})'
     assert _snapshot(ROOT, BUMP_OWNED) == before
 
-
 @pytest.mark.parametrize('old', ['5.6.0', '5.5.3'])
 def test_bump_version_rejects_non_increasing_versions(old):
     r = _bump('--dry-run', old)
     assert r.returncode != 0, f'{old} 不是递增版本, 应被拒绝'
     assert '大于' in (r.stdout + r.stderr)
-
 
 def test_bump_version_rejected_without_dry_run_keeps_files():
     """连非 dry-run 的非法调用 (回退版本) 也不允许写任何文件。"""
@@ -373,7 +340,6 @@ def test_bump_version_rejected_without_dry_run_keeps_files():
     r = _bump('5.5.0')
     assert r.returncode != 0
     assert _snapshot(ROOT, BUMP_OWNED) == before
-
 
 def test_bump_version_full_run_in_repo_copy(workdir):
     """真实落盘链路演练: 真源 -> Go 常量再生 -> CHANGELOG 骨架 (在副本里跑, 不碰本仓库)。"""

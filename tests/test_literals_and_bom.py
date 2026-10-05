@@ -24,7 +24,6 @@ GO_CLI_CANDIDATES = (
     'codecin/codecin.exe', 'codecin/codecin',
 )
 
-
 def _go_cli():
     for rel in GO_CLI_CANDIDATES:
         p = os.path.join(ROOT, rel)
@@ -32,16 +31,14 @@ def _go_cli():
             return p
     return None
 
-
 needs_go_cli = pytest.mark.skipif(
     _go_cli() is None,
     reason='Go CLI 已于 5.5.0 下线 (Python 是唯一 CLI 入口); '
            '待 Go 编译器经原生库暴露后恢复双编译器对照')
 
-
-def _run_python_source(src: str, use_native: bool = True) -> str:
+def _run_python_source(src: str) -> str:
     res = CINCompiler().compile_source(src)
-    cpu = CPU(Config(interactive_mode=False, log_level='ERROR', use_native=use_native))
+    cpu = CPU(Config(log_level='ERROR'))
     cpu.instructions = res.instructions
     cpu.labels = res.labels
     cpu.data_labels = res.data_labels
@@ -53,7 +50,6 @@ def _run_python_source(src: str, use_native: bool = True) -> str:
     cpu.run()
     return ''.join(cpu.output_buffer)
 
-
 def _write(path: str, text: str, bom: bool = False) -> None:
     data = text.encode('utf-8')
     if bom:
@@ -61,11 +57,9 @@ def _write(path: str, text: str, bom: bool = False) -> None:
     with open(path, 'wb') as f:
         f.write(data)
 
-
 def _run_go_file(path: str):
     return subprocess.run([_go_cli(), path], capture_output=True, text=True,
                           encoding='utf-8', errors='replace', cwd=ROOT, timeout=180)
-
 
 # name, 字面量, 打印函数
 LITERALS = [
@@ -83,14 +77,12 @@ LITERALS = [
     ('hex_max_u64', '0xFFFFFFFFFFFFFFFF', 'int_to_str'),
 ]
 
-
 @pytest.mark.parametrize('name,lit,printer', LITERALS, ids=[c[0] for c in LITERALS])
 def test_literal_python_compiles(name, lit, printer):
     """两端都必须接受这些字面量 (不再是裸 ValueError)。"""
     src = f'function main() -> int {{ println({printer}({lit})) return 0 }}'
     out = _run_python_source(src)
     assert out.strip(), f'{lit} 未产生输出'
-
 
 @pytest.mark.parametrize('name,lit,printer', LITERALS, ids=[c[0] for c in LITERALS])
 @needs_go_cli
@@ -105,12 +97,10 @@ def test_literal_parity_with_go(name, lit, printer, workdir):
     assert py_out == r.stdout.strip(), \
         f'{lit}: python={py_out!r} go={r.stdout.strip()!r}'
 
-
 def test_int_out_of_64bit_range_rejected_python():
     src = 'function main() -> int { int x = 9223372036854775808 return 0 }'
     with pytest.raises(CompilerError):
         CINCompiler().compile_source(src)
-
 
 @needs_go_cli
 def test_int_out_of_64bit_range_rejected_go(workdir):
@@ -119,7 +109,6 @@ def test_int_out_of_64bit_range_rejected_go(workdir):
     _write(path, src)
     r = _run_go_file(path)
     assert r.returncode != 0
-
 
 # ---------------- BOM import ----------------
 
@@ -137,14 +126,13 @@ function main() -> int {
     return 0
 }'''
 
-
 def test_bom_import_python(workdir):
     _write(os.path.join(workdir, 'mod.cin'), MODULE)
     main_path = os.path.join(workdir, 'main.cin')
     _write(main_path, MAIN_WITH_IMPORT, bom=True)
 
     res = CINCompiler().compile(main_path)
-    cpu = CPU(Config(interactive_mode=False, log_level='ERROR', use_native=True))
+    cpu = CPU(Config(log_level='ERROR'))
     cpu.instructions = res.instructions
     cpu.labels = res.labels
     cpu.data_labels = res.data_labels
@@ -155,7 +143,6 @@ def test_bom_import_python(workdir):
     cpu._capture_output = True
     cpu.run()
     assert 'R=42' in ''.join(cpu.output_buffer)
-
 
 @needs_go_cli
 def test_bom_import_go(workdir):

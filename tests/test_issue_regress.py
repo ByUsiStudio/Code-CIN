@@ -33,20 +33,9 @@ function main() -> int {
 }
 """
 
-
-@pytest.mark.parametrize("kw", [
-    {'use_native': False},
-    {'use_native': False, 'enable_jit': True},
-])
-def test_float_index_via_int_variable_interpreter_jit(kw):
-    """/ 恒为浮点除, (n*p)/100 == 5.0; int 上下文向零截断后 a[5] == 5。"""
-    assert run_cin_source(FLOAT_INDEX_SRC, **kw).regs.read(0) == 5
-
-
 @needs_native
 def test_float_index_via_int_variable_native():
-    assert run_cin_source(FLOAT_INDEX_SRC, use_native=True).regs.read(0) == 5
-
+    assert run_cin_source(FLOAT_INDEX_SRC).regs.read(0) == 5
 
 # 问题 2: 数组长度必须是编译期常量 —— 报错要告诉用户怎么修
 def test_nonconstant_array_length_error_has_hint():
@@ -64,7 +53,6 @@ def test_nonconstant_array_length_error_has_hint():
     assert "const int MEM_SIZE" in msg          # 修复方式
     assert "compile-time constants" in msg      # 规则说明
 
-
 # 问题 5: to_int / to_float 显式转换; int()/float() 报错附提示
 CONVERT_SRC = """
 function main() -> int {
@@ -77,19 +65,8 @@ function main() -> int {
 }
 """
 
-
-@pytest.mark.parametrize("kw", [
-    {'use_native': False},
-    {'use_native': False, 'enable_jit': True},
-])
-def test_to_int_to_float(kw):
-    assert run_cin_source(CONVERT_SRC, **kw).regs.read(0) == 310
-
-
-@needs_native
-def test_to_int_to_float_native():
-    assert run_cin_source(CONVERT_SRC, use_native=True).regs.read(0) == 310
-
+def test_to_int_to_float():
+    assert run_cin_source(CONVERT_SRC).regs.read(0) == 310
 
 def test_float_call_error_hints_to_int_builtin():
     from codecin.cin import CINCompiler
@@ -99,7 +76,6 @@ def test_float_call_error_hints_to_int_builtin():
             'function main() -> int { return to_int(float(3) / float(4)) }')
     assert "Unknown function: float" in str(ei.value)
     assert "to_float(x)" in str(ei.value)
-
 
 # 问题 1 的真因: 局部大数组撑爆栈 (10000 元素 = 80000 字节 > 默认 64KB 内存)
 BIG_LOCAL_SRC = """
@@ -117,20 +93,14 @@ function main() -> int {
 }
 """
 
+def test_oversized_local_array_reports_stack_overflow(capsys):
+    """以前: 晦涩的 address 0xff...c6f8 out of bounds; 现在: 数值 + 建议。
 
-def _expect_stack_overflow(kw):
-    cpu = run_cin_source(BIG_LOCAL_SRC, **kw)
+    v5.9.0 起 CPU.run() 捕获所有执行期异常并置 execution_failed,
+    通过控制台输出断言错误信息。
+    """
+    cpu = run_cin_source(BIG_LOCAL_SRC)
     assert cpu.execution_failed is True
-    return cpu
-
-
-@pytest.mark.parametrize("kw", [
-    {'use_native': False},
-    {'use_native': False, 'enable_jit': True},
-])
-def test_oversized_local_array_reports_stack_overflow(kw, capsys):
-    """以前: 晦涩的 address 0xff...c6f8 out of bounds; 现在: 数值 + 建议。"""
-    cpu = _expect_stack_overflow(kw)
     out = capsys.readouterr().out
     assert "Stack overflow" in out
     assert "--mem-size" in out
@@ -138,26 +108,12 @@ def test_oversized_local_array_reports_stack_overflow(kw, capsys):
     assert "0x" in out  # SP / guard 数值
     del cpu
 
-
-@needs_native
-def test_oversized_local_array_reports_stack_overflow_native():
-    """原生路径的运行时错误直接抛出 (与 CLI 面板显示一致)。"""
-    from codecin.errors import CPUSimulatorError
-    with pytest.raises(CPUSimulatorError) as ei:
-        run_cin_source(BIG_LOCAL_SRC, use_native=True)
-    msg = str(ei.value)
-    assert "Stack overflow" in msg
-    assert "--mem-size" in msg
-    assert "frame needs" in msg
-
-
 def test_oversized_local_array_ok_with_bigger_mem(capsys):
     """同程序在 --mem-size 256KB 下应正常跑完 (根因是内存预算, 不是下标)。"""
-    cpu = run_cin_source(BIG_LOCAL_SRC, use_native=False, mem_size=256 * 1024)
+    cpu = run_cin_source(BIG_LOCAL_SRC, mem_size=256 * 1024)
     assert cpu.regs.read(0) == 5000
     assert cpu.execution_failed is False
     _ = capsys
-
 
 # 问题 4: Heap exhausted 附 need/free 与建议
 def test_heap_exhausted_message_has_numbers(capsys):
@@ -170,14 +126,13 @@ function main() -> int {
     return 0
 }
 """
-    cpu = run_cin_source(src, use_native=False)
+    cpu = run_cin_source(src)
     assert cpu.execution_failed is True
     out = capsys.readouterr().out
     assert "Heap exhausted" in out
     assert "need " in out
     assert "free " in out
     assert "--mem-size" in out
-
 
 # 问题 3: CLI 程序名之后的裸参数透传 (arg_count / arg)
 ARGS_PROG = """
@@ -188,7 +143,6 @@ function main() -> int {
     return 0
 }
 """
-
 
 @needs_native
 def test_cli_direct_args_passthrough(tmp_path, capsys):
@@ -203,7 +157,6 @@ def test_cli_direct_args_passthrough(tmp_path, capsys):
     assert "https://example.com" in out
     assert "24" in out
 
-
 @needs_native
 def test_cli_double_dash_still_works(tmp_path, capsys):
     path = tmp_path / "args_dash.cin"
@@ -216,24 +169,19 @@ def test_cli_double_dash_still_works(tmp_path, capsys):
     assert "a b" in out
     assert "-x" in out
 
-
 def test_cli_options_after_file_still_recognized(tmp_path, capsys):
     """向后兼容: 选项写在程序文件之后仍归 CLI (5.8.0 前的习惯)。"""
     prog = 'function main() -> int { println("ok"); return 0 }\n'
     path = tmp_path / "opts_after.cin"
     path.write_text(prog, encoding='utf-8')
     from codecin import cli
-    code = cli.main([str(path), '--no-native', '--log-level', 'ERROR'])
+    code = cli.main([str(path), '--max-instructions', '1000000',
+                     '--log-level', 'ERROR'])
     assert code == 0
     assert 'ok' in capsys.readouterr().out
 
-
 # 新功能: time_us / time_ns (Unix 纪元, 与 time_ms 同基)
-@pytest.mark.parametrize("kw", [
-    {'use_native': False},
-    {'use_native': False, 'enable_jit': True},
-])
-def test_time_us_ns_core_syscalls(kw):
+def test_time_us_ns_core_syscalls():
     src = """
 function main() -> int {
     int us = time_us()
@@ -244,11 +192,9 @@ function main() -> int {
     return 42
 }
 """
-    assert run_cin_source(src, **kw).regs.read(0) == 42
+    assert run_cin_source(src).regs.read(0) == 42
 
-
-@needs_native
-def test_time_us_ns_native():
+def test_time_us_ns_time_advances():
     src = """
 function main() -> int {
     int t0 = time_ns()
@@ -260,4 +206,4 @@ function main() -> int {
     return 42
 }
 """
-    assert run_cin_source(src, use_native=True).regs.read(0) == 42
+    assert run_cin_source(src).regs.read(0) == 42

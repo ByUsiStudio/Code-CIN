@@ -29,11 +29,14 @@ func readBody(resp *http.Response) (string, bool) {
 }
 
 // httpGet 发起 GET 请求, 返回响应体 (失败为空串)。
+// 状态码同样记录到 lastHTTPSt (与 http_req 一致, 供 http_code 查询)。
 func (vm *vmState) httpGet(url string) uint64 {
+	vm.lastHTTPSt = -1
 	resp, err := httpClient.Get(url)
 	if err != nil {
 		return vm.empty()
 	}
+	vm.lastHTTPSt = int64(resp.StatusCode)
 	body, ok := readBody(resp)
 	if !ok {
 		return vm.empty()
@@ -43,11 +46,13 @@ func (vm *vmState) httpGet(url string) uint64 {
 
 // httpPost 发起 POST (text/plain; charset=utf-8), 返回响应体 (失败为空串)。
 func (vm *vmState) httpPost(url, body string) uint64 {
+	vm.lastHTTPSt = -1
 	resp, err := httpClient.Post(url, "text/plain; charset=utf-8",
 		strings.NewReader(body))
 	if err != nil {
 		return vm.empty()
 	}
+	vm.lastHTTPSt = int64(resp.StatusCode)
 	out, ok := readBody(resp)
 	if !ok {
 		return vm.empty()

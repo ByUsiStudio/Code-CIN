@@ -21,13 +21,8 @@ from codecin.cin import CINCompiler
 from codecin.errors import CompilerError
 from tests.helpers import run_cin_source
 
-PATHS = (False, True)
-PATH_IDS = ('interp', 'native')
-
-
 def expr_type_kind(err: str) -> str:
     return err.splitlines()[0]
-
 
 # --------------------------------------------------------------------------
 # const 命名常量
@@ -62,13 +57,10 @@ CONST_CASES = [
      'const int N = 1\nfunction main() -> int { return N }', 1),
 ]
 
-
 @pytest.mark.parametrize('name,src,expected', CONST_CASES,
                          ids=[c[0] for c in CONST_CASES])
-@pytest.mark.parametrize('use_native', PATHS, ids=PATH_IDS)
-def test_const_declarations(name, src, expected, use_native):
-    assert run_cin_source(src, use_native=use_native).regs.read(0) == expected
-
+def test_const_declarations(name, src, expected):
+    assert run_cin_source(src).regs.read(0) == expected
 
 @pytest.mark.parametrize('bad,needle', [
     ('function main() -> int { const int N = 1 + ; return 0 }', 'error'),
@@ -89,13 +81,11 @@ def test_const_and_dim_errors_are_clean(bad, needle):
         CINCompiler().compile_source(bad)
     assert needle in str(ei.value)
 
-
 def test_const_division_by_zero_is_reported():
     with pytest.raises(CompilerError) as ei:
         CINCompiler().compile_source(
             'const int N = 4 / 0\nfunction main() -> int { return N }')
     assert 'divides by zero' in str(ei.value)
-
 
 # --------------------------------------------------------------------------
 # struct 聚合初始化 (回归护栏)
@@ -161,21 +151,10 @@ STRUCT_CASES = [
      'return o.i.a * 100 + o.i.b * 10 + o.c }', 123),
 ]
 
-
 @pytest.mark.parametrize('name,src,expected', STRUCT_CASES,
                          ids=[c[0] for c in STRUCT_CASES])
-@pytest.mark.parametrize('use_native', PATHS, ids=PATH_IDS)
-def test_struct_aggregate_initialization(name, src, expected, use_native):
-    assert run_cin_source(src, use_native=use_native).regs.read(0) == expected
-
-
-@pytest.mark.parametrize('name,src,expected', STRUCT_CASES,
-                         ids=[c[0] for c in STRUCT_CASES])
-def test_struct_aggregate_initialization_jit(name, src, expected):
-    """第三条路径: JIT 必须给出同样结果。"""
-    cpu = run_cin_source(src, use_native=False, enable_jit=True)
-    assert cpu.regs.read(0) == expected
-
+def test_struct_aggregate_initialization(name, src, expected):
+    assert run_cin_source(src).regs.read(0) == expected
 
 @pytest.mark.parametrize('bad,needle', [
     ('struct P { int x }\nfunction main() -> int { P p = {1, 2, 3}; return 0 }',
@@ -195,7 +174,6 @@ def test_struct_initializer_errors(bad, needle):
         CINCompiler().compile_source(bad)
     assert needle in str(ei.value)
 
-
 def test_struct_array_field_is_rejected_not_silently_wrong():
     """`struct Bag { int[] items }` 这类字段必须在编译期拒绝, 不能静默算错。"""
     with pytest.raises(CompilerError) as ei:
@@ -204,14 +182,12 @@ def test_struct_array_field_is_rejected_not_silently_wrong():
             'function main() -> int { return 0 }')
     assert 'struct array field' in str(ei.value)
 
-
 def test_nested_struct_field_type_must_be_defined_first():
     with pytest.raises(CompilerError) as ei:
         CINCompiler().compile_source(
             'struct O { I i }\nstruct I { int a }\n'
             'function main() -> int { return 0 }')
     assert 'unknown type' in str(ei.value)
-
 
 # --------------------------------------------------------------------------
 # string += 与 exit()
@@ -237,13 +213,10 @@ MISC_CASES = [
      'function main() -> int { stop(7); return 0 }', 7),
 ]
 
-
 @pytest.mark.parametrize('name,src,expected', MISC_CASES,
                          ids=[c[0] for c in MISC_CASES])
-@pytest.mark.parametrize('use_native', PATHS, ids=PATH_IDS)
-def test_string_compound_assign_and_exit(name, src, expected, use_native):
-    assert run_cin_source(src, use_native=use_native).regs.read(0) == expected
-
+def test_string_compound_assign_and_exit(name, src, expected):
+    assert run_cin_source(src).regs.read(0) == expected
 
 @pytest.mark.parametrize('op', ['-=', '*=', '/='])
 def test_string_other_compound_ops_rejected(op):
@@ -252,13 +225,11 @@ def test_string_other_compound_ops_rejected(op):
             f'function main() -> int {{ string s = "a"; s {op} "b"; return 0 }}')
     assert 'string' in str(ei.value)
 
-
 def test_exit_argument_count_checked():
     with pytest.raises(CompilerError) as ei:
         CINCompiler().compile_source(
             'function main() -> int { exit(); return 0 }')
     assert 'exit() expects exactly 1 argument' in str(ei.value)
-
 
 # --------------------------------------------------------------------------
 # 字符串字节语义 (R3-9): 解释器曾先做 UTF-8 解码, 非法字节序列被替换成 U+FFFD
@@ -311,28 +282,17 @@ BYTE_SEMANTICS_CASES = [
      '}', 3),
 ]
 
-
 @pytest.mark.parametrize('name,src,expected', BYTE_SEMANTICS_CASES,
                          ids=[c[0] for c in BYTE_SEMANTICS_CASES])
-@pytest.mark.parametrize('use_native', PATHS, ids=PATH_IDS)
-def test_string_byte_semantics_match_across_paths(name, src, expected, use_native):
+def test_string_byte_semantics_match_across_paths(name, src, expected):
     """字节级字符串内建必须两条路径同结果 (非法 UTF-8 序列也不例外)。"""
-    assert run_cin_source(src, use_native=use_native).regs.read(0) == expected
-
-
-@pytest.mark.parametrize('name,src,expected', BYTE_SEMANTICS_CASES,
-                         ids=[c[0] for c in BYTE_SEMANTICS_CASES])
-def test_string_byte_semantics_jit(name, src, expected):
-    assert run_cin_source(src, use_native=False,
-                          enable_jit=True).regs.read(0) == expected
-
+    assert run_cin_source(src).regs.read(0) == expected
 
 # --------------------------------------------------------------------------
 # 用户函数优先于同名内建 (R3-14)
 #
 # 修复前 _gen_call 先分派内建/宿主内建、最后才查用户函数, 于是同名用户函数
-# 永远不会被调用: --no-native 报 "host builtins ... require the native Go
-# runtime", 原生路径静默走宿主实现 —— 同一程序两条路径结论不同。
+# 永远不会被调用 —— 同一名字在编译期与运行期结论不同。
 # --------------------------------------------------------------------------
 
 SHADOW_CASES = [
@@ -362,16 +322,8 @@ SHADOW_CASES = [
      'function main() -> int { if (strlen("abcd") == 4) { return 1 } return 0 }', 1),
 ]
 
-
 @pytest.mark.parametrize('name,src,expected', SHADOW_CASES,
                          ids=[c[0] for c in SHADOW_CASES])
-@pytest.mark.parametrize('use_native', PATHS, ids=PATH_IDS)
-def test_user_function_shadows_builtin(name, src, expected, use_native):
-    assert run_cin_source(src, use_native=use_native).regs.read(0) == expected
+def test_user_function_shadows_builtin(name, src, expected):
+    assert run_cin_source(src).regs.read(0) == expected
 
-
-@pytest.mark.parametrize('name,src,expected', SHADOW_CASES,
-                         ids=[c[0] for c in SHADOW_CASES])
-def test_user_function_shadows_builtin_jit(name, src, expected):
-    assert run_cin_source(src, use_native=False,
-                          enable_jit=True).regs.read(0) == expected

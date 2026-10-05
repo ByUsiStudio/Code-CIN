@@ -23,7 +23,6 @@ GO_CLI_CANDIDATES = (
     'codecin/codecin.exe', 'codecin/codecin',
 )
 
-
 def _go_cli():
     for rel in GO_CLI_CANDIDATES:
         p = os.path.join(ROOT, rel)
@@ -31,12 +30,10 @@ def _go_cli():
             return p
     return None
 
-
 needs_go_cli = pytest.mark.skipif(
     _go_cli() is None,
     reason='Go CLI 已于 5.5.0 下线 (Python 是唯一 CLI 入口); '
            '待 Go 编译器经原生库暴露后恢复双编译器对照')
-
 
 def _run_go(src, workdir, name='probe.cin'):
     path = os.path.join(workdir, name)
@@ -44,7 +41,6 @@ def _run_go(src, workdir, name='probe.cin'):
         f.write(src)
     return subprocess.run([_go_cli(), path], capture_output=True, text=True,
                           encoding='utf-8', errors='replace', cwd=ROOT, timeout=180)
-
 
 REJECT = [
     ('unknown_function', '''
@@ -211,12 +207,10 @@ function main() -> int {
 }'''),
 ]
 
-
 @pytest.mark.parametrize('name,src', REJECT, ids=[c[0] for c in REJECT])
 def test_rejected_by_python(name, src):
     with pytest.raises(CompilerError):
         CINCompiler().compile_source(src)
-
 
 @pytest.mark.parametrize('name,src', REJECT, ids=[c[0] for c in REJECT])
 @needs_go_cli
@@ -227,11 +221,9 @@ def test_rejected_by_go(name, src, workdir):
     assert 'compile error' in r.stderr.lower(), (
         f'Go 侧 {name} 的报错不像编译错误: stderr={r.stderr!r}')
 
-
 @pytest.mark.parametrize('name,src', ACCEPT, ids=[c[0] for c in ACCEPT])
 def test_accepted_by_python(name, src):
     CINCompiler().compile_source(src)
-
 
 @pytest.mark.parametrize('name,src', ACCEPT, ids=[c[0] for c in ACCEPT])
 @needs_go_cli

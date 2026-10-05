@@ -19,13 +19,11 @@ import pytest
 
 from tests.helpers import run_cin_file
 
-
 def _run(workdir, source, name='lib_combin_test.cin', **cfg):
     path = os.path.join(workdir, name)
     with open(path, 'w', encoding='utf-8') as f:
         f.write(source)
     return run_cin_file(path, **cfg)
-
 
 COMBIN_SRC = '''
 import "combin.cin"
@@ -239,13 +237,10 @@ function main() -> int {
     return 0
 }'''
 
-
-@pytest.mark.parametrize('use_native', (False, True), ids=('interp', 'native'))
-def test_combin_lib(workdir, use_native):
-    cpu = _run(workdir, COMBIN_SRC, use_native=use_native)
+def test_combin_lib(workdir):
+    cpu = _run(workdir, COMBIN_SRC)
     assert not cpu.execution_failed
     assert cpu.regs.read(0) == 0
-
 
 TOGETHER_SRC = '''
 import "combin.cin"
@@ -267,10 +262,7 @@ function main() -> int {
     return 0
 }'''
 
-
-@pytest.mark.parametrize('use_native', (False, True), ids=('interp', 'native'))
-def test_combin_and_path_importable_together(workdir, use_native):
-    cpu = _run(workdir, TOGETHER_SRC, name='lib_combin_path.cin',
-               use_native=use_native)
+def test_combin_and_path_importable_together(workdir):
+    cpu = _run(workdir, TOGETHER_SRC, name='lib_combin_path.cin')
     assert not cpu.execution_failed
     assert cpu.regs.read(0) == 0

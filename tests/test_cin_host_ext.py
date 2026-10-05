@@ -23,14 +23,12 @@ import pytest
 
 from codecin import native
 from codecin.cin import CINCompiler
-from codecin.errors import ExecutionError
-from tests.helpers import new_cpu, run_cin_source
+from tests.helpers import run_cin_source
 
 needs_native = pytest.mark.skipif(
     native.get_engine() is None, reason="native Go library not built")
 
 MINUS_ONE = (1 << 64) - 1
-
 
 def _run(tpl: str, **kw):
     """替换 @NAME@ 占位符后用原生路径运行, 返回执行完的 CPU。
@@ -42,11 +40,10 @@ def _run(tpl: str, **kw):
     src = tpl
     for key, val in kw.items():
         src = src.replace('@' + key + '@', str(val))
-    cpu = run_cin_source(src, use_native=True)
+    cpu = run_cin_source(src)
     assert cpu.native_used, '原生引擎未生效 (needs_native 门禁本应跳过)'
     assert not cpu.execution_failed, '宿主调用执行失败 (ExecutionError 被吞掉)'
     return cpu
-
 
 # ====================================================================
 # 路径与文件系统扩展
@@ -68,14 +65,12 @@ function main() -> int {
     return 0
 }'''
 
-
 @needs_native
 def test_path_join_basename_dirname_abs(workdir):
     d = workdir.replace('\\', '/')
     cpu = _run(PATH_TPL, D=d)
     assert cpu.regs.read(0) == 0
     assert os.path.isfile(os.path.join(workdir, 'a.txt'))
-
 
 FILE_OPS_TPL = r'''
 function main() -> int {
@@ -102,7 +97,6 @@ function main() -> int {
     return 0
 }'''
 
-
 @needs_native
 def test_file_copy_move_isdir_dirremove_mtime(workdir):
     d = workdir.replace('\\', '/')
@@ -115,7 +109,6 @@ def test_file_copy_move_isdir_dirremove_mtime(workdir):
     assert not os.path.exists(os.path.join(workdir, 'copy.txt'))
     assert not os.path.exists(os.path.join(workdir, 'sub'))
 
-
 @needs_native
 def test_temp_dir_nonempty_and_is_dir():
     src = r'''
@@ -127,7 +120,6 @@ function main() -> int {
 }'''
     assert _run(src).regs.read(0) == 0
 
-
 CHDIR_TPL = r'''
 function main() -> int {
     if (chdir("@D@") != 0) { return 1 }
@@ -136,7 +128,6 @@ function main() -> int {
     if (file_exists("marker.txt") != 1) { return 4 }   // 相对路径解析到新 cwd
     return 0
 }'''
-
 
 @needs_native
 def test_chdir_and_cwd(workdir):
@@ -156,7 +147,6 @@ def test_chdir_and_cwd(workdir):
     assert rc == 0
     assert os.path.isfile(os.path.join(workdir, 'marker.txt'))
 
-
 # ====================================================================
 # 时间与系统信息
 # ====================================================================
@@ -175,7 +165,6 @@ function main() -> int {
     return 0
 }'''
     assert _run(src).regs.read(0) == 0
-
 
 @needs_native
 def test_cpu_count_and_arch_name():
@@ -201,7 +190,6 @@ function main() -> int {
 }'''
     assert _run(src).regs.read(0) == 0
 
-
 @needs_native
 def test_mem_info_and_is_android():
     src = r'''
@@ -215,7 +203,6 @@ function main() -> int {
     return 3
 }'''
     assert _run(src).regs.read(0) == 0
-
 
 # ====================================================================
 # 网络 (仅失败路径: 127.0.0.1:9 上无监听者, 立即拒绝, 不依赖外网)
@@ -231,14 +218,12 @@ function main() -> int {
     return 0
 }'''
 
-
 @needs_native
 def test_network_failures_are_graceful(workdir):
     d = workdir.replace('\\', '/')
     cpu = _run(NET_TPL, D=d)
     assert cpu.regs.read(0) == 0
     assert not os.path.exists(os.path.join(workdir, 'nope.txt'))
-
 
 # ====================================================================
 # 编码与哈希
@@ -260,11 +245,9 @@ function main() -> int {
     return 0
 }'''
 
-
 @needs_native
 def test_sha256_and_base64():
     assert _run(CRYPTO_TPL).regs.read(0) == 0
-
 
 # ====================================================================
 # Android / Termux 扩展 (Windows/桌面平台必然优雅失败)
@@ -284,7 +267,6 @@ function main() -> int {
     return 0
 }'''
 
-
 @needs_native
 def test_termux_android_extensions_fail_gracefully(workdir):
     d = workdir.replace('\\', '/')
@@ -293,7 +275,6 @@ def test_termux_android_extensions_fail_gracefully(workdir):
     # 优雅失败不得产生副作用文件
     assert not os.path.exists(os.path.join(workdir, 'cam.jpg'))
     assert not os.path.exists(os.path.join(workdir, 'share.txt'))
-
 
 @needs_native
 def test_minus_one_is_masked_64bit():
@@ -304,7 +285,6 @@ function main() -> int {
 }'''
     cpu = _run(src)
     assert cpu.regs.read(0) == MINUS_ONE
-
 
 # ====================================================================
 # 桌面集成: 只验证可编译 (运行会弹窗 / 抢占剪贴板)
@@ -319,31 +299,14 @@ function main() -> int {
     return strlen(b) + a + c + d
 }'''
 
-
 def test_desktop_builtins_compile():
     """clipboard_get/clipboard_set/notify/open_url 只编译不运行 (无副作用)。"""
     res = CINCompiler().compile_source(DESKTOP_COMPILE_TPL)
     assert any(i[0] == 'SYS' for i in res.instructions)
 
-
 # ====================================================================
-# 纯解释路径: 宿主内建必须明确要求 native
+# sandbox: 宿主能力 SYS 被 Go 引擎拦截 (v5.9.0)
 # ====================================================================
-
-def _execute_direct(res) -> None:
-    """逐条执行已编译程序, 让执行期异常冒泡 (CPU.run() 会吞掉异常)。"""
-    cpu = new_cpu(use_native=False)
-    cpu.instructions = res.instructions
-    cpu.labels = res.labels
-    cpu.data_labels = res.data_labels
-    for addr, data in res.data_writes:
-        cpu.memory.write_block(addr, data)
-    cpu.entry_pc = 0
-    cpu.pc = 0
-    while 0 <= cpu.pc < len(cpu.instructions):
-        if not cpu.execute(*cpu.instructions[cpu.pc]):
-            break
-
 
 HOST_NEEDS_NATIVE_SRC = r'''
 function main() -> int {
@@ -352,27 +315,11 @@ function main() -> int {
     return strlen(h) + strlen(t)
 }'''
 
-
-def test_host_builtins_compile_but_need_native():
-    """含新宿主内建的源码: 编译通过, 但纯解释执行必须报 "要求 native"。"""
+def test_host_builtins_rejected_in_sandbox():
+    """沙箱下宿主能力 SYS 被引擎拒绝: 编译通过, 执行置 execution_failed。"""
     res = CINCompiler().compile_source(HOST_NEEDS_NATIVE_SRC)
     assert any(i[0] == 'SYS' for i in res.instructions), \
         '新宿主内建应编译为 SYS 指令'
-    with pytest.raises(ExecutionError, match='native'):
-        _execute_direct(res)
-
-
-def test_host_builtins_interpreter_run_flags_failure():
-    """解释路径整程序运行: CPU.run() 记日志并置 execution_failed。
-
-    注意: CPU.run() 捕获所有异常 (codecin/cpu.py 的 except Exception),
-    因此 run_cin_source(..., use_native=False) **不会**向外抛
-    ExecutionError, 只能通过 execution_failed 观察到失败。
-    """
-    src = r'''
-function main() -> int {
-    return strlen(sha256("abc"))
-}'''
-    cpu = run_cin_source(src, use_native=False)
+    cpu = run_cin_source(HOST_NEEDS_NATIVE_SRC, sandbox_mode=True)
     assert cpu.execution_failed is True
-    assert cpu.native_used is False
+

@@ -40,7 +40,6 @@ MATRIX_REF_RE = re.compile(r'\bmatrix\.([A-Za-z_][A-Za-z0-9_-]*)')
 # contains(x, 'a(') 这类字面量被误判成函数调用
 QUOTED_RE = re.compile(r"'(?:[^']|'')*'")
 
-
 class _StrictLoader(yaml.SafeLoader):
     """SafeLoader + 重复键报错。
 
@@ -48,7 +47,6 @@ class _StrictLoader(yaml.SafeLoader):
     `Invalid workflow file`。这样本地就能拦住 release.yml 曾经那种
     "同一个 step 里写两个 with:" 的错误。
     """
-
 
 def _construct_mapping_no_duplicates(loader, node, deep=False):
     mapping = {}
@@ -61,11 +59,9 @@ def _construct_mapping_no_duplicates(loader, node, deep=False):
         mapping[key] = loader.construct_object(value_node, deep=deep)
     return mapping
 
-
 _StrictLoader.add_constructor(
     yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG,
     _construct_mapping_no_duplicates)
-
 
 def _workflow_files():
     if not os.path.isdir(WORKFLOW_DIR):
@@ -73,11 +69,9 @@ def _workflow_files():
     return sorted(f for f in os.listdir(WORKFLOW_DIR)
                   if f.endswith(('.yml', '.yaml')))
 
-
 def _load(name):
     with open(os.path.join(WORKFLOW_DIR, name), encoding='utf-8') as f:
         return yaml.load(f, Loader=_StrictLoader)
-
 
 def _strings(obj):
     """递归取出结构里所有字符串 (含键名)。"""
@@ -91,7 +85,6 @@ def _strings(obj):
         for item in obj:
             yield from _strings(item)
 
-
 def _declared_matrix_keys(job):
     strategy = job.get('strategy') or {}
     matrix = strategy.get('matrix') or {}
@@ -101,11 +94,9 @@ def _declared_matrix_keys(job):
             keys |= set(item)
     return keys
 
-
 FILES = _workflow_files()
 
 assert FILES, '未找到任何工作流文件'
-
 
 @pytest.mark.parametrize('name', FILES)
 def test_workflow_parses(name):
@@ -114,7 +105,6 @@ def test_workflow_parses(name):
     except yaml.YAMLError as e:
         pytest.fail(f'{name}: YAML 不合法 (GitHub 会判 Invalid workflow file): {e}')
     assert isinstance(doc, dict) and 'jobs' in doc, f'{name}: 缺少 jobs'
-
 
 @pytest.mark.parametrize('name', FILES)
 def test_expression_functions_are_supported(name):
@@ -131,7 +121,6 @@ def test_expression_functions_are_supported(name):
         f'{name}: 使用了 GitHub Actions 不支持的表达式函数: {bad}; '
         f'可用函数: {sorted(ALLOWED_FUNCTIONS)}')
 
-
 @pytest.mark.parametrize('name', FILES)
 def test_matrix_references_are_declared(name):
     """job 内引用的 matrix.* 键必须在同一个 job 的 matrix 里声明过。"""
@@ -145,7 +134,6 @@ def test_matrix_references_are_declared(name):
                     problems.append(f'{job_id}: matrix.{key} 未在 matrix 中声明')
     assert not problems, f'{name}: {sorted(set(problems))}'
 
-
 @pytest.mark.parametrize('name', FILES)
 def test_jobs_and_steps_are_well_formed(name):
     doc = _load(name)
@@ -156,7 +144,6 @@ def test_jobs_and_steps_are_well_formed(name):
         for i, step in enumerate(steps):
             assert 'uses' in step or 'run' in step, \
                 f'{name}:{job_id} 第 {i + 1} 个 step 既没有 uses 也没有 run'
-
 
 @pytest.mark.parametrize('name', FILES)
 def test_artifact_names_are_unique(name):
