@@ -157,65 +157,65 @@ jobs:
           path: codecin/${{ matrix.asset }}
           if-no-files-found: error
 
-  # python-dist:
-  #   name: sdist / wheel (含内置标准库)
-  #   needs: version-check
-  #   runs-on: ubuntu-latest
-  #   timeout-minutes: 30
-  #   steps:
-  #     # 本仓库无子模块 (文档站已迁至独立仓库 Code-CIN-Docs): 不要加 submodules: recursive。
-  #     - uses: actions/checkout@v6
-  #       with:
-  #         ref: ${{ github.event_name == 'push' && github.ref || '' }}
-  #     - uses: actions/setup-python@v7
-  #       with:
-  #         python-version: "3.11"
-  #     - uses: actions/setup-go@v7
-  #       with:
-  #         go-version-file: codecin/native/go.mod
-  #         cache: true
-  #         # 同 ci.yml: Go 模块在 codecin/native/ 下, 必须显式指明依赖文件,
-  #         # 否则 setup-go 在仓库根找不到 go.mod/go.sum 并跳过缓存。
-  #         cache-dependency-path: codecin/native/go.mod
-  #     - run: python -m pip install --upgrade build twine
-  #     - name: Build sdist + 纯 Python wheel
-  #       env:
-  #         CODECIN_SKIP_NATIVE: "1"
-  #       run: python -m build
-  #     - run: python -m twine check dist/*
-  #     - name: 断言 sdist/wheel 含内置标准库, 且都不含预编译原生库
-  #       run: |
-  #         python - <<'PY'
-  #         import glob, tarfile, zipfile
-  #         whl = glob.glob('dist/*.whl')[0]
-  #         names = zipfile.ZipFile(whl).namelist()
-  #         libs = [n for n in names
-  #                 if n.startswith('codecin/lib/') and n.endswith('.cin')]
-  #         assert len(libs) >= 19, f'{whl} 缺少内置标准库: {libs}'
-  #         print(f'{whl}: {len(libs)} 个内置标准库模块')
-  #         bins = [n for n in names if n.endswith(('.so', '.dylib', '.dll'))]
-  #         assert not bins, f'{whl} 不应携带预编译原生库: {bins}'
-  #         sdist = glob.glob('dist/*.tar.gz')[0]
-  #         snames = tarfile.open(sdist).getnames()
-  #         slibs = [n for n in snames
-  #                  if '/codecin/lib/' in n and n.endswith('.cin')]
-  #         assert len(slibs) >= 19, f'{sdist} 缺少内置标准库'
-  #         sbins = [n for n in snames if n.endswith(('.so', '.dylib', '.dll'))]
-  #         assert not sbins, f'{sdist} 不应携带预编译原生库: {sbins}'
-  #         print(f'{sdist}: {len(slibs)} 个内置标准库模块, 无预编译库')
-  #         PY
-  #     - name: wheel 可安装可导入, 且内置标准库可用
-  #       run: |
-  #         python -m venv /tmp/venv
-  #         /tmp/venv/bin/pip install --quiet dist/*.whl
-  #         /tmp/venv/bin/codecin --version
-  #         cd /tmp
-  #         printf 'import "str.cin"\nfunction main() -> int { println(strlen(s_repeat("ab", 3))) return 0 }\n' > libsmoke.cin
-  #         /tmp/venv/bin/codecin libsmoke.cin --no-native
-  #     - uses: actions/upload-artifact@v7
-  #       with:
-  #         name: python-dist
-  #         path: dist/*
+  python-dist:
+    name: sdist / wheel (含内置标准库)
+    needs: version-check
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      # 本仓库无子模块 (文档站已迁至独立仓库 Code-CIN-Docs): 不要加 submodules: recursive。
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event_name == 'push' && github.ref || '' }}
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: codecin/native/go.mod
+          cache: true
+          # 同 ci.yml: Go 模块在 codecin/native/ 下, 必须显式指明依赖文件,
+          # 否则 setup-go 在仓库根找不到 go.mod/go.sum 并跳过缓存。
+          cache-dependency-path: codecin/native/go.mod
+      - run: python -m pip install --upgrade build twine
+      - name: Build sdist + 纯 Python wheel
+        env:
+          CODECIN_SKIP_NATIVE: "1"
+        run: python -m build
+      - run: python -m twine check dist/*
+      - name: 断言 sdist/wheel 含内置标准库, 且都不含预编译原生库
+        run: |
+          python - <<'PY'
+          import glob, tarfile, zipfile
+          whl = glob.glob('dist/*.whl')[0]
+          names = zipfile.ZipFile(whl).namelist()
+          libs = [n for n in names
+                  if n.startswith('codecin/lib/') and n.endswith('.cin')]
+          assert len(libs) >= 19, f'{whl} 缺少内置标准库: {libs}'
+          print(f'{whl}: {len(libs)} 个内置标准库模块')
+          bins = [n for n in names if n.endswith(('.so', '.dylib', '.dll'))]
+          assert not bins, f'{whl} 不应携带预编译原生库: {bins}'
+          sdist = glob.glob('dist/*.tar.gz')[0]
+          snames = tarfile.open(sdist).getnames()
+          slibs = [n for n in snames
+                   if '/codecin/lib/' in n and n.endswith('.cin')]
+          assert len(slibs) >= 19, f'{sdist} 缺少内置标准库'
+          sbins = [n for n in snames if n.endswith(('.so', '.dylib', '.dll'))]
+          assert not sbins, f'{sdist} 不应携带预编译原生库: {sbins}'
+          print(f'{sdist}: {len(slibs)} 个内置标准库模块, 无预编译库')
+          PY
+      # - name: wheel 可安装可导入, 且内置标准库可用
+      #   run: |
+      #     python -m venv /tmp/venv
+      #     /tmp/venv/bin/pip install --quiet dist/*.whl
+      #     /tmp/venv/bin/codecin --version
+      #     cd /tmp
+      #     printf 'import "str.cin"\nfunction main() -> int { println(strlen(s_repeat("ab", 3))) return 0 }\n' > libsmoke.cin
+      #     /tmp/venv/bin/codecin libsmoke.cin --no-native
+      - uses: actions/upload-artifact@v7
+        with:
+          name: python-dist
+          path: dist/*
 
   release:
     name: 发布 Release
