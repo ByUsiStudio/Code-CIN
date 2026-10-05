@@ -1,0 +1,171 @@
+// Code CIN 官方标准库: 网络便捷封装 (net)
+// 用法: import "net.cin"
+// 依赖: 原生运行时 (http_req / http_code / tcp_* / udp_* / dns_lookup,
+//       SYS 145-157, Go 引擎实现); `--sandbox` 下宿主调用会被拦截。
+//
+// 底层内建 (int fd 是套接字句柄, 0/-1 表示失败; 失败不抛异常只返回 -1):
+//   http_req(method, url, headers, body) -> 响应体字符串
+//   http_code() -> 最近一次 HTTP 状态码 (从未请求过为 -1)
+//   tcp_dial(host, port) / tcp_send(fd, buf, n) / tcp_recv(fd, buf, max)
+//   tcp_close(fd) / tcp_listen(port) / tcp_accept(lfd)
+//   udp_open(port) / udp_sendto(fd, host, port, buf, n)
+//   udp_recvfrom(fd, buf, max, srcbuf) / udp_close(fd)
+//   dns_lookup(host) -> IP 字符串 (失败空串)
+//
+// 本库在其上提供:
+//   * HTTP: 带自定义头的 GET/POST、状态码便捷判断;
+//   * TCP: 发送字符串、按行接收 (文本协议友好)、echo 客户端一步到位;
+//   * UDP: 字符串收发封装 (主机名自动解析);
+//   * DNS: 解析 + 反查。
+//
+// 缓冲区约定: CIN 数组每个元素占 8 字节, tcp_recv / udp_recvfrom 把收到的
+// 字节流原样写入缓冲区内存。接收辅助函数接收 `int[] buf` 并按小端字节序
+// 逐字节取值; 调用前无需清零 (辅助函数内部按收到的字节数重组字符串)。
+//
+// 性能提示: 收包 -> 字符串的重组是逐字节拼接 (O(n^2) 堆拷贝),
+// 建议单次接收 <= 4096 字节; 二进制/大流量场景请直接用底层内建处理原始字节。
+//
+// 示例 (TCP echo):
+//   import "net.cin"
+//   int fd = tcp_dial("127.0.0.1", 7000)
+//   tcp_send_str(fd, "hello")
+//   int buf[512]
+//   print(tcp_recv_line(fd, buf, 4096))
+//   tcp_close(fd)
+
+// 逐字节重组字符串用的 255 字节字母表: net_bytes[i-1] == 字节值 i (1..255)。
+// 字节 0 不是合法字符串内容 (CIN string 是 NUL 结尾的), 重组时遇 0 即截断。
+string net_bytes = "\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0A\x0B\x0C\x0D\x0E\x0F\x10\x11\x12\x13\x14\x15\x16\x17\x18\x19\x1A\x1B\x1C\x1D\x1E\x1F !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~\x7F\x80\x81\x82\x83\x84\x85\x86\x87\x88\x89\x8A\x8B\x8C\x8D\x8E\x8F\x90\x91\x92\x93\x94\x95\x96\x97\x98\x99\x9A\x9B\x9C\x9D\x9E\x9F\xA0\xA1\xA2\xA3\xA4\xA5\xA6\xA7\xA8\xA9\xAA\xAB\xAC\xAD\xAE\xAF\xB0\xB1\xB2\xB3\xB4\xB5\xB6\xB7\xB8\xB9\xBA\xBB\xBC\xBD\xBE\xBF\xC0\xC1\xC2\xC3\xC4\xC5\xC6\xC7\xC8\xC9\xCA\xCB\xCC\xCD\xCE\xCF\xD0\xD1\xD2\xD3\xD4\xD5\xD6\xD7\xD8\xD9\xDA\xDB\xDC\xDD\xDE\xDF\xE0\xE1\xE2\xE3\xE4\xE5\xE6\xE7\xE8\xE9\xEA\xEB\xEC\xED\xEE\xEF\xF0\xF1\xF2\xF3\xF4\xF5\xF6\xF7\xF8\xF9\xFA\xFB\xFC\xFD\xFE\xFF"
+
+// ---------------- HTTP ----------------
+
+// GET (可带自定义头)。headers 为 "Key: Value\nKey2: Value2" 形式, 空串表示无。
+function http_get_headers(string url, string headers) -> string {
+    return http_req("GET", url, headers, "")
+}
+
+// POST (可带自定义头)。调用方自行提供 Content-Type 等头。
+function http_post_headers(string url, string body, string headers) -> string {
+    return http_req("POST", url, headers, body)
+}
+
+// 最近一次 HTTP 请求是否成功 (2xx)。从未请求过返回 0。
+function http_ok() -> int {
+    int code = http_code()
+    return code >= 200 && code < 300
+}
+
+// ---------------- TCP: 客户端 ----------------
+
+// 发送整个字符串 (不含结尾 NUL), 返回发送字节数 / -1。
+function tcp_send_str(int fd, string s) -> int {
+    return tcp_send(fd, s, strlen(s))
+}
+
+// 发送一行 (自动追加 "\n"), 文本协议友好。
+function tcp_send_line(int fd, string s) -> int {
+    return tcp_send_str(fd, s + "\n")
+}
+
+// 原始接收: 收到的字节写入 buf (调用方自行解码), 返回字节数 / 0 对端关闭 / -1。
+function tcp_recv_bytes(int fd, int[] buf, int max) -> int {
+    return tcp_recv(fd, buf, max)
+}
+
+// 接收并以字符串返回 (遇 NUL 截断; 建议单次 <= 4096 字节, 见头部性能提示)。
+function tcp_recv_str(int fd, int[] buf, int max) -> string {
+    int n = tcp_recv(fd, buf, max)
+    if (n <= 0) { return "" }
+    string s = ""
+    int i = 0
+    while (i < n) {
+        int b = (buf[i / 8] >> ((i % 8) * 8)) & 0xFF
+        if (b == 0) { break }
+        if (b > 0) { s = s + substr(net_bytes, b - 1, 1) }
+        i = i + 1
+    }
+    return s
+}
+
+// 接收一行 (到 "\n" 为止, 不含 "\n"; 行尾 "\r" 一并去掉)。
+// 缓冲区里 "\n" 之后的内容会被丢弃 —— 需要保留请用 tcp_recv_bytes。
+function tcp_recv_line(int fd, int[] buf, int max) -> string {
+    string s = tcp_recv_str(fd, buf, max)
+    int pos = indexof(s, "\n")
+    if (pos >= 0) {
+        s = substr(s, 0, pos)
+    }
+    int n = strlen(s)
+    if (n > 0 && substr(s, n - 1, 1) == "\r") {
+        s = substr(s, 0, n - 1)
+    }
+    return s
+}
+
+// 一步到位: 连接 -> 发送 -> 收一行 -> 关闭。失败返回空串。
+function tcp_roundtrip(string host, int port, string message) -> string {
+    int fd = tcp_dial(host, port)
+    if (fd <= 0) { return "" }
+    int buf[512]
+    tcp_send_line(fd, message)
+    string reply = tcp_recv_line(fd, buf, 4096)
+    tcp_close(fd)
+    return reply
+}
+
+// ---------------- TCP: 服务端 ----------------
+
+// 在端口上监听, 返回监听句柄 (失败 -1); 用 tcp_accept 接受连接。
+function tcp_server(int port) -> int {
+    return tcp_listen(port)
+}
+
+// 接受一个连接 (阻塞), 返回连接句柄 (失败 -1); 用完后 tcp_close。
+function tcp_server_accept(int lfd) -> int {
+    return tcp_accept(lfd)
+}
+
+// ---------------- UDP ----------------
+
+// 打开 UDP 套接字并绑定端口 (0 = 系统分配), 返回句柄 / -1。
+function udp_bind(int port) -> int {
+    return udp_open(port)
+}
+
+// 发送字符串数据报 (host 支持主机名或 IP 字面量), 返回发送字节数 / -1。
+function udp_send_str(int fd, string host, int port, string s) -> int {
+    return udp_sendto(fd, host, port, s, strlen(s))
+}
+
+// 原始接收: 字节写入 buf, 源地址 "ip:port" 写入 src (可为 0 忽略), 返回字节数 / -1。
+// src 需是调用方提供的缓冲 (建议 >= 64 字节), 内部写入 NUL 结尾文本。
+function udp_recv_bytes(int fd, int[] buf, int max, int[] src) -> int {
+    return udp_recvfrom(fd, buf, max, src)
+}
+
+// 接收数据报并以字符串返回 (遇 NUL 截断; 建议单次 <= 4096 字节)。
+function udp_recv_str(int fd, int[] buf, int max) -> string {
+    int n = udp_recvfrom(fd, buf, max, 0)
+    if (n <= 0) { return "" }
+    string s = ""
+    int i = 0
+    while (i < n) {
+        int b = (buf[i / 8] >> ((i % 8) * 8)) & 0xFF
+        if (b == 0) { break }
+        if (b > 0) { s = s + substr(net_bytes, b - 1, 1) }
+        i = i + 1
+    }
+    return s
+}
+
+// ---------------- DNS ----------------
+
+// 解析主机名 -> IP 字符串 (失败空串)。dns_lookup 的语义别名。
+function dns_resolve(string host) -> string {
+    return dns_lookup(host)
+}
+
+// 主机名是否可解析。
+function dns_ok(string host) -> int {
+    return dns_lookup(host) != ""
+}

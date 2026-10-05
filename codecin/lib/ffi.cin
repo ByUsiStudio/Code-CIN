@@ -1,0 +1,163 @@
+// Code CIN 官方标准库: FFI 动态库调用便捷封装 (ffi)
+// 用法: import "ffi.cin"
+// 依赖: 原生运行时 (dlopen / dlsym / ffi_call / ffi_callf / lib_close,
+//       SYS 140-144, Go 引擎实现); `--sandbox` 下宿主调用会被拦截。
+//
+// 调用约定 (与原生引擎 ffi_windows.go / ffi_unix.go 一致):
+//   * 最多 8 个参数, 每个占 8 字节, 从 argbuf 顺序读取;
+//   * ffi_call(fn, argbuf, n) -> int64 整数返回值;
+//   * ffi_callf(fn, argbuf, n) -> double 返回值 (IEEE754 位模式存 X0;
+//     CIN 的 float 本身就是位模式, 结果可直接赋给 float 变量);
+//   * 浮点参数请走 ffi_callf* 封装 (float 数组槽即 IEEE754 位模式),
+//     整数参数走 ffi_call* 封装 (int 数组); 两种参数混用暂无封装;
+//   * dlopen / dlsym 失败返回 0 (句柄 0 无效)。
+//
+// 示例 (Windows):
+//   import "ffi.cin"
+//   int k32 = ffi_load("kernel32.dll")
+//   int tick = ffi_find(k32, "GetTickCount64")
+//   print(ffi_call0(tick))          // 开机毫秒数
+//   ffi_free(k32)
+// 示例 (Linux/macOS):
+//   int libc = ffi_load("libc.so.6")   // macOS: "libc.dylib" 或省略后缀
+//   int getpid = ffi_find(libc, "getpid")
+//   print(ffi_call0(getpid))
+
+// FFI 参数上限 (与引擎一致; 仅供检查, 封装内部已固定)
+const int ffi_max_args = 8
+
+// ---------------- 加载与查找 ----------------
+
+// 加载动态库, 返回句柄 (失败 0)。path 为平台相关文件名:
+// Windows "foo.dll", Linux "libfoo.so" / "libfoo.so.6", macOS "libfoo.dylib"。
+function ffi_load(string path) -> int {
+    return dlopen(path)
+}
+
+// 查找导出符号 (函数/变量地址), 失败 0。
+function ffi_find(int lib, string name) -> int {
+    return dlsym(lib, name)
+}
+
+// 卸载动态库 (0 成功 / -1)。卸载后其函数句柄全部失效。
+function ffi_free(int lib) -> int {
+    return lib_close(lib)
+}
+
+// ---------------- 整数调用 (0..8 个 int 参数) ----------------
+
+function ffi_call0(int fn) -> int {
+    int buf[8]
+    return ffi_call(fn, buf, 0)
+}
+
+function ffi_call1(int fn, int a0) -> int {
+    int buf[8]
+    buf[0] = a0
+    return ffi_call(fn, buf, 1)
+}
+
+function ffi_call2(int fn, int a0, int a1) -> int {
+    int buf[8]
+    buf[0] = a0
+    buf[1] = a1
+    return ffi_call(fn, buf, 2)
+}
+
+function ffi_call3(int fn, int a0, int a1, int a2) -> int {
+    int buf[8]
+    buf[0] = a0
+    buf[1] = a1
+    buf[2] = a2
+    return ffi_call(fn, buf, 3)
+}
+
+function ffi_call4(int fn, int a0, int a1, int a2, int a3) -> int {
+    int buf[8]
+    buf[0] = a0
+    buf[1] = a1
+    buf[2] = a2
+    buf[3] = a3
+    return ffi_call(fn, buf, 4)
+}
+
+function ffi_call5(int fn, int a0, int a1, int a2, int a3, int a4) -> int {
+    int buf[8]
+    buf[0] = a0
+    buf[1] = a1
+    buf[2] = a2
+    buf[3] = a3
+    buf[4] = a4
+    return ffi_call(fn, buf, 5)
+}
+
+function ffi_call6(int fn, int a0, int a1, int a2, int a3, int a4, int a5) -> int {
+    int buf[8]
+    buf[0] = a0
+    buf[1] = a1
+    buf[2] = a2
+    buf[3] = a3
+    buf[4] = a4
+    buf[5] = a5
+    return ffi_call(fn, buf, 6)
+}
+
+function ffi_call7(int fn, int a0, int a1, int a2, int a3, int a4, int a5,
+                   int a6) -> int {
+    int buf[8]
+    buf[0] = a0
+    buf[1] = a1
+    buf[2] = a2
+    buf[3] = a3
+    buf[4] = a4
+    buf[5] = a5
+    buf[6] = a6
+    return ffi_call(fn, buf, 7)
+}
+
+function ffi_call8(int fn, int a0, int a1, int a2, int a3, int a4, int a5,
+                   int a6, int a7) -> int {
+    int buf[8]
+    buf[0] = a0
+    buf[1] = a1
+    buf[2] = a2
+    buf[3] = a3
+    buf[4] = a4
+    buf[5] = a5
+    buf[6] = a6
+    buf[7] = a7
+    return ffi_call(fn, buf, 8)
+}
+
+// ---------------- 浮点调用 (1..4 个 float 参数) ----------------
+// 返回值是 double (CIN float 位模式, 直接参与浮点运算即可)。
+
+function ffi_callf1(int fn, float a0) -> float {
+    float buf[8]
+    buf[0] = a0
+    return ffi_callf(fn, buf, 1)
+}
+
+function ffi_callf2(int fn, float a0, float a1) -> float {
+    float buf[8]
+    buf[0] = a0
+    buf[1] = a1
+    return ffi_callf(fn, buf, 2)
+}
+
+function ffi_callf3(int fn, float a0, float a1, float a2) -> float {
+    float buf[8]
+    buf[0] = a0
+    buf[1] = a1
+    buf[2] = a2
+    return ffi_callf(fn, buf, 3)
+}
+
+function ffi_callf4(int fn, float a0, float a1, float a2, float a3) -> float {
+    float buf[8]
+    buf[0] = a0
+    buf[1] = a1
+    buf[2] = a2
+    buf[3] = a3
+    return ffi_callf(fn, buf, 4)
+}
