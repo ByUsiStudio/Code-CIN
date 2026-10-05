@@ -70,6 +70,25 @@ func (r *sockRegistry) getUDP(fd uint64) *net.UDPConn {
 
 func failUint() uint64 { return mask64 } // -1
 
+// resolveHost 把主机名解析为 IP (IP 字面量直接返回)。
+// 解析结果偏好 IPv4 地址 —— Windows 上 "localhost" 常先返回 ::1,
+// 对端只监听 IPv4 回环时会收不到包。
+func resolveHost(host string) net.IP {
+	if ip := net.ParseIP(host); ip != nil {
+		return ip
+	}
+	addrs, err := net.LookupHost(host)
+	if err != nil || len(addrs) == 0 {
+		return nil
+	}
+	for _, a := range addrs {
+		if ip := net.ParseIP(a); ip != nil && ip.To4() != nil {
+			return ip
+		}
+	}
+	return net.ParseIP(addrs[0])
+}
+
 func (vm *vmState) tcpDial(host string, port int) uint64 {
 	if host == "" || port <= 0 || port > 65535 {
 		return failUint()
