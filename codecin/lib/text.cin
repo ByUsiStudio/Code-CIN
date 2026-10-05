@@ -3,7 +3,7 @@
 //
 // 比 str.cin 更进一步: 大小写无关比较、反转、替换、区间编辑、标题化、词数统计。
 // 纯 CIN 实现, 只使用非宿主内建 (strlen / substr / indexof / upper / lower /
-// strcmp), 不依赖 Go 原生运行时, --no-native 下同样可用。
+// strcmp), 不依赖 Go 原生运行时, 原生与 AOT 路径下同样可用。
 //
 // 字节语义: strlen / substr / s[i] 全是**字节**语义, 本库沿用同一约定 ——
 // 非 ASCII 一律按 UTF-8 字节序列逐个字节处理, 不做码点解码; 下标、长度、切片

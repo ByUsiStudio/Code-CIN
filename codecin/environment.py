@@ -159,8 +159,7 @@ def missing_tool_message(tool: str, purpose: str) -> str:
 def native_runtime_hint() -> str:
     """原生 Go 运行库缺失时的安装指引 (多行文本)。
 
-    适用场景: 宿主能力内建 (音频/GUI/文件/网络/键盘...) 在无原生库或
-    --no-native 下被调用。C/C++/Go 兼容层本身是纯 CIN, 全路径可用;
+    适用场景: 宿主能力内建 (音频/GUI/文件/网络/键盘...) 在无原生库时被调用。
     只有其中的原生依赖项 (如 go_os_args_*) 会走到这里。
     """
     pkg_dir = os.path.dirname(os.path.abspath(__file__))

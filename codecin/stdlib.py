@@ -2,11 +2,11 @@
 
 ``codecin/lib/`` 下的官方标准库按**执行路径要求**分三类:
 
-  * 纯 CIN          —— 只调用语言内建, 解释器 / 原生 / AOT 三条路径行为一致;
+  * 纯 CIN          —— 只调用语言内建, 原生 / AOT 全部行为一致;
   * 兼容层 (C/C++/Go) —— 纯 CIN 实现的三语言标准库兼容层 (cstd/cppstd/gostd),
     让 C、C++、Go 程序员以惯用名操作 CIN; 除标注的原生依赖外全路径可用;
   * 需原生运行时     —— 调用了宿主能力内建 (音频/GUI/文件/网络/键盘/Termux...),
-    纯解释路径 (--no-native) 与沙箱模式下不可用。
+    沙箱模式下被拦截。
 
 分类由源码扫描得出 (是否引用 HOST_BUILTINS 内建名), 与库文件头注释保持
 单一事实来源, 避免文档漂移。对外接口::
@@ -115,9 +115,8 @@ def format_library_report() -> str:
     lines += [
         "",
         "  类别说明:",
-        f"    {CAT_PURE}   —— 解释器/原生/AOT 三条路径行为一致",
+        f"    {CAT_PURE}   —— 原生/AOT 全路径行为一致",
         f"    {CAT_COMPAT} —— C/C++/Go 标准库兼容层 (纯 CIN; 兼容层内容见库头注释)",
-        f"    {CAT_NATIVE} —— 调用宿主能力内建, 仅原生路径可用"
-        " (--no-native / --sandbox 下不可用)",
+        f"    {CAT_NATIVE} —— 调用宿主能力内建 (--sandbox 下被拦截)",
     ]
     return '\n'.join(lines)

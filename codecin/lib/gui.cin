@@ -4,7 +4,7 @@
 // ============ 一、窗口 (5.8.0 新增, 依赖原生 Go 运行时) ============
 //
 // 依赖原生 Go 运行时 (Windows 用 Win32, Linux 用 X11); 其他平台与
-// --no-native / --sandbox 下 gui_new 返回 -1, 所有函数优雅失败不崩溃。
+// --sandbox 下 gui_new 返回 -1, 所有函数优雅失败不崩溃。
 //
 // 绘图模型: g_new 成功后, 画布内建 (set_color / fill_rect / fill_circle /
 // draw_line / draw_text) 直接画进窗口后备缓冲, 每次调用 g_update() 才呈现。

@@ -149,7 +149,7 @@ _STR_ESCAPES = {
 _HEX_DIGITS = '0123456789abcdefABCDEF'
 
 # 宿主能力内建 (表驱动): 名称 -> (SYS 功能号, 参数个数, 返回类型)。
-# 全部由 Go 原生引擎实现; 解释器 (--no-native) 下会给出明确错误。
+# 全部由 Go 原生引擎实现; --sandbox 下宿主 SYS 被拦截并报明确错误。
 HOST_BUILTINS = {
     # 联网音频
     'audio_play': (Syscall.AUDIOPLAY, 1, 'int'),
@@ -3417,8 +3417,8 @@ class CodeGen:
     def _gen_call(self, name: str, args: list):
         # 用户自定义函数**优先于同名内建** (含宿主能力内建)。
         # 此前内建先分派, 结果: 用户定义的 `path_join` / `file_read` / `abs` …
-        # 永远不会被调用 —— --no-native 下报 "host builtins … require the native
-        # Go runtime", 原生路径下静默走宿主实现, 于是同一程序两条路径结论不同。
+        # 永远不会被调用 —— 无原生库时直接报 "host builtins … require the
+        # native Go runtime", 原生路径下静默走宿主实现, 于是同一程序两条路径结论不同。
         fdef = self.functions.get(name)
         if fdef is not None:
             for k, arg in enumerate(args):

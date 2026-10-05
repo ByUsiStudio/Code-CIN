@@ -2,8 +2,8 @@
 // 用法: import "codec.cin"
 //
 // 纯 CIN 实现, 只使用非宿主内建 (strlen / strcmp / substr / int_to_str),
-// 不调用 sha256 / base64_encode / base64_decode 等宿主能力, 因此在
-// --no-native 的纯 Python 路径与 Go 原生路径下行为完全一致。
+// 不调用 sha256 / base64_encode / base64_decode 等宿主能力, 原生与 AOT
+// 路径下行为完全一致。
 //
 // 字节语义: strlen / substr / s[i] 全是**字节**语义, 本库沿用同一约定 ——
 // 所有编解码都按 UTF-8 字节序列逐个字节处理, 不做码点解码; 非 ASCII 输入

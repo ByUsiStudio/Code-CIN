@@ -9,7 +9,7 @@
 //
 // 命名冲突 (重要):
 // path_join / path_basename / path_dirname 是**宿主能力内建名**, 编译器优先分派内建,
-// 因此**同名用户函数永远不会被调用** (--no-native 下直接报 "host builtins ... require
+// 因此**同名用户函数永远不会被调用** (无原生库时直接报 "host builtins ... require
 // the native Go runtime")。本库把这三个纯字符串版本命名为
 //   path_str_join / path_str_basename / path_str_dirname
 // 其余函数名与任务规格完全一致 (path_sep_posix / path_is_sep / path_ext / path_stem /

@@ -5,7 +5,7 @@
 // 的 API: tok_count / tok_get / tok_len / tok_find / tok_first / tok_last,
 // 外加按空白切分的便捷封装 tok_word_count / tok_word_get (因为没有字符串数组,
 // 本库不提供 join)。纯 CIN 实现, 只用非宿主内建 (strlen / substr / strcmp),
-// --no-native 下同样可用。
+// 全路径可用。
 //
 // 切分语义 (与 Go strings.Split 一致):
 //   * delim 按**整串**匹配 (多字符分隔符算一个整体), 不是"字符集合";
