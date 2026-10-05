@@ -48,4 +48,6 @@ def test_native_runtime_hint_lists_all_options():
     hint = environment.native_runtime_hint()
     assert environment.RELEASES_URL in hint
     assert 'pip install --force-reinstall codecin' in hint
-    assert '--no-native' in hint
+    assert 'codecin/native/build.ps1' in hint
+    assert 'codecin/native/build.sh' in hint
+    assert '--no-native' not in hint
