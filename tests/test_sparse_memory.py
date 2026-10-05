@@ -19,14 +19,14 @@ GIB = 1 << 30
 
 def test_default_size_is_1gib():
     assert len(FastMemory()) == GIB
-    assert len(FastMemory()) == FastMemory().size()
+    assert FastMemory().size == GIB
 
 
 def test_sparse_write_only_touches_pages():
     m = FastMemory()
     assert m.resident_bytes == 0
-    m.write_block(0xFFFF0000, b'\x01\x02')          # 接近 1 GiB 末尾
-    assert m.read_block(0xFFFF0000, 2) == b'\x01\x02'
+    m.write_block(GIB - 256, b'\x01\x02')           # 接近 1 GiB 末尾
+    assert m.read_block(GIB - 256, 2) == b'\x01\x02'
     # 常驻内存只有 1 页 (4 KiB), 而不是整个 1 GiB
     assert m.resident_bytes == 4096
 
@@ -104,7 +104,8 @@ def test_get_snapshot_sparse_reads_to_last_page():
     m = FastMemory()
     m.write_block(1 << 20, b'tail')
     snap = m.get_snapshot()                          # 不应试图分配 1 GiB
-    assert len(snap) == (1 << 20) + 4
+    # 读到最后一个已分配页的页尾 (4 KiB 对齐)
+    assert len(snap) == (1 << 20) + 4096
     assert snap[-4:] == b'tail'
 
 
