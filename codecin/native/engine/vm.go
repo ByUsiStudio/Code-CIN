@@ -1208,7 +1208,7 @@ func (vm *vmState) doSyscall(id uint64) string {
 			}
 			return fmt.Sprintf("Heap exhausted (string concat): need %d bytes, "+
 				"free %d bytes (heap 0x%x..0x%x). Try --mem-size "+
-				"(default 65536) or reduce allocations",
+				"(default 1073741824) or reduce allocations",
 				size, free, vm.heapBase, vm.sp)
 		}
 		if e := vm.checkAddr(ptr, len(data)); e != "" {
@@ -1620,7 +1620,7 @@ func (vm *vmState) heapDupString(s string) (uint64, string) {
 		}
 		return 0, fmt.Sprintf("Heap exhausted (string operation): need %d "+
 			"bytes, free %d bytes (heap 0x%x..0x%x). Try --mem-size "+
-			"(default 1073741824) or reduce allocations",
+			"(default 65536) or reduce allocations",
 			size, free, vm.heapBase, vm.sp)
 	}
 	if e := vm.checkAddr(ptr, len(data)); e != "" {
