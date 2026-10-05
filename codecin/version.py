@@ -229,7 +229,7 @@ def format_build_info(info: Optional[Dict[str, Any]] = None) -> str:
         if data.get('native_version'):
             native_text += f": {data['native_version']}"
     else:
-        native_text = '不可用 (请运行 `python script/build_native.py` 重建)'
+        native_text = '不可用 (请运行 codecin/native/build.ps1 或 build.sh 重建)'
 
     matches = data.get('native_version_matches')
     matches_text = ('(未知)' if matches is None

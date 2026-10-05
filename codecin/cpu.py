@@ -29,8 +29,8 @@ MASK64 = 0xFFFFFFFFFFFFFFFF
 
 NATIVE_HINT = (
     "原生引擎不可用: 未找到 codecin-native 动态库。\n"
-    "请先构建原生库: python script/build_native.py "
-    "(或运行 codecin/native/build.ps1 / build.sh), 然后重试。")
+    "请先构建原生库: 运行 codecin/native/build.ps1 (Windows) "
+    "或 codecin/native/build.sh (Linux/Termux/macOS), 然后重试。")
 
 
 class CPU:
