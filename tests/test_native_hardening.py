@@ -28,7 +28,8 @@ def _bc(entry=0, instructions=b'', version=1, count=None):
 @needs_native
 def test_bad_magic_rejected():
     eng = native.get_engine()
-    res = eng.run(b'XXXX' + bytes(60), b'\x00' * 4096, 0, 4096, 2048, b'', 1000)
+    res = eng.run_v2(b'XXXX' + bytes(60), [], 0, 4096, 2048, 4096,
+                     b'', 1000)
     assert res is not None and res['error']
 
 @needs_native
@@ -36,7 +37,7 @@ def test_wrong_version_rejected():
     """版本字节此前从不校验。"""
     eng = native.get_engine()
     bc = _bc(version=99)
-    res = eng.run(bc, b'\x00' * 4096, 0, 4096, 2048, b'', 1000)
+    res = eng.run_v2(bc, [], 0, 4096, 2048, 4096, b'', 1000)
     assert res is not None and res['error']
 
 @needs_native
@@ -45,7 +46,7 @@ def test_huge_instruction_count_does_not_oom():
     eng = native.get_engine()
     bc = b'UCBC' + bytes([1]) + struct.pack('<I', 0) + \
         struct.pack('<I', 0xFFFFFFFF)
-    res = eng.run(bc, b'\x00' * 4096, 0, 4096, 2048, b'', 1000)
+    res = eng.run_v2(bc, [], 0, 4096, 2048, 4096, b'', 1000)
     assert res is not None and res['error']
 
 @needs_native
@@ -55,7 +56,7 @@ def test_argc_mismatch_rejected():
     # opcode 0 = MOV, argc 0
     body = bytes([0, 0])
     bc = _bc(count=1, instructions=body)
-    res = eng.run(bc, b'\x00' * 4096, 0, 4096, 2048, b'', 1000)
+    res = eng.run_v2(bc, [], 0, 4096, 2048, 4096, b'', 1000)
     assert res is not None and res['error']
 
 @needs_native
@@ -63,7 +64,7 @@ def test_unknown_opcode_rejected():
     eng = native.get_engine()
     body = bytes([250, 0])          # 超出 argCounts 表
     bc = _bc(count=1, instructions=body)
-    res = eng.run(bc, b'\x00' * 4096, 0, 4096, 2048, b'', 1000)
+    res = eng.run_v2(bc, [], 0, 4096, 2048, 4096, b'', 1000)
     assert res is not None and res['error']
 
 @needs_native
@@ -72,7 +73,7 @@ def test_truncated_operand_rejected():
     # MOV 声明 1 个操作数但字节流在操作数中途结束
     body = bytes([0, 1, 1]) + b'\x00' * 5
     bc = _bc(count=1, instructions=body)
-    res = eng.run(bc, b'\x00' * 4096, 0, 4096, 2048, b'', 1000)
+    res = eng.run_v2(bc, [], 0, 4096, 2048, 4096, b'', 1000)
     assert res is not None and res['error']
 
 @needs_native
@@ -115,7 +116,7 @@ def test_step_limit_is_an_error_not_silent_success():
     body = bytes([Opcode.JMP.value, 1, KIND_IMM]) + \
         struct.pack('<q', 0) + struct.pack('<q', 0)
     bc = _bc(count=1, instructions=body)
-    res = eng.run(bc, b'\x00' * 4096, 0, 4096, 2048, b'', 500)
+    res = eng.run_v2(bc, [], 0, 4096, 2048, 4096, b'', 500)
     assert res is not None
     assert res['steps'] <= 501
     assert res['error'], '步数用尽必须是错误, 不能伪装成正常结束'

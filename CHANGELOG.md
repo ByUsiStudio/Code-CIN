@@ -5,6 +5,85 @@
 
 ---
 
+## [5.9.0] - 2026-10-05
+
+一次「单引擎 + 大内存 + 系统能力」的架构发布：**纯 Python 解释器与 JIT
+被移除**，全部程序统一由 Go 原生引擎执行；内存默认从 64 KB 提升到
+**1 GiB（稀疏分页, 按需提交）**；新增 **FFI 动态库调用**与**完整网络**
+（HTTP 扩展 / TCP / UDP / DNS）系统调用。持久化格式升级为段式
+（CROM v4 / BIN v3），只保存实际使用的内存页。
+
+### 变更 (Changed)
+
+#### 删除 Python 解释器与 JIT (native-only)
+- **`jit.py` / `debugger.py` / `cache.py` 整体删除**，`CPU` 重构为
+  native-only 执行编排：编译/装载 (.cin/.asm/.pl/.bin/.crom) + 结果回传。
+  动态库缺失时抛 `CPUSimulatorError` 并附重建指引（不再有解释器回退）。
+- 引擎 ABI 升级为 **v2**（`codecin_run_v2`）：一次调用回传寄存器/向量/
+  NZCV/脏内存段/输出，Python 侧无逐条解释开销。
+- 相关 CLI 选项与配置项（`use_native` / JIT 统计 / 调试器等）随之移除，
+  `--stats` 只保留原生引擎数据。
+- 新 ABI 下原生库版本不匹配（缺 `codecin_run_v2` 导出）会被识别并提示
+  重建，而非静默失败。
+
+#### 内存默认 64 KB -> 1 GiB (动态分配)
+- **逻辑 1 GiB, 4 KiB 稀疏分页**：Python 侧 `FastMemory` 重写为按需分配页
+  的稀疏字典，`resident_bytes` 只统计已触碰页——1 GiB 地址空间常驻内存
+  只有实际写入的几 KB。
+- Go 引擎侧配合 `make([]byte, memSize)`（OS 懒提交）+ **脏页位图**：执行
+  结束只回传被写过的 4 KiB 页（段式），整程序执行后写回稀疏内存。
+- 大数组/大缓冲不再需要 `--mem-size`：默认即可 `int a[1000000]`。
+
+#### 持久化格式: 段式 CROM v4 / BIN v3
+- CROM v4（16 B 头 + zlib 可选压缩段表）与 BIN v3（50 B 头 + 段表 +
+  bytecode）只保存已分配页；`.pytest_tmp` 内 1 GiB 镜像实测仅数 KB。
+- 旧 BIN v2（34 B 头）仍可读；反汇编器（`disasm.py`）同步支持两种头。
+
+### 新增 (Added)
+
+#### FFI: 动态库调用 (SYS 140-144)
+- `ffi_load(path)` / `ffi_find(handle, symbol)` / `ffi_call(fn, argbuf, n)` /
+  `ffi_callf(fn, argbuf, n)` / `lib_close(handle)`：Windows
+  (LoadLibrary/GetProcAddress) 与 Unix (dlopen/dlsym) 双实现，最多 8 个
+  int64/IEEE754 位参数（浮点经 Windows x64 XMM0-3 / SysV XMM0-7 正确传参）。
+- 标准库 `lib/ffi.cin`：`ffi_call0..ffi_call8` / `ffi_callf1..ffi_callf4`
+  便捷封装（局部数组作参数缓冲）。
+- 无效句柄/参数越界报明确错误信息；`dlopen`/`dlsym` 失败返回 0 不抛异常。
+
+#### 网络: HTTP 扩展 / TCP / UDP / DNS (SYS 145-157)
+- **HTTP**：`http_req(method, url, headers, body)`（自定义方法与
+  `Key: Value\n` 头）+ `http_code()` 状态码查询；既有 `http_get`/`http_post`
+  同样记录状态码。15 s 超时，响应体上限 8 MiB。
+- **TCP**：`tcp_dial` / `tcp_send` / `tcp_recv` / `tcp_close` /
+  `tcp_listen` / `tcp_accept`（10 s 连接超时；收发上限 4/8 MiB）。
+- **UDP**：`udp_open` / `udp_sendto` / `udp_recvfrom`（源地址回填
+  "ip:port"）/ `udp_close`。
+- **DNS**：`dns_lookup(host)` 返回 IP 字符串（偏好 IPv4 —— Windows 下
+  `localhost` 常先返回 ::1，对端只听 IPv4 时不再丢包）。
+- 主机名参数统一支持（`tcp_dial("example.com", 80)`、
+  `udp_sendto(fd, "localhost", ...)`）。
+- 标准库 `lib/net.cin`：字符串收发（`tcp_send_str`/`tcp_recv_line`/
+  `udp_send_str` 等）、`http_get_headers`/`http_post_headers`/`http_ok`、
+  `tcp_roundtrip`/`tcp_server`、`dns_resolve`/`dns_ok`。
+
+### 修复 (Fixed)
+- **`http_get`/`http_post` 不记录状态码**：`http_code()` 此前对这两个内建
+  恒返回 0（只有 `http_req` 更新 `lastHTTPSt`），现在三者语义一致。
+- **FFI 浮点传参走错寄存器**：C 桥此前把函数指针声明为整型参数，Windows
+  x64/SysV 下目标函数从 XMM 读到垃圾——`ffi_callf2(pow, 3.0, 4.0)` 实际算出
+  `pow(x, 0) = 1`。现按 double 类型传参（位模式经 memcpy 保持不变）。
+- `udp_sendto` 主机名解析只取第一个地址（可能为 IPv6），现偏好 IPv4。
+
+### 移除 (Removed)
+- `codecin/jit.py`、`codecin/debugger.py`、`codecin/cache.py` 及对应测试
+  （9 个废弃测试文件删除；`use_native` 参数化全部收敛为单路径）。
+- `PageFaultError`（并入 `MemoryAccessError`）。
+- 沙箱语义不变：`--sandbox` 下仅放行 ALLOCFRAME/TIMEUS/TIMENS，
+  其余宿主 SYS（网络/FFI/音频/画布等）报
+  `Host capability disabled in sandbox mode`。
+
+---
+
 ## [5.8.2] - 2026-10-04
 
 一次以「真实压测程序暴露的错误信息与栈安全」为主线的修复发布。核心结论：

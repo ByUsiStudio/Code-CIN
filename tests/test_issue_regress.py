@@ -77,7 +77,7 @@ def test_float_call_error_hints_to_int_builtin():
     assert "Unknown function: float" in str(ei.value)
     assert "to_float(x)" in str(ei.value)
 
-# 问题 1 的真因: 局部大数组撑爆栈 (10000 元素 = 80000 字节 > 默认 64KB 内存)
+# 问题 1 的真因: 局部大数组撑爆栈 (10000 元素 = 80000 字节, 需小内存预算复现)
 BIG_LOCAL_SRC = """
 function percentile() -> int {
     int latencies[10000]
@@ -97,9 +97,10 @@ def test_oversized_local_array_reports_stack_overflow(capsys):
     """以前: 晦涩的 address 0xff...c6f8 out of bounds; 现在: 数值 + 建议。
 
     v5.9.0 起 CPU.run() 捕获所有执行期异常并置 execution_failed,
-    通过控制台输出断言错误信息。
+    通过控制台输出断言错误信息。默认 mem_size 1GiB 时栈预算足够,
+    需显式传小内存才能复现溢出。
     """
-    cpu = run_cin_source(BIG_LOCAL_SRC)
+    cpu = run_cin_source(BIG_LOCAL_SRC, mem_size=64 * 1024)
     assert cpu.execution_failed is True
     out = capsys.readouterr().out
     assert "Stack overflow" in out

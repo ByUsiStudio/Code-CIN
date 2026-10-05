@@ -94,7 +94,7 @@ def test_stub_template_is_shared_with_go():
     src = aot.stub_source()
     assert 'codecin-native/aot' in src
     assert '//go:embed program.ucbc' in src
-    assert '//go:embed program.mem' in src
+    assert '//go:embed program.segs' in src
     go_src = os.path.join(ROOT, 'codecin', 'native', 'aot', 'aot.go')
     with open(go_src, encoding='utf-8') as f:
         assert 'stub_main.go.txt' in f.read(), 'Go 侧未引用共享模板'

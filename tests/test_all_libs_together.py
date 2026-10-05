@@ -92,8 +92,10 @@ def test_pure_lib_list_matches_directory():
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     actual = {n for n in os.listdir(os.path.join(root, 'codecin', 'lib'))
               if n.endswith('.cin')}
-    # 依赖宿主能力的 4 个库不在本用例里(它们另有 test_cin_host*.py 覆盖)
-    host_libs = {'io.cin', 'gui.cin', 'termux.cin', 'key.cin'}
+    # 依赖宿主能力的库不在本用例里(它们另有 test_cin_host*.py /
+    # test_ffi_net.py 覆盖)
+    host_libs = {'io.cin', 'gui.cin', 'termux.cin', 'key.cin',
+                 'ffi.cin', 'net.cin'}
     # test.cin 与 time.cin 共用 t_ 前缀, 文档要求勿同时导入
     covered = {name for name, _ in PURE_LIB_CALLS} | host_libs | {'test.cin'}
     assert actual == covered, (
