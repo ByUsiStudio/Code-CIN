@@ -24,9 +24,10 @@ import os
 import platform
 import secrets
 import shutil
+import struct
 import subprocess
 import time
-from typing import List, NamedTuple, Optional
+from typing import List, NamedTuple, Optional, Tuple
 
 #: 仓库内 codecin-native 模块目录 (含 go.mod)。
 _NATIVE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'native')
@@ -46,8 +47,26 @@ DEFAULT_STALE_AGE_SECONDS = 6 * 3600
 #: 生成的 main.go 模板 (与 Go 侧共用)。
 STUB_PATH = os.path.join(_NATIVE_DIR, 'aot', 'stub_main.go.txt')
 
-#: 默认内存大小, 与解释器 / Go CLI 一致。
-DEFAULT_MEM_SIZE = 65536
+#: 默认内存大小 (1 GiB): 与解释器 / Go CLI 一致; 由 VM 按需分配 (OS 懒提交)。
+DEFAULT_MEM_SIZE = 1 << 30
+
+#: 栈槽位 (与 isa.Constants.STACK_SLOT 一致, 避免循环导入)。
+_STACK_SLOT = 8
+
+
+def pack_seg_file(mem_size: int, sp: int, heap_base: int,
+                  segs: List[Tuple[int, bytes]]) -> bytes:
+    """打包段文件 (program.segs), 由 aot.Main 解析:
+    seg_count u32 | mem_size u64 | sp u64 | heap_base u64 |
+    每段: addr u64 + len u32 + data
+    """
+    out = bytearray()
+    out += struct.pack('<I', len(segs))
+    out += struct.pack('<QQQ', mem_size, sp, heap_base)
+    for addr, data in segs:
+        out += struct.pack('<QI', addr, len(data))
+        out += data
+    return bytes(out)
 
 #: 常用交叉编译目标 (go 本身支持更多组合)。
 SUPPORTED_TARGETS = [
@@ -303,7 +322,7 @@ def _remove_temp_dir(tmp: str, logger) -> None:
 
 
 def build(bytecode: bytes,
-          mem_image: bytes,
+          seg_file: bytes,
           out: str,
           target: Optional[str] = None,
           keep_temp: bool = False,
@@ -311,7 +330,7 @@ def build(bytecode: bytes,
     """构建独立静态可执行文件, 返回产物的绝对路径。
 
     :param bytecode: UCBC 字节码 (codecin.native.encode_program 的产物)
-    :param mem_image: 初始内存镜像 (数据段已写入)
+    :param seg_file: 段文件 (pack_seg_file 的产物; 初始内存段 + mem_size/sp/heap)
     :param out: 输出路径
     :param target: ``os/arch``, 默认当前平台
     :param keep_temp: 保留临时构建目录 (排查失败用)
@@ -340,8 +359,8 @@ def build(bytecode: bytes,
             f.write(stub_source())
         with open(os.path.join(tmp, 'program.ucbc'), 'wb') as f:
             f.write(bytecode)
-        with open(os.path.join(tmp, 'program.mem'), 'wb') as f:
-            f.write(mem_image)
+        with open(os.path.join(tmp, 'program.segs'), 'wb') as f:
+            f.write(seg_file)
 
         out_abs = os.path.abspath(out)
         os.makedirs(os.path.dirname(out_abs) or '.', exist_ok=True)
@@ -434,23 +453,30 @@ def build_program(program_file: str,
     bytecode = encode_program(res.instructions,
                               getattr(res, 'entry_pc', 0) or 0, labels)
 
-    # 3) 初始内存镜像: 数据段越界必须报错 (旧实现静默丢弃越界写入)
+    # 3) 初始内存段: 数据段越界必须报错 (旧实现静默丢弃越界写入)。
+    #    只为数据实际覆盖的范围分配内容, 不再预填 1 GiB 零块。
     total = int(mem_size) if mem_size else DEFAULT_MEM_SIZE
     if total < 256:
         total = 256
-    mem = bytearray(total)
     oob = []
     for addr, data in res.data_writes:
         end = addr + len(data)
-        if addr < 0 or end > len(mem):
+        if addr < 0 or end > total:
             oob.append((addr, len(data)))
-            continue
-        mem[addr:end] = data
     if oob:
         raise AotError(
             f'数据段超出内存大小 {total} 字节: '
             + ', '.join(f'addr=0x{a:x} size={n}' for a, n in oob[:4])
             + '; 用 --mem-size 增大后重试')
+
+    segs: List[Tuple[int, bytes]] = []
+    if res.data_writes:
+        end_max = max(addr + len(data) for addr, data in res.data_writes)
+        buf = bytearray(end_max)
+        for addr, data in res.data_writes:
+            buf[addr:addr + len(data)] = data
+        segs.append((0, bytes(buf)))
+    seg_file = pack_seg_file(total, total - _STACK_SLOT, total // 2, segs)
 
     if logger:
         extra = [os.path.basename(p) for p in deps[1:]]
@@ -464,7 +490,7 @@ def build_program(program_file: str,
         out = os.path.splitext(program_file)[0] + exe_suffix(goos)
     if goos == 'windows' and not out.lower().endswith('.exe'):
         out += '.exe'          # README: Windows 目标自动补 .exe
-    return build(bytes(bytecode), bytes(mem), out, target=target,
+    return build(bytes(bytecode), seg_file, out, target=target,
                  keep_temp=keep_temp, logger=logger)
 
 

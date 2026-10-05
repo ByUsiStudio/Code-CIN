@@ -115,7 +115,7 @@ def build_go() -> str:
     for value in sorted(_KIND_GO_NAMES):
         lines.append(f'const {_KIND_GO_NAMES[value]} = {value}')
     lines.append('')
-    lines.append('// 操作码 (与 isa.py Opcode 完整一致; 原生 VM 仅实现子集, 见 vm.go opcodeSupported)')
+    lines.append('// 操作码 (与 isa.py Opcode 完整一致; 原生 VM 全量实现, 见 vm.go opcodeSupported)')
     for m in Opcode:
         lines.append(f'const op{m.name} = {m.value}')
     lines.append('')
@@ -136,6 +136,12 @@ def build_go() -> str:
     lines.append('// SYS 功能号 (与 isa.py Syscall 一致)')
     for s in Syscall:
         lines.append(f'const {sys_id(s.name)} = {s.value}')
+    lines.append('')
+    lines.append('// SYS 功能号名 (按下标索引, 用于错误信息; 与 isa.py Syscall 名一致)')
+    lines.append(f'var syscallNames = [{len(list(Syscall))}]string{{')
+    lines.extend(_aligned_map_entries(
+        [(f'{sys_id(s.name)}:', f'"{s.name}"') for s in Syscall]))
+    lines.append('}')
     lines.append('')
     return '\n'.join(lines)
 

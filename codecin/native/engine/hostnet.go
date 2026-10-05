@@ -75,3 +75,48 @@ func (vm *vmState) download(url, path string) uint64 {
 	}
 	return 0
 }
+
+// httpReq 发起任意方法的 HTTP 请求 (SYS 145)。
+// headers 为 '\n' 分隔的 "Key: Value" 行 (可空); body 可空。
+// 返回响应体 (新堆字符串; 失败为空串), 状态码记录到 lastHTTPSt 供
+// SYS 146 (http_code) 查询; 请求失败时状态码为 -1。
+func (vm *vmState) httpReq(method, url, headers, body string) uint64 {
+	vm.lastHTTPSt = -1
+	if method == "" {
+		method = http.MethodGet
+	}
+	var rd io.Reader
+	if body != "" {
+		rd = strings.NewReader(body)
+	}
+	req, err := http.NewRequest(method, url, rd)
+	if err != nil {
+		return vm.empty()
+	}
+	for _, line := range strings.Split(headers, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		k, v, ok := strings.Cut(line, ":")
+		if !ok {
+			continue
+		}
+		k = strings.TrimSpace(k)
+		v = strings.TrimSpace(v)
+		if k == "" || strings.EqualFold(k, "Host") {
+			continue
+		}
+		req.Header.Set(k, v)
+	}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return vm.empty()
+	}
+	vm.lastHTTPSt = int64(resp.StatusCode)
+	out, ok := readBody(resp)
+	if !ok {
+		return vm.empty()
+	}
+	return vm.hs(out)
+}

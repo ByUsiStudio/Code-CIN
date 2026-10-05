@@ -279,6 +279,30 @@ class Syscall(IntEnum):
     ALLOCFRAME = 137  # alloc_frame(x0=字节数): SP -= x0; 低于堆警戒线则中止
     TIMEUS = 138    # time_us() -> 单调微秒计时 (高精度基准测试用)
     TIMENS = 139    # time_ns() -> 单调纳秒计时 (time_us 的高分辨率版本)
+    # ---- 宿主能力: FFI 动态库调用 (dlopen/dlsym/call, 沙箱模式下拦截) ----
+    DLOPEN = 140    # dlopen(x0=路径) -> 库句柄 (失败为 -1/-1u64)
+    DLSYM = 141     # dlsym(x0=句柄, x1=符号名) -> 函数句柄 (失败为 -1)
+    FFICALL = 142   # ffi_call(x0=函数句柄, x1=参数缓冲, x2=参数个数) -> int64
+                    #   参数缓冲: 8 字节对齐的 int64 数组 (最多 8 个)
+    FFICALLF = 143  # ffi_callf(...): 同上, 返回值按 float64 位模式写入 X0
+    LIBCLOSE = 144  # dlclose(x0=库句柄) -> 0 成功 / -1 失败
+    # ---- 宿主能力: 网络扩展 (HTTP 任意方法 / TCP / UDP / DNS, Go 标准库) ----
+    HTTPREQ = 145   # http_req(x0=method, x1=url, X3=headers('\n'分隔"K: V"),
+                    #   X4=body) -> 响应体 (新堆字符串; 失败为空串; 状态码用 HTTPCODE)
+    HTTPCODE = 146  # http_code() -> 最近一次 http_req 的状态码 (无请求为 -1)
+    TCPDIAL = 147   # tcp_dial(x0=host, X2=port) -> 连接句柄 (失败为 -1)
+    TCPSEND = 148   # tcp_send(x0=句柄, x1=数据, X3=长度) -> 已发送字节 (失败为 -1)
+    TCPRECV = 149   # tcp_recv(x0=句柄, x1=缓冲, X3=最大字节) -> 实际字节数 (EOF 0)
+    TCPCLOSE = 150  # tcp_close(x0=句柄) -> 0 成功 / -1 失败
+    TCPLISTEN = 151 # tcp_listen(x0=port) -> 监听句柄 (失败为 -1)
+    TCPACCEPT = 152 # tcp_accept(x0=监听句柄) -> 连接句柄 (失败为 -1)
+    UDPOPEN = 153   # udp_open(x0=port, 0=系统分配) -> 套接字句柄 (失败为 -1)
+    UDPSENDTO = 154 # udp_sendto(x0=句柄, x1=host, X3=port, x2=数据, X5=长度)
+                    #   -> 已发送字节 (失败为 -1)
+    UDPRECVFROM = 155 # udp_recvfrom(x0=句柄, x1=缓冲, X3=最大字节, x2=来源信息缓冲)
+                    #   -> 实际字节数; 来源 "ip:port" 写入 x2 (0 为不关心)
+    UDPCLOSE = 156  # udp_close(x0=句柄) -> 0 成功 / -1 失败
+    DNSLOOKUP = 157 # dns_lookup(x0=域名) -> 首个 IP 地址 (新堆字符串; 失败为空串)
 
 
 class Cond:
@@ -332,8 +356,10 @@ class Constants:
     DEFAULT_MEM_SIZE = 1024 * 64
     MAGIC_NUMBER = b'CPUSA'
     CROM_MAGIC = b'CROM'
-    CROM_VERSION = 3
-    BIN_VERSION = 2
+    CROM_VERSION = 4        # 当前写出格式 (段式内存)
+    CROM_VERSION_V3 = 3     # 旧版 (整块镜像, 仅读取)
+    BIN_VERSION = 3         # 当前写出格式 (段式内存)
+    BIN_VERSION_V2 = 2      # 旧版 (整块镜像, 仅读取)
     MAX_INSTRUCTIONS = 100_000_000
     STACK_SLOT = 8       # 栈槽位大小 (qword)
 

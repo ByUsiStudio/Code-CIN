@@ -135,6 +135,29 @@ var hostBuiltins = map[string]hostBuiltin{
 	"arg_count": {SysARGC, 0, kInt},
 	"arg":       {SysARGV, 1, kString},
 	"input_str": {SysREADLINE, 0, kString},
+	// FFI 动态库调用 (dlopen/dlsym/call, 最多 8 个 int64 参数)
+	"dlopen":    {SysDLOPEN, 1, kInt},
+	"dlsym":     {SysDLSYM, 2, kInt},
+	"ffi_call":  {SysFFICALL, 3, kInt},
+	"ffi_callf": {SysFFICALLF, 3, kFloat},
+	"lib_close": {SysLIBCLOSE, 1, kInt},
+	// 网络: HTTP 请求扩展 (GET/POST 之外的自定义方法与头部)
+	"http_req":  {SysHTTPREQ, 4, kString},
+	"http_code": {SysHTTPCODE, 0, kInt},
+	// 网络: TCP 客户端与服务端
+	"tcp_dial":   {SysTCPDIAL, 2, kInt},
+	"tcp_send":   {SysTCPSEND, 3, kInt},
+	"tcp_recv":   {SysTCPRECV, 3, kInt},
+	"tcp_close":  {SysTCPCLOSE, 1, kInt},
+	"tcp_listen": {SysTCPLISTEN, 1, kInt},
+	"tcp_accept": {SysTCPACCEPT, 1, kInt},
+	// 网络: UDP 数据报
+	"udp_open":     {SysUDPOPEN, 1, kInt},
+	"udp_sendto":   {SysUDPSENDTO, 5, kInt},
+	"udp_recvfrom": {SysUDPRECVFROM, 4, kInt},
+	"udp_close":    {SysUDPCLOSE, 1, kInt},
+	// 网络: DNS 解析
+	"dns_lookup": {SysDNSLOOKUP, 1, kString},
 }
 
 func (c *compiler) emit(op string, args ...ir.Operand) {

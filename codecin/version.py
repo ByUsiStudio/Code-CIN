@@ -8,7 +8,7 @@
     生成的 Go 侧 `engine.BuildVersion`);
   * 纯函数 (`version_tuple` / `compare` / `is_version_string`) 与副作用分离,
     便于单测; 非法输入显式抛 `VersionError` 而不是静默算错;
-  * `build_info()` 采集运行环境快照 (解释器/平台/原生库/JIT/包路径), 并且
+  * `build_info()` 采集运行环境快照 (解释器/平台/原生库/包路径), 并且
     **保证绝不抛异常**: 原生库缺失、加载失败 (OSError)、ABI 不符或自报版本
     异常时, 一律优雅降级为 `native: False` / `native_version: None`。
 
@@ -41,7 +41,6 @@ __all__ = [
     'try_version_tuple',
     'version_info',
     'compare',
-    'jit_available',
     'build_info',
     'format_build_info',
     'build_info_json',
@@ -124,15 +123,6 @@ def compare(a: Any, b: Any) -> int:
     return (ta > tb) - (ta < tb)
 
 
-def jit_available() -> bool:
-    """Python JIT (`codecin/jit.py`) 是否可用 (纯 Python 实现, 导入成功即可用)。"""
-    try:
-        from . import jit
-    except Exception:                       # pragma: no cover - 导入失败
-        return False
-    return hasattr(jit, 'JITCompiler')
-
-
 def _safe(fn: Callable[[], Any], default: Any = None) -> Any:
     """执行 `fn` 并把**任何**异常折叠为 `default` (build_info 的不抛异常基石)。"""
     try:
@@ -167,10 +157,10 @@ def _native_details() -> Tuple[bool, Optional[str], Optional[str]]:
 
 
 def build_info() -> Dict[str, Any]:
-    """运行环境快照 (版本、解释器、平台、原生库、JIT、包路径)。
+    """运行环境快照 (版本、解释器、平台、原生库、包路径)。
 
     **本函数绝不抛异常** —— 它是发布/排障自检入口, 收集不到的字段填 `''`/`None`,
-    原生库不可用时 `native` 为 `False` (与运行时回退纯 Python 的行为一致)。
+    原生库不可用时 `native` 为 `False` (v5.9.0 起为 native-only, 需重建原生库)。
     返回值可直接 `json.dumps`。
     """
     version = _safe(current_version, '')
@@ -213,7 +203,6 @@ def build_info() -> Dict[str, Any]:
         'native_version': native_version,
         'native_path': native_path,
         'native_version_matches': native_matches,
-        'jit': bool(_safe(jit_available, False)),
         'package_path': os.path.dirname(os.path.abspath(__file__)),
         'executable': _safe(lambda: sys.executable, '') or '',
     }
@@ -240,13 +229,11 @@ def format_build_info(info: Optional[Dict[str, Any]] = None) -> str:
         if data.get('native_version'):
             native_text += f": {data['native_version']}"
     else:
-        native_text = '不可用 (回退纯 Python 解释执行)'
+        native_text = '不可用 (请运行 `python script/build_native.py` 重建)'
 
     matches = data.get('native_version_matches')
     matches_text = ('(未知)' if matches is None
                     else '一致' if matches else '不一致 (原生库可能过期)')
-
-    jit_text = '可用' if data.get('jit') else '不可用'
 
     lines = [
         f"Code CIN 构建信息 (build info) - {_human(data.get('version'), '?')}",
@@ -261,7 +248,6 @@ def format_build_info(info: Optional[Dict[str, Any]] = None) -> str:
         f"  native version   : {_human(data.get('native_version'))}",
         f"  native library   : {_human(data.get('native_path'))}",
         f"  native matches   : {matches_text}",
-        f"  jit              : {jit_text}",
         f"  package path     : {_human(data.get('package_path'))}",
         f"  executable       : {_human(data.get('executable'))}",
     ]

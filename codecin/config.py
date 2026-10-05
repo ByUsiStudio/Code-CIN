@@ -1,46 +1,32 @@
-"""运行配置与命令行参数解析。"""
+"""运行配置与命令行参数解析 (native-only)。"""
 
 from dataclasses import dataclass, field
 from typing import List, Optional
 
+# 默认程序内存: 1 GiB (Go 引擎 make([]byte, memSize), OS 懒提交;
+# Python 侧稀疏内存按 4 KiB 页按需分配)。只有真正写入的部分才占用
+# 物理内存, 因此默认值可以放心放大。
+DEFAULT_MEM_SIZE = 1 << 30
+
 
 @dataclass
 class Config:
-    mem_size: int = 64 * 1024
-    stack_size: int = 1024
-    step_mode: bool = False
-    debug_mode: bool = False
+    mem_size: int = DEFAULT_MEM_SIZE
     auto_save_crom: bool = False
-    execution_interval: float = 0.0
-    max_execution_time: float = 60.0
-    interactive_mode: bool = True
-    sandbox_mode: bool = False
     max_instructions: int = 100_000_000
-    allow_io: bool = True
+    sandbox_mode: bool = False
     log_level: str = 'INFO'
     log_file: Optional[str] = None
-    show_memory_bytes: int = 32
-    show_vector_regs: bool = True
-    show_timings: bool = True
     strict_mode: bool = False
     output_file: Optional[str] = None
     optimize: int = 0
-    enable_jit: bool = False
-    use_native: bool = True          # 允许使用 Go 原生库加速
-    cache_size: int = 64
-    cache_assoc: int = 4
-    profile: bool = False
     compress_crom: bool = True
     compile_to_bin: bool = False
     compile_only: bool = False
-    # A2: 确定性随机种子 (None = 随机)
+    # A2: 确定性随机种子 (None = 随机; 0 亦表示随机)
     seed: Optional[int] = None
-    # A1: CIN 运行时断言/边界检查开关
+    # A1: CIN 运行时断言/边界检查开关 (编译期注入)
     bounds_check: bool = False
-    # B1: MMU/分页 (默认 identity 映射; unmap/protect 需测试或宿主侧设置)
-    mmu: bool = False
-    # A4: 远程调试服务端口 (None = 不启动)
-    debug_server_port: Optional[int] = None
     # 传给 CIN 程序的命令行参数 (cli 里 `--` 之后的参数; 供 arg_count()/arg(i))
     program_args: List[str] = field(default_factory=list)
 
@@ -50,11 +36,11 @@ class Config:
     def validate(self) -> None:
         if self.mem_size < 256:
             self.mem_size = 256
+        if self.mem_size > (1 << 40):
+            self.mem_size = 1 << 40
         if self.max_instructions < 1:
             self.max_instructions = 1
         if self.optimize < 0:
             self.optimize = 0
         if self.optimize > 3:
             self.optimize = 3
-        if self.cache_size < 8:
-            self.cache_size = 8
