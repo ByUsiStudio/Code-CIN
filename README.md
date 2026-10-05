@@ -10,11 +10,11 @@
 
 ## 项目简介
 
-Code CIN 是一门简洁的类 C 高级语言及其跨平台运行时（VM）。它从 CIN 源码出发，编译为 UCPU 字节码后由 **Go 原生 VM**（默认）/ JIT / Python 解释器三路径执行，行为一致。除完整语言工具链外，还内置 **2D 绘图画布（导出 PNG）** 与 **联网音频播放** 等宿主能力。
+Code CIN 是一门简洁的类 C 高级语言及其跨平台运行时（VM）。它从 CIN 源码出发，编译为 UCPU 字节码后统一由 **Go 原生引擎**（`codecin-native` 动态库）单路径执行（v5.9.0 起纯 Python 解释器与 JIT 已移除）。除完整语言工具链外，还内置 **2D 绘图画布（导出 PNG）**、**联网音频播放**、**FFI 调用** 与 **完整网络能力（HTTP/TCP/UDP/DNS）** 等宿主能力。
 
-正在从 Python 优先**逐步切换为 Go 优先**：Go 是语言实现的核心（`codecin/native/` 下的 CIN 编译器、字节码 VM、CROM），**Go 侧不提供任何 CLI 入口**；Python 只作为唯一 CLI 外壳与回退路径。支持 CIN/PL/ASM 三语言、ARM64 与 RISC-V 指令集扩展、JIT 编译、缓存系统、性能分析与调试。
+**已完成 Go 优先（v5.9.0）**：Go 是语言实现的核心（`codecin/native/` 下的 CIN 编译器、字节码 VM、CROM），**Go 侧不提供任何 CLI 入口**；Python 只作为唯一 CLI 外壳。支持 CIN/PL/ASM 三语言、ARM64 与 RISC-V 指令集扩展、默认 1 GiB 稀疏分页内存、FFI 与完整网络系统调用、性能分析。
 
-模块化包结构（`codecin/`，Go 侧 `codecin/native/`），全线日志与错误输出基于 **rich**（彩色表格、面板、traceback），`--debug` 模式提供逐指令/寄存器/内存/栈/缓存的超详细追踪。
+模块化包结构（`codecin/`，Go 侧 `codecin/native/`），全线日志与错误输出基于 **rich**（彩色表格、面板、traceback），`--log-level DEBUG` 提供超详细追踪。
 
 ## 文档
 
@@ -32,8 +32,8 @@ npm run docs:build                         # 构建静态站点到 .vitepress/di
 ```
 
 站点内容划分: `guide/` (安装/快速开始/命令行/执行路径/架构/示例/FAQ)、`language/` (CIN 语言)、
-`asm/` (汇编与 ISA)、`stdlib/` (内置标准库参考)、`runtime/` (原生/JIT/格式/AOT)、
-`tools/` (调试器/远程调试/日志/性能/内存缓存)、`reference/` (ISA 编码表/寄存器与内存/Python API/更新日志)、
+`asm/` (汇编与 ISA)、`stdlib/` (内置标准库参考)、`runtime/` (原生/格式/AOT)、
+`tools/` (日志/性能)、`reference/` (ISA 编码表/寄存器与内存/Python API/更新日志)、
 `dev/` (项目结构/构建/测试/打包/扩展/贡献)。
 
 仓库的开发用文档**全部在独立仓库** [Code-CIN-Docs](https://github.com/ByUsiStudio/Code-CIN-Docs)
@@ -44,7 +44,6 @@ npm run docs:build                         # 构建静态站点到 .vitepress/di
 | [指令集参考 (ISA)](https://github.com/ByUsiStudio/Code-CIN-Docs/blob/main/ISA.md) | 由 `codecin/isa.py` 自动生成的逐条指令表 (唯一真源; 站点版为 `reference/isa.md`) |
 | [开发者编译文档 (BUILDING)](https://github.com/ByUsiStudio/Code-CIN-Docs/blob/main/BUILDING.md) | 环境搭建、Go 原生库编译、构建产物、打包、日志系统、扩展指南 |
 | [CIN 编程指南 (CIN_GUIDE)](https://github.com/ByUsiStudio/Code-CIN-Docs/blob/main/CIN_GUIDE.md) | CIN 高级语言完整语法：类型/函数/struct/数组/字符串/内建函数 |
-| [远程调试协议 (REMOTE_DEBUG)](https://github.com/ByUsiStudio/Code-CIN-Docs/blob/main/REMOTE_DEBUG.md) | `--debug-server` 换行文本协议：命令/响应/状态机/示例会话 |
 
 > 这些文件不在本仓库内: 需要时单独 `git clone` 上述文档仓库即可。
 
@@ -62,17 +61,17 @@ mindmap
       高级语言到机器码
       多语言支持
     性能
-      JIT编译
-      缓存系统
+      Go 原生引擎
+      稀疏分页内存
       快速指令分发
     可用性
       美观终端界面
-      交互式调试
+      沙箱模式
       实时状态显示
     可分析性
       性能分析
       指令统计
-      缓存监控
+      内存统计
     可扩展性
       模块化设计
       丰富指令集
@@ -116,14 +115,13 @@ graph LR
 |----------|------|------|
 | 指令集 | 112条 | Base + ARM64 + RISC-V + FP + Vector + SYS |
 | 寄存器 | 32+32 | 通用寄存器 + 向量寄存器 |
-| 内存系统 | 可配置 | 保护机制 + 分页支持 |
-| 缓存系统 | LRU | 可配置大小/关联度 |
-| JIT编译 | 动态 | 热点基本块编译优化 (与debug互斥) |
-| Go原生库 | c-shared | 整程序VM加速, 缺失时自动回退纯Python |
-| 日志系统 | rich | 彩色日志/表格/面板/traceback, --debug超详细追踪 |
-| 调试器 | 交互式 | 断点 + 单步 + 状态查看 |
-| 性能分析 | 指令级 | CPI + 缓存统计 + 热指令 |
-| CROM压缩 | zlib | 节省存储空间 (Go/Python双实现) |
+| 内存系统 | 1 GiB 默认 | 4 KiB 稀疏分页按需提交 + 保护机制 |
+| Go原生库 | c-shared (必需) | 整程序 VM 加速, 缺失时报 CPUSimulatorError 提示重建 |
+| FFI | SYS 140-144 | ffi_load/ffi_find/ffi_call/ffi_callf/lib_close, 标准 `lib/ffi.cin` |
+| 网络 | SYS 145-157 | HTTP/TCP/UDP/DNS, 标准 `lib/net.cin` |
+| 日志系统 | rich | 彩色日志/表格/面板/traceback, --log-level DEBUG 超详细追踪 |
+| 性能分析 | 指令级 | CPI + 内存统计 + 热指令 |
+| CROM压缩 | zlib | 段式格式 (v4), 只保存已分配页 (Go/Python双实现) |
 | AOT 静态编译 | 独立可执行 | 编译为 Windows/Linux/macOS 静态可执行文件, 不需 Python/Go/动态库 |
 
 ---
@@ -136,7 +134,6 @@ graph LR
 flowchart TB
     subgraph APP[应用层]
         CLI[CLI 界面]
-        DBG[交互式调试器]
         PRF[性能分析器]
     end
     
@@ -147,15 +144,12 @@ flowchart TB
     end
     
     subgraph EXEC[执行层]
-        CORE[CPU Core<br/>解释执行]
-        JIT[JIT 引擎<br/>基本块编译]
-        NATIVE[Go 原生库<br/>c-shared VM]
+        NATIVE[Go 原生引擎<br/>codecin-native 动态库<br/>ABI v2 codecin_run_v2]
     end
 
     subgraph HW[硬件层]
         REG[寄存器文件<br/>X0-X31 / V0-V31]
-        CACHE[缓存系统<br/>LRU淘汰]
-        MEM[内存系统<br/>保护机制]
+        MEM[内存系统<br/>1 GiB 稀疏分页<br/>4 KiB 按需提交]
     end
     
     subgraph ISA[指令集层]
@@ -176,8 +170,7 @@ flowchart TB
 flowchart LR
     SOURCE[源文件<br/>.cin/.pl/.asm] --> COMPILER[编译器/汇编器]
     COMPILER --> BINARY[二进制/CROM]
-    BINARY --> CACHE[缓存]
-    CACHE --> CPU[CPU核心]
+    BINARY --> CPU[CPU核心]
     CPU --> STATS[统计信息]
     CPU --> DISPLAY[显示输出]
     STATS --> DISPLAY
@@ -190,30 +183,23 @@ sequenceDiagram
     participant User
     participant CLI
     participant Compiler
-    participant CPU
+    participant Engine
     participant Memory
-    participant Cache
-    
+
     User->>CLI: 执行程序
     CLI->>Compiler: 编译/汇编
-    Compiler->>Memory: 加载代码
-    Memory->>Cache: 缓存预热
-    
+    Compiler->>Engine: 字节码 (codecin_run_v2)
+    Engine->>Memory: 按需提交 4 KiB 页
+
     loop 执行循环
-        Cache->>CPU: 取指
-        CPU->>CPU: 解码
-        CPU->>Cache: 读操作数
-        Cache->>Memory: 缓存未命中
-        Memory->>Cache: 加载数据
-        Cache->>CPU: 返回数据
-        CPU->>CPU: 执行
-        CPU->>Cache: 写结果
-        Cache->>Memory: 回写
-        CPU->>CLI: 状态更新
+        Engine->>Memory: 取指/读写操作数
+        Memory-->>Engine: 返回数据
+        Engine->>Engine: 解码执行
+        Engine->>CLI: 状态更新
         CLI->>User: 显示状态
     end
-    
-    CPU->>CLI: 执行完成
+
+    Engine->>CLI: 执行完成
     CLI->>User: 显示统计
 ```
 
@@ -303,58 +289,52 @@ FADD, FSUB, FMUL, FDIV, FCMP, FCVT, FABS, FNEG, LDRS, STRS, VADD, VSUB, VMUL, VD
 
 ## CROM文件格式
 
-### v3格式结构
+### v4段式结构 (v5.9.0)
+
+CROM v4 采用**段式内存镜像**: 只保存已分配的 4 KiB 页, 镜像体积与实际使用的内存成正比
+(默认 1 GiB 逻辑空间也只会写出真正写入过的页); 旧版 v3 整块镜像仍可读取 (仅兼容)。
+`.bin` 字节码格式同步升级为 **BIN v3** (同样段式, 旧 v2 仅兼容读取)。
 
 ```mermaid
 block-beta
     columns 5
-    
+
     block:header:5
         columns 5
         Magic["Magic<br/>'CROM'"] space1[" "]
-        Version["Version<br/>0x03"] space2[" "]
-        Size["Size<br/>Memory Size"] space3[" "]
-        Flags["Flags<br/>压缩标志"] space4[" "]
+        Version["Version<br/>0x04"] space2[" "]
+        Flags["Flags<br/>压缩标志"] space3[" "]
+        SegCount["SegCount<br/>段数"] space4[" "]
         Checksum["Checksum<br/>CRC32"] space5[" "]
         Reserved["Reserved<br/>0x0000"] space6[" "]
     end
-    
-    block:data:5
+
+    block:segments:5
         columns 5
-        Data["Data<br/>压缩/未压缩"]
+        Seg["段表 (压缩/未压缩)<br/>每段: addr u64 + len u64 + data<br/>对应 4 KiB 已分配页"]
     end
-    
-    header --> data
+
+    header --> segments
 ```
 
 | 偏移 | 大小 | 字段 | 说明 |
 |------|------|------|------|
 | 0x00 | 4 | Magic | 'CROM' 魔数 |
-| 0x04 | 1 | Version | 0x03 版本号 |
-| 0x05 | 4 | Memory Size | 内存大小 |
-| 0x09 | 1 | Flags | bit0: 压缩标志 |
-| 0x0A | 4 | Checksum | CRC32校验和 |
+| 0x04 | 1 | Version | 0x04 版本号 |
+| 0x05 | 1 | Flags | bit0: 压缩标志 |
+| 0x06 | 4 | Seg Count | 段数 (已分配页数) |
+| 0x0A | 4 | Checksum | CRC32校验和 (对段表整体) |
 | 0x0E | 2 | Reserved | 保留字段 |
-| 0x10 | N | Data | 压缩/未压缩数据 |
+| 0x10 | N | Segments | 段表: 每段 addr u64 + len u64 + data |
 
 ### 版本对比
 
-```mermaid
-xychart-beta
-    title "CROM 版本特性对比"
-    x-axis ["v1", "v2", "v3"]
-    y-axis "特性支持" 0 --> 100
-    line [40, 60, 100]
-    line [30, 50, 95]
-    line [0, 0, 80]
-```
-
-| 特性 | v1 | v2 | v3 |
-|------|----|----|-----|
-| 压缩支持 | 否 | 否 | 是 |
-| 校验和 | 否 | 否 | 是 |
-| 元数据 | 否 | 是 | 是 |
-| 兼容性 | - | 是 | 是 |
+| 特性 | v3 (旧, 仅读取) | v4 (当前) |
+|------|------|------|
+| 内存布局 | 整块镜像 | 段式 (只存已分配 4 KiB 页) |
+| 压缩支持 | 是 | 是 |
+| 校验和 | 是 | 是 |
+| 1 GiB 稀疏内存 | 镜像体积随内存上限膨胀 | 镜像体积与实际使用成正比 |
 
 ---
 
@@ -404,8 +384,9 @@ pip install -U codecin       # 升级到最新版 (不要锁定版本号)
 codecin --version
 ```
 
-> 安装时会用**本机的 Go 工具链现场编译原生加速库** (没有 Go 也能装, 只是回退
-> 纯 Python 解释执行; 用 `CODECIN_SKIP_NATIVE=1 pip install codecin` 可显式跳过)。
+> 安装时会用**本机的 Go 工具链现场编译原生加速库** (`codecin-native` 动态库)。
+> 运行时**必须有该动态库**: 缺失时报 `CPUSimulatorError` 并提示重建, **没有解释器回退路径**
+> (用 `CODECIN_SKIP_NATIVE=1 pip install codecin` 可显式跳过安装期编译, 但运行前仍需自行构建)。
 > 不想本地编译的话, 也可以直接从
 > [Release](https://github.com/ByUsiStudio/Code-CIN/releases) 下载对应平台/架构的
 > 预编译原生库放进包目录, 详见 [构建文档 · 6.3](docs/BUILDING.md#63-预编译原生库资产-x64-与-arm64)。
@@ -418,14 +399,14 @@ codecin --version
    cd code-cin
    ```
 
-2. 编译 Go 原生库 (可选, 缺省时自动回退纯 Python 解释执行):
+2. 编译 Go 原生库 (必需, 运行时缺失会报 CPUSimulatorError):
    ```
-   cd codecin/native && ./build.sh        # Windows: .\build.ps1
+   cd codecin/native && .\build.ps1        # Linux/Termux/macOS: ./build.sh
    ```
 
 3. 运行:
    ```
-   codecin basic.cin                          # 唯一 CLI 入口 (自动用 Go 原生库)
+   codecin basic.cin                          # 唯一 CLI 入口 (由 Go 原生引擎执行)
    codecin basic.cin                                # 安装后等价的 console script
    codecin --help
    ```
@@ -436,7 +417,7 @@ codecin --version
 ### 开发与测试
 
 ```bash
-python -m pytest                            # 指令黄金 / 三路径一致性 / 断点回归 / 内存保护 / CLI
+python -m pytest                            # 指令黄金 / 内存保护 / 持久化格式 / CLI 回归
 python script/gen_native_isa.py --check     # Go 原生常量与指令集同步
 ruff check codecin cpu.py script tests
 ```
@@ -449,14 +430,10 @@ ruff check codecin cpu.py script tests
 
 ### 执行路径
 
-| 路径 | 启用方式 | 特点 |
-|------|----------|------|
-| Go 原生 | 默认优先 (需编译库) | Python 编译 + Go VM 整程序一次执行, 速度最快 |
-| JIT | `--jit` | 基本块动态编译, 与 `--debug` 互斥 |
-| 解释执行 | `--no-native` 或回退 | 支持全部 debug/step 功能 |
-
-> 三条路径对同一程序必须给出相同结果, 由 `script/check_paths.py` 与
-> `tests/test_three_paths.py` 覆盖。
+v5.9.0 起**只有一条执行路径**: Python 完成 CIN/PL/ASM 编译后, 通过 cgo ABI v2
+(`codecin_run_v2`) 把整程序交给 `codecin-native` 动态库一次执行完毕。
+动态库缺失时报 `CPUSimulatorError` 并提示重建原生库, **没有解释器/JIT 回退路径**
+(纯 Python 解释器与 JIT 已在 v5.9.0 移除)。
 
 ### 编译成独立可执行文件 (AOT)
 
@@ -493,126 +470,31 @@ codecin program.cin --build-exe app-mac   --build-target darwin/arm64
 - `codecin program.asm` - 运行ASM程序
 - `codecin program.bin` - 运行字节码
 
-**执行路径**
-- `--no-native` - 禁用 Go 原生库, 强制纯 Python
-- `--jit` - 启用 Python JIT (基本块动态编译)
+**信息查询**
+- `--version/-V` - 显示版本号并退出
+- `--build-info` - 显示构建/运行环境信息 (版本、解释器、平台、原生库; 与 `--json` 合用输出机器可读 JSON)
+- `--libs` - 列出内置标准库并标注执行路径要求
 
-**日志与调试**
-- `--debug` - 超详细 rich 调试 (逐指令/寄存器/内存/栈/缓存)
-- `--step` - 交互式单步调试
-- `--debug-server <port>` - 启动 TCP 远程调试服务 (驱动式: step/continue/break/regs/mem/history)
-- `--log-level DEBUG|INFO|WARNING|ERROR` - 日志级别
+**日志与运行时行为**
+- `--log-level DEBUG|INFO|WARNING|ERROR|CRITICAL` - 日志级别 (默认 INFO)
 - `--log-file <file>` - 日志输出到文件
-
-**性能与行为**
-- `--profile` - 性能统计
-- `--cache-size 128` - 配置缓存大小
-- `--mem-size <bytes>` - 内存大小
+- `--sandbox` - 沙箱模式 (在 Go 引擎侧拦截全部宿主能力系统调用)
+- `--mem-size <bytes>` - 内存大小 (默认 1 GiB, 稀疏分页, 只占实际写入的物理内存)
 - `--max-instructions <n>` - 指令数上限
 - `--seed <n>` - 随机种子 (确定性执行)
-- `--bounds-check` - CIN 数组越界运行时检查
-- `--mmu` - 启用 MMU 分页 (identity 页表, 未映射页缺页错误)
+- `--bounds-check` - CIN 数组越界运行时检查 (编译期注入)
 
 **编译选项**
 - `--compile` / `--compile-only` - 编译为 .bin 字节码
-- `--disasm` - 反汇编 .bin/UCBC 为文本清单后退出
-- `-o, --output <file>` - 输出文件名
-- `--no-io` - 禁止宿主 I/O
+- `--optimize 0-3` - 优化级别 (默认 0)
+- `--disasm` - 反汇编 .bin 字节码为文本清单后退出
+- `-o, --output <file>` - 输出文件名 (.crom/.bin)
 - `--strict` - 严格汇编模式
 
 **CROM选项**
-- `--save` - 保存CROM
+- `--save` - 执行后保存 .crom 内存镜像 (v4 段式)
 - `--no-compress` - 禁用压缩
 - `--crom <file>` - 加载指定 CROM 镜像
-
----
-
-## 调试器
-
-### 调试会话流程
-
-```mermaid
-stateDiagram-v2
-    [*] --> 运行
-    
-    运行 --> 断点命中: 执行到断点
-    断点命中 --> 调试命令: 用户交互
-    
-    调试命令 --> 单步: step
-    调试命令 --> 继续: continue
-    调试命令 --> 查看状态: print
-    调试命令 --> 修改断点: break/delete
-    调试命令 --> 退出: quit
-    
-    单步 --> 调试命令
-    继续 --> 运行
-    查看状态 --> 调试命令
-    修改断点 --> 调试命令
-    
-    退出 --> [*]
-    运行 --> [*]: 程序完成
-```
-
-### 调试命令树
-
-```mermaid
-flowchart TD
-    DBG[调试命令]
-    
-    DBG --> CONTINUE[continue / c<br/>继续执行]
-    DBG --> STEP[step / s<br/>单步执行]
-    DBG --> BREAK[break / b<br/>设置断点]
-    DBG --> DELETE[delete / d<br/>删除断点]
-    DBG --> LIST[list / l<br/>列出断点]
-    DBG --> PRINT[print / p<br/>打印信息]
-    DBG --> QUIT[quit / q<br/>退出]
-    
-    PRINT --> REGS[regs<br/>所有寄存器]
-    PRINT --> REG[X0-X31<br/>单个寄存器]
-    PRINT --> MEM["mem [addr]<br/>内存内容"]
-    PRINT --> CACHE[cache<br/>缓存统计]
-```
-
-### 交互式调试命令
-
-| 命令 | 缩写 | 说明 |
-|------|------|------|
-| continue | c | 继续执行 |
-| step | s | 单步执行 |
-| break <addr> | b | 设置断点 |
-| delete <addr> | d | 删除断点 |
-| list | l | 列出断点 |
-| print <target> | p | 打印信息 |
-| quit | q | 退出 |
-
-### 打印目标
-
-- `X0-X31` - 寄存器值
-- `regs` - 所有寄存器
-- `mem [addr]` - 内存内容
-- `cache` - 缓存统计
-
-### 调试会话示例
-
-```
-dbg> break 0x10
-Breakpoint set at 0x10
-
-dbg> continue
-Breakpoint hit at PC=0x10
-
-dbg> p X0
-X0 = 42
-
-dbg> p regs
-[寄存器显示]
-
-dbg> step
-Executing: ADD X2, X0, X1
-
-dbg> continue
-Program completed
-```
 
 ---
 
@@ -625,26 +507,26 @@ Program completed
 | 级别 | 内容 |
 |------|------|
 | `ERROR` | 仅错误面板 |
-| `WARNING` | + 回退/降级告警 (如原生库缺失) |
+| `WARNING` | + 警告与兼容降级提示 |
 | `INFO` (默认) | + 编译汇总、执行起止、统计表 |
 | `DEBUG` | **超详细**: 全部埋点 + 逐指令追踪 |
 
-### debug 超详细输出 (`--debug`)
+### 超详细输出 (`--log-level DEBUG`)
 
-- **CPU 初始化 dump**: 内存大小、缓存拓扑、SP 初值、堆基址、路径选择
+- **CPU 初始化 dump**: 内存大小、SP 初值、堆基址
 - **逐指令追踪**: 每条指令输出 PC、全局序号、操作数值、SP 与执行后 NZCV 标志
   ```
   PC=0x0004 #00000002 ADD X1=0x0(0) X2=0x1(1)  SP=0xfff8
     => pc=0x0005 N=0 Z=0 C=0 V=0
   ```
 - **内存读写追踪**: `MEM WR @0x000c w=1 value=0x0`, 覆盖全部加载/存储指令
-- **栈操作 / 缓存命中缺失 / SYS 系统调用** (功能号+参数)
-- **编译埋点**: CIN tokenize/parse 统计、JIT 块源码 dump、原生库调用参数
+- **SYS 系统调用** (功能号+参数, 含 FFI/网络调用)
+- **编译埋点**: CIN tokenize/parse 统计、原生库调用参数
 
 ### 错误处理
 
 - 加载/汇编/编译/运行错误统一红色 rich 面板, 带 `文件:行号` 定位
-- 未预期异常输出 rich 彩色完整 traceback (`--debug` 下加载/运行错误也附带)
+- 未预期异常输出 rich 彩色完整 traceback
 
 ```
 ┌──────────────────────── Load Error ────────────────────────┐
@@ -669,14 +551,14 @@ flowchart LR
     subgraph MEASURE[测量]
         M1[指令计数]
         M2[周期计数]
-        M3[缓存统计]
-        M4[JIT统计]
+        M3[内存统计]
+        M4[热指令统计]
     end
-    
+
     subgraph CALC[计算]
         C1[CPI = 周期/指令]
         C2[IPC = 指令/周期]
-        C3[命中率]
+        C3[读写统计]
         C4[执行时间]
     end
     
@@ -713,17 +595,6 @@ pie title 指令周期分布示例
     "其他 (17%)" : 17
 ```
 
-### 性能对比
-
-```mermaid
-xychart-beta
-    title "执行模式性能对比"
-    x-axis ["解释执行", "JIT编译", "Go 原生"]
-    y-axis "相对性能" 0 --> 10
-    bar [1, 4, 8]
-    line [1, 4.2, 7.8]
-```
-
 ### 统计指标
 
 **执行统计**
@@ -736,17 +607,6 @@ xychart-beta
 **内存统计**
 - 内存读取次数
 - 内存写入次数
-
-**缓存统计**
-- 缓存命中次数
-- 缓存缺失次数
-- 缓存命中率
-
-**JIT统计**
-- JIT调用次数
-- JIT缓存命中次数
-- JIT命中率
-- JIT编译块数
 
 ### 指令周期表
 
@@ -765,6 +625,31 @@ xychart-beta
 
 ---
 
+## FFI 与网络 (v5.9.0)
+
+### 稀疏分页内存
+
+运行时内存默认 **1 GiB** 逻辑空间, 按 **4 KiB 页稀疏分页、按需提交**: 只有真正写入过的
+页才占用物理内存, 大数组开箱即用, 一般不再需要 `--mem-size` (仅在需要调整上限时使用)。
+持久化格式 (CROM v4 / BIN v3) 同样只保存已分配的 4 KiB 页。
+
+### FFI 调用 (SYS 140-144)
+
+新增系统调用 `ffi_load` / `ffi_find` / `ffi_call` / `ffi_callf` / `lib_close`:
+加载宿主平台动态库 (Windows `LoadLibrary` / Unix `dlopen`), 按名字查找符号并调用。
+标准库 [lib/ffi.cin](codecin/lib/ffi.cin) 在此之上封装出 `ffi_call0..8` / `ffi_callf1..4`
+等便捷函数。
+
+### 网络系统调用 (SYS 145-157)
+
+新增完整网络能力: `http_req` / `http_code` (既有 `http_get` / `http_post`)、
+TCP `tcp_dial` / `tcp_send` / `tcp_recv` / `tcp_close` / `tcp_listen` / `tcp_accept`、
+UDP `udp_open` / `udp_sendto` / `udp_recvfrom` / `udp_close`、`dns_lookup`。
+标准库 [lib/net.cin](codecin/lib/net.cin) 提供 `tcp_send_str` / `tcp_recv_line` /
+`udp_send_str` / `http_ok` / `dns_resolve` 等高层封装。
+
+---
+
 ## 示例程序
 
 > CIN 语言完整语法见 [CIN 编程指南](docs/CIN_GUIDE.md)。
@@ -773,8 +658,9 @@ xychart-beta
 > `examples/literals_types.cin` (char/short/long/unsigned、0x/0b/0o 与字符字面量、`++/--`、转换内建函数);
 > 汇编器 `.equ`/表达式示例: `examples/asm_constants.asm`。
 >
-> **官方标准库 (`codecin/lib/`)**: `math` `str` `array` `sort` `conv` `vec` `rand` `json` `time` `io` `gui` `termux` `test`
-> `bits` `stat` `hash` `validate` `matrix` `queue` (共 19 个)
+> **官方标准库 (`codecin/lib/`)**: `math` `str` `array` `sort` `conv` `vec` `rand` `json` `time` `io` `gui` `key` `termux` `test`
+> `bits` `stat` `hash` `validate` `matrix` `queue` `set` `heap` `tree` `graph` `unionfind` `bigint` `bitset` `dp` `combin` `frac`
+> `csv` `fmt` `text` `token` `codec` `path` `cstd` `cppstd` `gostd` `ffi` `net` (共 41 个)
 > —— 示例 `examples/modules_demo.cin`、`examples/stdlib_demo.cin` (断言全部通过)。详见
 > [CIN 编程指南 · 官方标准库清单](docs/CIN_GUIDE.md#官方标准库清单-lib)。
 >
@@ -788,6 +674,9 @@ xychart-beta
 > file_exists/file_delete/file_size/mkdir/dir_list`、`exec/exec_output`、`getenv/setenv`、
 > `os_name/hostname/username/cwd/home_dir` (Windows/Linux/macOS); Termux API `termux_notify/toast/
 > clipboard_get/clipboard_set/battery/vibrate/tts/location/wifi_info/dialog/sms_send`。
+>
+> **FFI 与网络 (v5.9.0)**: 标准库 `lib/ffi.cin` (调用宿主动态库) 与 `lib/net.cin`
+> (HTTP/TCP/UDP/DNS), 详见下文「FFI 与网络」章节。
 
 ### 程序执行流程图
 
@@ -932,11 +821,10 @@ graph TD
 |------|------|------|
 | 语言 | Python 3.8+ | 核心实现语言 (模块化包 `codecin/`) |
 | UI/日志 | Rich | 彩色输出、表格、面板、traceback |
-| 原生加速 | Go 1.26+ (c-shared) | 原生 VM + CROM, 可选, 自动回退 |
+| 原生引擎 | Go 1.26+ (c-shared) | 原生 VM + CROM, 必需 (缺失时报 CPUSimulatorError, 无回退) |
 | 压缩 | zlib | CROM压缩 |
 | 序列化 | struct | 二进制格式 |
 | FFI | ctypes | 加载 Go 共享库 |
-| 调试 | 原生Python | 交互式调试 |
 
 > 模块结构、原生库编译与扩展指南见 [开发者编译文档](docs/BUILDING.md)。
 

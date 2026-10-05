@@ -169,8 +169,9 @@ def native_runtime_hint() -> str:
         "解决方案 (任选其一):\n"
         "  1. 安装 Go 工具链后重装本包 (安装时现场编译原生库):\n"
         "       pip install --force-reinstall codecin\n"
-        f"  2. 从 Release 下载预编译原生库 (平台-架构 后缀), 放到:\n"
+        "  2. 从 Release 下载预编译原生库 (平台-架构 后缀), 放到:\n"
         f"       {pkg_dir}\n"
         f"       {RELEASES_URL}\n"
-        "  3. 运行示例时去掉 --no-native (若为显式禁用)。"
+        "  3. 本地手动构建: 运行 codecin/native/build.ps1 (Windows)\n"
+        "     或 codecin/native/build.sh (Linux/Termux/macOS)。"
     )
