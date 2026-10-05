@@ -15,10 +15,11 @@ import (
 #cgo linux LDFLAGS: -ldl
 #include <dlfcn.h>
 #include <stdlib.h>
+#include <string.h>
 typedef long long (*ffi_fn8)(long long, long long, long long, long long,
                              long long, long long, long long, long long);
-typedef double (*ffi_fnf8)(long long, long long, long long, long long,
-                           long long, long long, long long, long long);
+typedef double (*ffi_fnf8)(double, double, double, double,
+                           double, double, double, double);
 static void* ffi_open(const char* path) {
     return dlopen(path, RTLD_NOW | RTLD_LOCAL);
 }
@@ -29,8 +30,13 @@ static void ffi_close(void* h) { dlclose(h); }
 static long long ffi_call8(void* f, long long* a) {
     return ((ffi_fn8)f)(a[0], a[1], a[2], a[3], a[4], a[5], a[6], a[7]);
 }
+// 浮点调用: a[] 存 IEEE754 位模式, memcpy 到 double 数组保持位模式,
+// 按 double 传参 —— SysV ABI 下浮点参数走 XMM0-XMM7 (整型声明走
+// RDI/RSI/..., 目标函数从 XMM 读到垃圾)。
 static double ffi_callf8(void* f, long long* a) {
-    return ((ffi_fnf8)f)(a[0], a[1], a[2], a[3], a[4], a[5], a[6], a[7]);
+    double d[8];
+    memcpy(d, a, sizeof d);
+    return ((ffi_fnf8)f)(d[0], d[1], d[2], d[3], d[4], d[5], d[6], d[7]);
 }
 */
 import "C"

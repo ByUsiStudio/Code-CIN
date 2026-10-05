@@ -96,7 +96,7 @@ function tcp_recv_line(int fd, int[] buf, int max) -> string {
         s = substr(s, 0, pos)
     }
     int n = strlen(s)
-    if (n > 0 && substr(s, n - 1, 1) == "\r") {
+    if (n > 0 && strcmp(substr(s, n - 1, 1), "\r") == 0) {
         s = substr(s, 0, n - 1)
     }
     return s

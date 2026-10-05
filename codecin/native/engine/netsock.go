@@ -242,17 +242,10 @@ func (vm *vmState) udpSendTo(fd uint64, host string, port int, buf uint64, n int
 	if conn == nil {
 		return failUint()
 	}
-	// host 兼容 IP 字面量与主机名 (主机名走系统解析, 取第一个地址)
-	ip := net.ParseIP(host)
+	// host 兼容 IP 字面量与主机名 (主机名走系统解析, 偏好 IPv4)
+	ip := resolveHost(host)
 	if ip == nil {
-		addrs, err := net.LookupHost(host)
-		if err != nil || len(addrs) == 0 {
-			return failUint()
-		}
-		ip = net.ParseIP(addrs[0])
-		if ip == nil {
-			return failUint()
-		}
+		return failUint()
 	}
 	if n == 0 {
 		k, err := conn.WriteToUDP(nil, &net.UDPAddr{IP: ip, Port: port})
@@ -315,14 +308,14 @@ func (vm *vmState) udpClose(fd uint64) uint64 {
 	return 0
 }
 
-// dnsLookup 解析主机名 -> 第一个 IPv4/IPv6 地址 (新堆字符串; 失败空串)。
+// dnsLookup 解析主机名 -> IP 字符串 (偏好 IPv4; 新堆字符串; 失败空串)。
 func (vm *vmState) dnsLookup(host string) uint64 {
 	if host == "" {
 		return vm.empty()
 	}
-	addrs, err := net.LookupHost(host)
-	if err != nil || len(addrs) == 0 {
+	ip := resolveHost(host)
+	if ip == nil {
 		return vm.empty()
 	}
-	return vm.hs(addrs[0])
+	return vm.hs(ip.String())
 }
