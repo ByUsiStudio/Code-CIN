@@ -1531,7 +1531,7 @@ func (vm *vmState) doSyscall(id uint64) string {
 			}
 			return fmt.Sprintf("Stack overflow: frame needs %d bytes, stack "+
 				"headroom only %d bytes (SP 0x%x, guard 0x%x, memory %d "+
-				"bytes). Try --mem-size (default 65536) or smaller local "+
+				"bytes). Try --mem-size (default 1073741824) or smaller local "+
 				"arrays", fb, avail, vm.sp, guard, len(vm.mem))
 		}
 		vm.sp = uint64(newSP)
