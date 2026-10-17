@@ -519,14 +519,14 @@ extern function bump()
 | `darwin/amd64` `darwin/arm64` | Mach-O, 静态 |
 
 常见选项: `--build-target OS/ARCH`、`--build-backend auto|native|vm`、
-`--optimize 0-3`、`--no-build-cache`、`--build-keep-temp` (保留 `go build`
-临时目录排错)。AOT 默认启用增量缓存 (源/依赖/工具链指纹命中时直接复用
-产物), 缓存目录可用 `CODECIN_AOT_CACHE` 覆盖。
+`--optimize 0-3`、`--no-build-cache`、`--build-debug`、`--build-keep-temp`
+(保留 `go build` 临时目录排错)。AOT 默认启用增量缓存 (源/依赖/工具链指纹命中时
+直接复用产物), 缓存目录可用 `CODECIN_AOT_CACHE` 覆盖。
 `--optimize` 作用于 CIN IR (窥孔/常量折叠/不可达代码删除); native 后端最终
 机器码仍由 Go 编译器生成, 其自身优化由 Go 工具链决定。
 `import "math.cin"`（裸名字 = codecin 内置标准库 `codecin/lib/`）在**编译期**展开, 因此产物自带用到的标准库, 运行时不需要任何 `.cin` 文件。
 正常结束退出码 0, 运行期错误打印 stderr 并以 1 退出。
-详见 [开发者编译文档 · AOT](docs/BUILDING.md#aot-编译独立可执行文件)。
+详见 [开发者编译文档 · AOT](docs/BUILDING.md)。
 
 ### 命令行选项
 
@@ -565,7 +565,7 @@ extern function bump()
 - `--build-debug` - 保留符号表/DWARF (不传 `-s -w`)，便于调试
 - `--build-keep-temp` - 保留 Go 构建临时目录
 - `--emit-object` - 把 CIN/ASM/PL 编译为可重定位 `.co` 对象
-- `--link OBJ` - 链接一个或多个 `.co`/`.colib` 为可执行文件 (可重复)
+- `--link INPUT` - 链接 `.cin/.asm/.pl/.co/.colib` 为可执行文件 (可重复)
 - `--emit-archive` - 把 `--link` 输入打包为 `.colib` 静态库归档
 - `--gc-sections` - 链接时删除从入口不可达的函数/代码段
 
