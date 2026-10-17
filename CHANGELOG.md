@@ -5,6 +5,56 @@
 
 ---
 
+## [6.0.0] - 2026-10-17
+
+### 新增 (Added)
+
+- **恢复 `--debug` 调试模式**（native-only 架构下的等价能力）：强制 `DEBUG`
+  日志（优先于 `--log-level`）、执行结束输出寄存器/向量现场与执行统计表、
+  未预期异常打印 rich 完整堆栈；`Config.debug_mode` 配置项同步回归。
+- **native AOT 后端（第一阶段）**：新增 `--build-backend auto|native|vm`，默认
+  `auto` 在指令数 ≤ 20000 时走 `native`，把指令流直接展开为 Go 语句，核心
+  整数/控制流/内存/SYS 指令不再经过 UCBC 解码与 opcode dispatch，由 Go 编译器
+  产出 x86-64/ARM64 机器码；大程序自动回退 VM，避免大量指令让 `go build`
+  极慢。ARM64/RISC-V 扩展整数、FP 与 Vector 指令也已直接降级；仅动态控制流/
+  无法静态求值的操作数保留受控单指令回退。
+- **大程序 native 基本块拆分**：超过 800 条指令自动按跳转目标/返回点切分
+  为多个 Go 函数，避免单个函数过大导致 `go build` 极慢；`basic.cin`
+  （约 4500 条指令）现在可直接走 native 并产出与 VM 一致的输出。
+- **AOT 支持 ASM/PL/BIN 输入**：`--build-exe` 不再只接受 `.cin`；汇编器/
+  `crom.load_bin` 装载的指令流同样可走 native 或 VM 后端并生成静态可执行文件。
+- **AOT 增量构建缓存**：按源文件/import 闭包、目标平台、后端、优化级别、
+  内存/步数以及 Python/Go 工具链指纹缓存产物；命中时跳过 `go build`，
+  `--no-build-cache` 可禁用，`CODECIN_AOT_CACHE` 可指定缓存目录。
+  对象/归档链接同样按输入对象内容与链接选项缓存。
+- **AOT 调试构建**：`--build-debug` 跳过 `-s -w`，保留 Go 符号表/DWARF，
+  产物仍为独立静态可执行文件。
+- **独立编译/链接 (CIN/ASM/PL)**：`--emit-object` 生成可重定位 `.co` 对象
+  （保留未解析标签、代码/数据符号、内存段），`--link` 合并多个对象、
+  分配代码/数据基址并解析跨对象符号；链接结果可直接走 native/VM AOT，
+  并支持链接期 `--optimize 0-3`。重定位覆盖 `NAME±N` 与
+  `DW/DD/DQ label` 数据指针。CIN 新增 `extern function` / `extern` 全局
+  声明：无 `main` 的 CIN 文件可作为函数库对象参与链接，库内字符串/标量
+  全局/struct 指针槽会按对象数据基址重定位。
+- **`.colib` 静态库归档**：`--emit-archive` 把多个对象打包，`--link`
+  按未定义符号只拉取需要的归档成员 (C 风格静态库语义)。
+- **源文件直接链接**：`--link` 可直接接受 `.cin/.asm/.pl`，即时编译为
+  对象后链接，省去显式 `--emit-object` 步骤。
+- **链接期代码段 GC**：`--gc-sections` 从入口做保守控制流可达性分析，
+  删除未调用的函数/桩；遇到动态 CALL/JMP 或代码指针时自动放弃以避免误删。
+- **真实可用的 `--optimize 0-3`**：新增 IR 优化器（窥孔、常量折叠、不可达
+  代码删除），同时作用于 VM 执行路径、`--compile` 与 native AOT；
+  标签/入口在删除指令后自动重映射。
+- 新增 `NativeRuntime`（Go 引擎侧）与 `native_codegen`/`optimizer`（Python
+  侧），并补充 native AOT、优化器、交叉编译测试。
+
+### 修复 (Fixed)
+
+- native 后端 `ASR rd, rn, shift` 三操作数形式被误当成两操作数 Base 形式，
+  导致算术右移与复合赋值结果错误。
+
+---
+
 ## [5.9.0] - 2026-10-05
 
 一次「单引擎 + 大内存 + 系统能力」的架构发布：**纯 Python 解释器与 JIT

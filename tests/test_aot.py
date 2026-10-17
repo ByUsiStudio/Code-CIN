@@ -167,6 +167,21 @@ def test_cross_compile_targets(workdir, target):
         assert head[:4] in (b'\xcf\xfa\xed\xfe', b'\xca\xfe\xba\xbe')
 
 @needs_go
+def test_native_cross_compile_arm64_and_x86_64(workdir):
+    """native 后端可由 Go 编译器产出 x86-64/ARM64 机器码。"""
+    src = _write(workdir, 'cross.cin', 'function main() -> int { return 0 }\n')
+    expected = {'linux/amd64': 62, 'linux/arm64': 183}  # ELF e_machine
+    for target, machine in expected.items():
+        out = os.path.join(workdir, 'cross-' + target.replace('/', '-'))
+        built = aot.build_program(src, out=out, target=target,
+                                  backend='native', use_cache=False)
+        with open(built, 'rb') as f:
+            head = f.read(64)
+        assert head[:4] == b'\x7fELF'
+        assert struct.unpack_from('<H', head, 18)[0] == machine
+
+
+@needs_go
 def test_cross_compile_linux_amd64_is_static(workdir):
     """关键声明: Linux 产物静态链接 (无 PT_INTERP, 不依赖 glibc)。
 
@@ -180,6 +195,82 @@ def test_cross_compile_linux_amd64_is_static(workdir):
     with open(built, 'rb') as f:
         assert f.read(4) == b'\x7fELF'
     assert _elf_is_static(built)
+
+@needs_go
+def test_build_asm_native(workdir):
+    """AOT 支持 ASM 输入 (native 后端), 并能直接运行。"""
+    src = os.path.join(ROOT, 'test_asm.asm')
+    out = os.path.join(workdir, 'asm_aot' + aot.exe_suffix(
+        aot.parse_target(aot.host_target())[0]))
+    built = aot.build_program(src, out=out, backend='native')
+    r = _run(built)
+    assert r.returncode == 0, r.stderr
+    assert 'Sum 1..10 = 55' in r.stdout
+    assert '155' in r.stdout
+
+
+@needs_go
+def test_build_bin_native(workdir):
+    """AOT 支持已编译的 .bin 输入。"""
+    from codecin import cli
+    src = _write(workdir, 'bin_src.cin',
+                 'function main() -> int { println("bin-ok") return 0 }')
+    binp = os.path.join(workdir, 'bin_src.bin')
+    assert cli.main([src, '--compile-only', '-o', binp,
+                     '--log-level', 'ERROR']) == 0
+    out = os.path.join(workdir, 'bin_aot' + aot.exe_suffix(
+        aot.parse_target(aot.host_target())[0]))
+    built = aot.build_program(binp, out=out, backend='native')
+    r = _run(built)
+    assert r.returncode == 0, r.stderr
+    assert 'bin-ok' in r.stdout
+
+
+def test_build_rejects_unknown_input_format(workdir):
+    src = _write(workdir, 'prog.txt', 'not a program')
+    with pytest.raises(aot.AotError):
+        aot.build_program(src, out=os.path.join(workdir, 'prog'))
+
+
+def test_build_program_dependencies_asm():
+    assert aot.program_dependencies(os.path.join(ROOT, 'test_asm.asm')) == [
+        os.path.join(ROOT, 'test_asm.asm')]
+
+
+def test_build_cache_key_tracks_source_and_options(workdir):
+    src = _write(workdir, 'cache_key.cin',
+                 'function main() -> int { return 0 }')
+    key1 = aot.build_cache_key(src, None, 'auto', 0, None, 1000)
+    assert key1
+    key2 = aot.build_cache_key(src, None, 'auto', 1, None, 1000)
+    assert key1 != key2
+    _write(workdir, 'cache_key.cin',
+           'function main() -> int { return 1 }')
+    key3 = aot.build_cache_key(src, None, 'auto', 0, None, 1000)
+    assert key3 != key1
+
+
+@needs_go
+def test_build_cache_hit_skips_go_build(workdir, monkeypatch):
+    cache = os.path.join(workdir, 'cache')
+    monkeypatch.setenv('CODECIN_AOT_CACHE', cache)
+    src = _write(workdir, 'cached.cin',
+                 'function main() -> int { println("cached") return 0 }')
+    out1 = os.path.join(workdir, 'cached1' + aot.exe_suffix(
+        aot.parse_target(aot.host_target())[0]))
+    assert aot.build_program(src, out=out1) == os.path.abspath(out1)
+
+    def _must_not_build(cmd, mod, env, logger):
+        raise AssertionError(f'cache hit 仍然调用了 go build: {cmd}')
+
+    monkeypatch.setattr(aot, '_run_go_build', _must_not_build)
+    out2 = os.path.join(workdir, 'cached2' + aot.exe_suffix(
+        aot.parse_target(aot.host_target())[0]))
+    assert aot.build_program(src, out=out2) == os.path.abspath(out2)
+    r = _run(out2)
+    assert r.returncode == 0, r.stderr
+    assert 'cached' in r.stdout
+
 
 @needs_go
 def test_build_rejects_bad_target(workdir):
@@ -398,3 +489,21 @@ def test_build_warns_when_cleanup_fails(fake_native, monkeypatch, workdir):
     assert fake_native in msg, f'告警里没有残留目录的绝对路径: {msg}'
     assert 'Remove-Item' in msg and 'rm -rf' in msg, msg
     assert _temp_entries(fake_native), 'rmtree 失败后目录本应仍在'
+
+
+def test_build_debug_keeps_more_symbol_data(workdir):
+    """--build-debug 不传 -s -w, 产物保留符号/DWARF 且仍可运行。"""
+    src = os.path.join(workdir, 'debug_prog.cin')
+    with open(src, 'w', encoding='utf-8') as f:
+        f.write('function main() -> int { println("ok") return 0 }\n')
+    normal = os.path.join(workdir, 'normal.exe')
+    debug = os.path.join(workdir, 'debug.exe')
+    aot.build_program(src, out=normal, backend='native', use_cache=False)
+    aot.build_program(src, out=debug, backend='native', use_cache=False,
+                      debug=True)
+    assert os.path.getsize(debug) > os.path.getsize(normal)
+    for path in (normal, debug):
+        r = subprocess.run([path], capture_output=True, text=True,
+                           encoding='utf-8', errors='replace', timeout=60)
+        assert r.returncode == 0, r.stderr
+        assert r.stdout.strip() == 'ok'

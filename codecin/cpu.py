@@ -43,6 +43,9 @@ class CPU:
         self.config = config
         self.filename = filename
 
+        # 调试模式强制 DEBUG 级别 (超详细日志); 这里兜底程序化构造的 Config
+        if config.debug_mode and config.log_level.upper() != 'DEBUG':
+            config.log_level = 'DEBUG'
         self.logger = Logger(self.console, config.log_level)
         if config.log_file:
             self.logger.set_log_file(config.log_file)
@@ -109,7 +112,12 @@ class CPU:
                 self.memory.write_block(addr, data)
             # pc 0 为 bootstrap (CALL main; HALT), main 标签为函数体入口
             self.entry_pc = 0
-            self.pc = 0
+            if self.config.optimize > 0:
+                from .optimizer import optimize
+                self.instructions, self.labels, self.entry_pc = optimize(
+                    self.instructions, self.labels, self.config.optimize,
+                    self.entry_pc)
+            self.pc = self.entry_pc
             self.logger.info(f"CIN compiled: {len(self.instructions)} instructions")
             return
 
@@ -133,6 +141,11 @@ class CPU:
                         logger=self.logger)
         self.instructions, self.labels, self.data_labels = asm.assemble_file(filename)
         self.entry_pc = self.labels.get('main', 0)
+        if self.config.optimize > 0:
+            from .optimizer import optimize
+            self.instructions, self.labels, self.entry_pc = optimize(
+                self.instructions, self.labels, self.config.optimize,
+                self.entry_pc)
         self.pc = self.entry_pc
         self.logger.info(f"Assembly successful: {len(self.instructions)} instructions")
         if self.logger.is_debug:
@@ -255,6 +268,12 @@ class CPU:
             self.running = False
             self.stats.stop()
             self.logger.info("Program execution finished")
+
+            # 与旧版 --debug 一致: 收尾输出寄存器现场与执行统计
+            if self.config.debug_mode:
+                self.display_state("Execution Complete")
+                self.stats.display_summary(self.console,
+                                           native_used=self.native_used)
 
             if self.config.auto_save_crom and self.filename:
                 from . import crom as crom_mod

@@ -313,11 +313,14 @@ def test_bump_version_dry_run_does_not_touch_any_file():
 
 def test_bump_version_dry_run_on_repo_copy(workdir):
     """在 workdir 的副本上试算: 打印骨架, 且一个字节都不落盘。"""
+    import codecin
+    cur = tuple(int(x) for x in codecin.__version__.split('.'))
+    target = f'{cur[0]}.{cur[1]}.{cur[2] + 1}'
     repo = _make_repo_copy(os.path.join(workdir, 'copy'))
     before = _snapshot(repo)
-    r = _bump('--root', repo, '--dry-run', '6.0.0')
+    r = _bump('--root', repo, '--dry-run', target)
     assert r.returncode == 0, r.stdout + r.stderr
-    assert '## [6.0.0]' in r.stdout
+    assert f'## [{target}]' in r.stdout
     assert '### 新增 (Added)' in r.stdout
     assert _snapshot(repo) == before, '--dry-run 不允许改动副本文件'
 

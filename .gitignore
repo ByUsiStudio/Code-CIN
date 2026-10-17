@@ -11,9 +11,12 @@ __pycache__/
 /venv/
 /.pytest_cache/
 /.pytest_tmp/
+/.pytest_tmp-*/
 /.ruff_cache/
 /pytest-cache-*
 /pytest-tmp-*
+/pytest-base-tmp/
+/pytest-of-*/
 
 # ==================== Go 构建缓存 ====================
 /.gocache/

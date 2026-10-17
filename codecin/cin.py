@@ -109,7 +109,7 @@ _KEYWORDS = {
     'struct', 'function', 'return', 'if', 'else', 'while', 'for', 'do',
     'switch', 'case', 'default', 'break', 'continue', 'true', 'false',
     'int', 'float', 'bool', 'string', 'void', 'char', 'short', 'long',
-    'unsigned', 'enum',
+    'unsigned', 'enum', 'extern',
     'set', 'add', 'subtract', 'multiply', 'divide', 'increment', 'decrement',
 }
 
@@ -732,6 +732,7 @@ class FuncDef:
     ret_type: Any
     body: list
     line: int
+    extern: bool = False
 
 
 @dataclass
@@ -741,6 +742,7 @@ class GlobalVar:
     addr: int
     init: Optional[list] = None        # AST 表达式
     array_lit: Optional[list] = None   # 数组字面量行
+    extern: bool = False
 
 
 class Parser:
@@ -864,6 +866,13 @@ class Parser:
             elif self.peek().kind == 'IDENT' and self.peek().value == 'function':
                 f = self._parse_function()
                 functions[f.name] = f
+            elif self.peek().kind == 'IDENT' and self.peek().value == 'extern':
+                if (self.peek(1).kind == 'IDENT'
+                        and self.peek(1).value == 'function'):
+                    f = self._parse_extern_function()
+                    functions[f.name] = f
+                else:
+                    self._parse_extern_global(globals_)
             else:
                 self._parse_global(globals_)
             self.skip_nl()
@@ -1151,6 +1160,32 @@ class Parser:
         self.expect('RBRACE')
         return FuncDef(name, params, ret_type, body, line)
 
+    def _parse_extern_function(self) -> FuncDef:
+        """extern function name(params) -> type —— 只声明, 由链接器解析符号。"""
+        line = self.next().line              # extern
+        kw = self.expect('IDENT')
+        if kw.value != 'function':
+            raise CompilerError(
+                f"Expected 'function' after 'extern' at {self._loc(kw)}")
+        name = self.expect('IDENT').value
+        self.expect('LPAREN')
+        params: List[Tuple[str, Any]] = []
+        while self.peek().kind != 'RPAREN':
+            ptype = self.parse_type()
+            pname = self.expect('IDENT').value
+            dims = self.parse_dims()
+            for d in reversed(dims):
+                ptype = ('array', ptype, d) if d else ('ptrarray', ptype)
+            params.append((pname, ptype))
+            if not self.accept('COMMA'):
+                break
+        self.expect('RPAREN')
+        ret_type: Any = 'void'
+        if self.accept('ARROW'):
+            ret_type = self.parse_type()
+        self.accept('SEMI')
+        return FuncDef(name, params, ret_type, [], line, extern=True)
+
     def _parse_global(self, globals_: List[GlobalVar]) -> None:
         vtype = self.parse_type()
         while True:
@@ -1174,6 +1209,22 @@ class Parser:
                 else:
                     gv.init = self.parse_expr()
             globals_.append(gv)
+            if not self.accept('COMMA'):
+                break
+        self.accept('SEMI')
+
+    def _parse_extern_global(self, globals_: List[GlobalVar]) -> None:
+        """extern <type> name —— 只声明全局符号, 由链接器解析。"""
+        self.next()                         # extern
+        vtype = self.parse_type()
+        while True:
+            name = self.expect('IDENT').value
+            dims = self.parse_dims()
+            t = vtype
+            for d in reversed(dims):
+                t = ('array', t, d) if d else ('ptrarray', t)
+            globals_.append(GlobalVar(name=name, vtype=t, addr=0,
+                                      extern=True))
             if not self.accept('COMMA'):
                 break
         self.accept('SEMI')
@@ -1638,6 +1689,7 @@ class CompileResult:
         self.labels: Dict[str, int] = {}
         self.data_labels: Dict[str, int] = {}
         self.data_writes: List[Tuple[int, bytes]] = []
+        self.data_relocations: List[Tuple[int, int, str, int]] = []
 
 
 class CINCompiler:
@@ -1645,14 +1697,17 @@ class CINCompiler:
         self.console = console or Console()
         self.logger = logger
 
-    def compile(self, filename: str, bounds_check: bool = False) -> CompileResult:
+    def compile(self, filename: str, bounds_check: bool = False,
+                relocatable: bool = False) -> CompileResult:
         source, origin = load_program_source_mapped(filename)
         return self.compile_source(source, filename,
-                                   bounds_check=bounds_check, origin=origin)
+                                   bounds_check=bounds_check, origin=origin,
+                                   relocatable=relocatable)
 
     def compile_source(self, source: str, filename: str = '<cin>',
                        bounds_check: bool = False,
-                       origin: Optional[List[Optional[Tuple[str, int]]]] = None
+                       origin: Optional[List[Optional[Tuple[str, int]]]] = None,
+                       relocatable: bool = False
                        ) -> CompileResult:
         dbg = self.logger.debug if (self.logger and self.logger.is_debug) \
             else (lambda msg: None)
@@ -1673,7 +1728,7 @@ class CINCompiler:
 
         gen = CodeGen(structs, functions, filename=filename,
                       bounds_check=bounds_check, enums=enums,
-                      consts=parser.consts)
+                      consts=parser.consts, relocatable=relocatable)
         gen.layout_globals(globals_)
         for name, (typ, addr, block) in gen.globals.items():
             dbg(f"CIN global '{name}': type={typ} addr=0x{addr:x} block={block}")
@@ -1691,7 +1746,8 @@ class CodeGen:
                  functions: Dict[str, FuncDef], filename: str = '<cin>',
                  bounds_check: bool = False,
                  enums: Optional[Dict[str, int]] = None,
-                 consts: Optional[Dict[str, Tuple[str, Any]]] = None):
+                 consts: Optional[Dict[str, Tuple[str, Any]]] = None,
+                 relocatable: bool = False):
         self.structs = structs
         self.functions = functions
         self.enums: Dict[str, int] = dict(enums or {})
@@ -1699,6 +1755,7 @@ class CodeGen:
         self.res = CompileResult()
         self._filename = filename
         self._bounds = bounds_check
+        self.relocatable = relocatable
 
         self.data_ptr = 0
         self.heap_strings: Dict[str, int] = {}
@@ -1712,6 +1769,7 @@ class CodeGen:
         self.label_counter = 0
 
         self.globals: Dict[str, Tuple[Any, int, bool]] = {}  # name -> (type, addr, is_block)
+        self.extern_globals: Dict[str, Any] = {}
         #: 全局 struct 变量的堆对象地址 (单 struct 一个, struct 数组每元素一个)
         self.struct_blocks: Dict[str, List[int]] = {}
 
@@ -1759,6 +1817,37 @@ class CodeGen:
         self.heap_strings[text] = addr
         return addr
 
+    def _data_operand(self, addr: int):
+        """数据地址操作数: 普通编译为 imm, 对象模式保留可重定位符号。"""
+        if not self.relocatable:
+            return self.imm(addr)
+        return ('reloc', self._data_symbol(addr), 0)
+
+    def _data_symbol(self, addr: int) -> str:
+        for name, value in self.res.data_labels.items():
+            if value == addr:
+                return name
+        name = f'data_{addr:x}'
+        self.res.data_labels[name] = addr
+        return name
+
+    def _write_pointer(self, addr: int, target: int) -> None:
+        """写入 8 字节数据指针; 对象模式下登记数据内重定位。"""
+        if self.relocatable:
+            self.res.data_writes.append((addr, b'\x00' * 8))
+            self.res.data_relocations.append(
+                (addr, 8, self._data_symbol(target), 0))
+        else:
+            self.res.data_writes.append(
+                (addr, struct.pack('<Q', target & 0xFFFFFFFFFFFFFFFF)))
+
+    def _write_const(self, addr: int, ftype, ctype: str, raw: int) -> None:
+        if ctype == 'string' or ftype == 'string':
+            self._write_pointer(addr, raw)
+            return
+        self.res.data_writes.append(
+            (addr, struct.pack('<Q', self._coerce_const(ftype, ctype, raw))))
+
     def _data_qword(self, value: int) -> int:
         addr = self._alloc_data(8)
         self.res.data_writes.append((addr, struct.pack('<Q', value & 0xFFFFFFFFFFFFFFFF)))
@@ -1766,11 +1855,16 @@ class CodeGen:
 
     def layout_globals(self, globals_: List[GlobalVar]) -> None:
         for gv in globals_:
+            if gv.extern:
+                self.extern_globals[gv.name] = gv.vtype
+                self.globals[gv.name] = (gv.vtype, 0, False)
+                continue
             t = gv.vtype
             if _is_fixed_array(t):
                 addr = self._alloc_data(_type_slots(t) * 8)
                 self.globals[gv.name] = (t, addr, True)
                 gv.addr = addr
+                self.res.data_labels[f'global_{gv.name}'] = addr
                 if self._contains_struct(t[1]):
                     # 定长 struct 数组: 每个元素槽存一个堆对象指针
                     self._layout_struct_array(t, addr, gv.name)
@@ -1778,12 +1872,12 @@ class CodeGen:
                 addr = self._alloc_data(8)
                 self.globals[gv.name] = (t, addr, False)
                 gv.addr = addr
+                self.res.data_labels[f'global_{gv.name}'] = addr
                 if _is_struct(t):
                     sd = self.structs[t[1]]
                     block = self._alloc_data(sd.size_slots * 8)
                     self.struct_blocks[gv.name] = [block]
-                    self.res.data_writes.append(
-                        (addr, struct.pack('<Q', block)))
+                    self._write_pointer(addr, block)
 
     def _layout_struct_array(self, t, addr: int, name: str) -> None:
         """为全局定长 struct 数组的每个元素分配堆对象并写入指针槽。"""
@@ -1797,8 +1891,7 @@ class CodeGen:
         for i in range(t[2]):
             block = self._alloc_data(max(sd.size_slots, 1) * 8)
             blocks.append(block)
-            self.res.data_writes.append(
-                (addr + i * 8, struct.pack('<Q', block)))
+            self._write_pointer(addr + i * 8, block)
         self.struct_blocks[name] = blocks
 
     # ---------------- 初始化数据 ----------------
@@ -1889,16 +1982,16 @@ class CodeGen:
         for idx, elem in enumerate(items):
             off, ftype = leaves[idx]
             ctype, raw = self._const_value(elem)
-            self.res.data_writes.append(
-                (block + off * 8, struct.pack('<Q',
-                                              self._coerce_const(ftype, ctype, raw))))
+            self._write_const(block + off * 8, ftype, ctype, raw)
 
     def emit_globals_init(self, globals_: List[GlobalVar]) -> None:
         for gv in globals_:
+            if gv.extern:
+                continue
             t, addr, is_block = self.globals[gv.name]
             if gv.init is not None:
                 ctype, raw = self._const_value(gv.init)
-                self.res.data_writes.append((addr, struct.pack('<Q', raw)))
+                self._write_const(addr, t, ctype, raw)
             elif gv.array_lit is not None:
                 if _is_struct(t):
                     self._emit_struct_const_init(
@@ -1928,13 +2021,14 @@ class CodeGen:
                     # 全局 2D 定长数组按行写入
                     for i, row in enumerate(rows):
                         for j, elem in enumerate(row):
-                            _, raw = self._const_value(elem)
-                            self.res.data_writes.append(
-                                (addr + (i * len(row) + j) * 8, struct.pack('<Q', raw)))
+                            ctype, raw = self._const_value(elem)
+                            self._write_const(
+                                addr + (i * len(row) + j) * 8,
+                                t[1], ctype, raw)
                 else:
                     for i, elem in enumerate(rows):
-                        _, raw = self._const_value(elem)
-                        self.res.data_writes.append((addr + i * 8, struct.pack('<Q', raw)))
+                        ctype, raw = self._const_value(elem)
+                        self._write_const(addr + i * 8, t[1], ctype, raw)
 
     # ---------------- 主生成 ----------------
 
@@ -1947,6 +2041,8 @@ class CodeGen:
         self.emit('HALT')
 
         for _fname, fdef in functions.items():
+            if fdef.extern:
+                continue
             self.gen_function(fdef)
 
         return self.res
@@ -2068,9 +2164,14 @@ class CodeGen:
         if name in self.locals:
             _t, off, _is_block = self.locals[name]
             self._addr_local(off)
+        elif name in self.extern_globals:
+            if not self.relocatable:
+                raise CompilerError(
+                    f"extern global '{name}' requires object/link compilation")
+            self.emit('MOV', self.reg(0), ('reloc', f'global_{name}', 0))
         elif name in self.globals:
             _t, addr, _is_block = self.globals[name]
-            self.emit('MOV', self.reg(0), self.imm(addr))
+            self.emit('MOV', self.reg(0), self._data_operand(addr))
         else:
             raise CompilerError(f"Undefined variable: {name}")
 
@@ -2693,7 +2794,7 @@ class CodeGen:
     def _runtime_abort(self, text: str) -> None:
         """SYS ABORT: 加载静态消息指针并抛出运行时错误。"""
         addr = self._data_string(text)
-        self.emit('MOV', self.reg(0), self.imm(addr))
+        self.emit('MOV', self.reg(0), self._data_operand(addr))
         self.emit('SYS', self.imm(Syscall.ABORT))
 
     def gen_assert(self, cond, msg, line: int,
@@ -2752,7 +2853,8 @@ class CodeGen:
             self.emit('MOV', self.reg(0), self.imm(1 if node[1] else 0))
             return 'bool'
         if kind == 'str':
-            self.emit('MOV', self.reg(0), self.imm(self._data_string(node[1])))
+            self.emit('MOV', self.reg(0),
+                      self._data_operand(self._data_string(node[1])))
             return 'string'
         if kind == 'var':
             return self._gen_var_value(node[1])
@@ -2804,7 +2906,7 @@ class CodeGen:
                     return 'float'
                 if ctype == 'string':
                     self.emit('MOV', self.reg(0),
-                              self.imm(self._data_string(value)))
+                              self._data_operand(self._data_string(value)))
                     return 'string'
                 self.emit('MOV', self.reg(0),
                           self.imm(int(value) & 0xFFFFFFFFFFFFFFFF))
@@ -3519,7 +3621,8 @@ class CodeGen:
         if name == 'strcpy':
             self.gen_value(args[0])
             self.emit('PUSH', self.reg(0))
-            self.emit('MOV', self.reg(0), self.imm(self._data_string("")))
+            self.emit('MOV', self.reg(0),
+                      self._data_operand(self._data_string("")))
             self.emit('MOV', self.reg(1), self.reg(0))
             self.emit('POP', self.reg(0))
             self.emit('SYS', self.imm(Syscall.STR_CONCAT))
@@ -3584,7 +3687,7 @@ class CodeGen:
                 raise CompilerError(
                     f"{name}() expects a numeric argument, got {t} "
                     f"at {self._loc()}"
-                    + (f" (hint: use atoi() to parse a string)" if t == 'string' else ""))
+                    + (" (hint: use atoi() to parse a string)" if t == 'string' else ""))
             self._convert(t, target)
             return target
         if name == 'atoi':

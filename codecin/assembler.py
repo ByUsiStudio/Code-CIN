@@ -13,6 +13,8 @@ Instruction = Tuple[str, List[Operand]]
 _RE_XREG = re.compile(r'^[xXrRwW]([0-9]|[12][0-9]|3[01])$')
 _RE_VREG = re.compile(r'^[vV]([0-9]|[12][0-9]|3[01])(?:\.([0-3]))?$')
 _RE_LABEL = re.compile(r'^[a-zA-Z_.$][a-zA-Z0-9_.$]*$')
+_RE_RELOC = re.compile(
+    r'^\s*([a-zA-Z_.$][a-zA-Z0-9_.$]*)\s*(?:([+-])\s*(\d+))?\s*$')
 _RE_EXPR_NAME = re.compile(r'\b[a-zA-Z_.$][a-zA-Z0-9_.$]*\b')
 _RE_EQU_DIRECTIVE = {'EQU', 'SET'}
 # 表达式只允许: 数字 / 已定义符号 / + - * / % ( ) 空白
@@ -63,14 +65,17 @@ def _eval_expr(text: str, symbols: Dict[str, int]) -> Optional[int]:
 
 class Assembler:
     def __init__(self, memory: FastMemory, console: Optional[Console] = None,
-                 strict: bool = False, logger=None):
+                 strict: bool = False, logger=None,
+                 preserve_labels: bool = False):
         self.memory = memory
         self.console = console or Console()
         self.strict = strict
         self.logger = logger
+        self.preserve_labels = preserve_labels
         self.instructions: List[Instruction] = []
         self.labels: Dict[str, int] = {}
         self.data_labels: Dict[str, int] = {}
+        self.data_relocations: List[Tuple[int, int, str, int]] = []
         self.equ: Dict[str, int] = {}   # .equ/.set 常量
 
     def _dbg(self, msg: str) -> None:
@@ -184,6 +189,7 @@ class Assembler:
         self.instructions = []
         self.labels = {}
         self.data_labels = {}
+        self.data_relocations = []
         self.equ = {}
         instr_index = 0
         data_addr = 0
@@ -291,6 +297,23 @@ class Assembler:
             for piece in val_str.split(','):
                 piece = piece.strip()
                 if not piece:
+                    continue
+                reloc = None
+                if self.preserve_labels and width in (2, 4, 8):
+                    reloc = self._reloc_operand(piece, symbols or {},
+                                                allow_external=True)
+                if reloc is not None:
+                    name = reloc[1]
+                    addend = int(reloc[2]) if reloc[0] == 'reloc' else 0
+                    if width == 2:
+                        self.memory.write_word(data_addr, 0)
+                    elif width == 4:
+                        self.memory.write_dword(data_addr, 0)
+                    else:
+                        self.memory.write_qword(data_addr, 0)
+                    self.data_relocations.append(
+                        (data_addr, width, name, addend))
+                    data_addr += width
                     continue
                 values = self._parse_data_values(piece, line, line_num, fname,
                                                  symbols)
@@ -476,10 +499,15 @@ class Assembler:
         if tok.startswith('='):
             name = tok[1:].strip()
             if name in symbols:
-                return ('imm', symbols[name])
+                return self._symbol_operand(name, symbols)
+            reloc = self._reloc_operand(name, symbols, allow_external=True)
+            if reloc is not None:
+                return reloc
             val = _eval_expr(name, symbols)
             if val is not None:
                 return ('imm', val)
+            if self.preserve_labels and _RE_LABEL.match(name):
+                return ('label', name)
             raise AssemblerError(line, f"Undefined symbol: {name}", line_num, fname)
 
         if tok.startswith('#'):
@@ -488,10 +516,16 @@ class Assembler:
                 return ('imm', self.parse_immediate(tok))
             except ValueError:
                 if inner in symbols:
-                    return ('imm', symbols[inner])
+                    return self._symbol_operand(inner, symbols)
+                reloc = self._reloc_operand(inner, symbols,
+                                            allow_external=True)
+                if reloc is not None:
+                    return reloc
                 val = _eval_expr(inner, symbols)
                 if val is not None:
                     return ('imm', val)
+                if self.preserve_labels and _RE_LABEL.match(inner):
+                    return ('label', inner)
                 raise AssemblerError(line, f"Bad immediate: {tok}",
                                      line_num, fname) from None
 
@@ -500,6 +534,12 @@ class Assembler:
         except ValueError:
             pass
 
+        # 可重定位对象模式: 裸标签/标签+偏移保持符号名, 交给链接器解析。
+        if self.preserve_labels:
+            reloc = self._reloc_operand(tok, symbols, allow_external=True)
+            if reloc is not None:
+                return reloc
+
         # 表达式立即数 / 符号算术: 8+4*2 / SIZE-1 / loop+4 / 等
         val = _eval_expr(tok, symbols)
         if val is not None:
@@ -507,10 +547,41 @@ class Assembler:
 
         if _RE_LABEL.match(tok):
             if tok in symbols:
-                return ('imm', symbols[tok])
+                return self._symbol_operand(tok, symbols)
+            if self.preserve_labels:
+                return ('label', tok)
             raise AssemblerError(line, f"Undefined label: {tok}", line_num, fname)
 
         raise AssemblerError(line, f"Cannot parse operand: {tok}", line_num, fname)
+
+    def _symbol_operand(self, name: str,
+                        symbols: Dict[str, int]) -> Operand:
+        """符号操作数: 默认为立即数; 可重定位对象模式保留标签名。"""
+        if self.preserve_labels:
+            return ('label', name)
+        return ('imm', symbols[name])
+
+    def _reloc_operand(self, expr: str, symbols: Dict[str, int],
+                       allow_external: bool = False) -> Optional[Operand]:
+        """对象模式下的简单重定位: NAME / NAME+N / NAME-N。"""
+        if not self.preserve_labels:
+            return None
+        m = _RE_RELOC.match(expr)
+        if not m:
+            return None
+        name = m.group(1)
+        if name in self.equ:
+            return None                 # .equ 常量按立即数处理
+        if name not in symbols and not allow_external:
+            return None
+        addend = 0
+        if m.group(2):
+            addend = int(m.group(3))
+            if m.group(2) == '-':
+                addend = -addend
+        if addend:
+            return ('reloc', name, addend)
+        return ('label', name)
 
     def _parse_mem(self, inner: str, symbols: Dict[str, int], line: str,
                    line_num: int, fname: str) -> Operand:

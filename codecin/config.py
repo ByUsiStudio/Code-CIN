@@ -15,6 +15,8 @@ class Config:
     auto_save_crom: bool = False
     max_instructions: int = 100_000_000
     sandbox_mode: bool = False
+    # 调试模式: 强制 DEBUG 日志, 执行结束输出 CPU 状态与统计, 异常完整堆栈
+    debug_mode: bool = False
     log_level: str = 'INFO'
     log_file: Optional[str] = None
     strict_mode: bool = False

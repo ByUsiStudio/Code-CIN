@@ -56,7 +56,10 @@ def build_parser() -> argparse.ArgumentParser:
                    help='列出内置标准库并标注执行路径要求 '
                         '(纯 CIN / C·C++·Go 兼容层 / 需原生运行时) 后退出')
 
-    # 日志
+    # 日志与调试
+    p.add_argument('--debug', action='store_true',
+                   help='调试模式 (强制 DEBUG 日志, 执行结束输出 CPU 状态与统计, '
+                        '异常打印完整堆栈)')
     p.add_argument('--log-level', choices=['DEBUG', 'INFO', 'WARNING', 'ERROR',
                                            'CRITICAL'],
                    help='日志级别 (默认 INFO)')
@@ -86,7 +89,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     # 语言/汇编
     p.add_argument('--optimize', type=int, metavar='0-3',
-                   help='优化级别 (0-3, 默认 0)')
+                   help='IR 优化级别 (0 关闭; 1 窥孔; 2 常量折叠; '
+                        '3 不可达代码删除; 默认 0)')
     p.add_argument('--strict', action='store_true', help='严格汇编模式')
 
     # 运行时行为 (A1/A2)
@@ -96,11 +100,20 @@ def build_parser() -> argparse.ArgumentParser:
                    help='CIN 数组越界运行时检查 (编译期注入)')
     p.add_argument('--disasm', action='store_true',
                    help='反汇编 .bin 字节码为文本清单后退出')
+    p.add_argument('--emit-object', action='store_true', dest='emit_object',
+                   help='仅把 CIN/ASM/PL 编译为可重定位对象 (.co) 后退出')
+    p.add_argument('--link', action='append', metavar='INPUT', default=None,
+                   help='链接 .cin/.asm/.pl/.co/.colib 输入为可执行文件 (可重复)')
+    p.add_argument('--emit-archive', action='store_true', dest='emit_archive',
+                   help='把 --link 输入打包为 .colib 静态库归档')
+    p.add_argument('--gc-sections', action='store_true', dest='gc_sections',
+                   help='链接时删除不可达函数/代码段 (默认关闭)')
 
     # AOT: 编译成独立静态可执行文件
     p.add_argument('--build-exe', nargs='?', const='', default=None,
                    metavar='OUT',
-                   help='编译成独立静态可执行文件 (不依赖 Python/动态库) 后退出; '
+                   help='把 CIN/ASM/PL/BIN/CO 编译成独立静态可执行文件 '
+                        '(不依赖 Python/动态库) 后退出; '
                         '省略路径时输出到 <程序名>[.exe]')
     p.add_argument('--build-target', default=None, metavar='OS/ARCH',
                    help='AOT 交叉编译目标 (默认当前平台): '
@@ -108,12 +121,23 @@ def build_parser() -> argparse.ArgumentParser:
                         'darwin/amd64, darwin/arm64')
     p.add_argument('--build-keep-temp', action='store_true',
                    help='AOT 构建时保留临时目录 (排查 go build 失败)')
+    p.add_argument('--build-backend', choices=['auto', 'native', 'vm'],
+                   default='auto',
+                   help='AOT 后端: auto = 小程序 native / 大程序 VM (默认); '
+                        'native = 强制直接生成机器码; '
+                        'vm = 内嵌 UCBC 字节码由 Go VM 执行')
+    p.add_argument('--no-build-cache', action='store_false', dest='build_cache',
+                   default=True,
+                   help='禁用 AOT 增量构建缓存 (默认启用)')
+    p.add_argument('--build-debug', action='store_true', dest='build_debug',
+                   help='保留符号表/DWARF (不传 -s -w), 便于调试')
     return p
 
 
 def _apply_namespace(config: Config, ns: argparse.Namespace) -> None:
     """把 argparse Namespace 映射到 Config 字段。"""
     config.sandbox_mode = ns.sandbox
+    config.debug_mode = ns.debug
     config.auto_save_crom = ns.auto_save_crom
     config.compress_crom = ns.compress_crom
     config.compile_to_bin = ns.compile_to_bin
@@ -134,10 +158,14 @@ def _apply_namespace(config: Config, ns: argparse.Namespace) -> None:
     if ns.optimize is not None:
         config.optimize = ns.optimize
 
+    # --debug 是比 --log-level 更强的开关: 与旧版一致, 始终强制 DEBUG
+    if config.debug_mode:
+        config.log_level = 'DEBUG'
+
 
 def _run_aot_build(ns: argparse.Namespace, console, program_file: str,
                    config) -> int:
-    """AOT: 把 CIN 程序编译成独立静态可执行文件 (--build-exe)。"""
+    """AOT: 把 CIN/ASM/PL/BIN/CO 编译成独立静态可执行文件 (--build-exe)。"""
     from . import aot
     from .errors import CPUSimulatorError
 
@@ -156,7 +184,8 @@ def _run_aot_build(ns: argparse.Namespace, console, program_file: str,
     out = ns.build_exe or (os.path.splitext(program_file)[0]
                            + aot.exe_suffix(goos))
     console.print(Colors.colorize(
-        f"AOT build: {program_file} -> {out} (静态链接, 目标 {target})",
+        f"AOT build: {program_file} -> {out} "
+        f"(静态链接, 目标 {target}, 后端 {ns.build_backend})",
         Colors.CYAN))
     try:
         # 依赖检查与嵌入由 build_program 内部完成; 这里先把清单展示给用户
@@ -168,13 +197,18 @@ def _run_aot_build(ns: argparse.Namespace, console, program_file: str,
                 f"{', '.join(embedded)}", Colors.CYAN))
         built = aot.build_program(program_file, out=out, target=target,
                                   keep_temp=ns.build_keep_temp,
-                                  mem_size=config.mem_size)
+                                  mem_size=config.mem_size,
+                                  backend=ns.build_backend,
+                                  max_instructions=config.max_instructions,
+                                  optimize=config.optimize,
+                                  use_cache=ns.build_cache,
+                                  debug=ns.build_debug)
     except (aot.AotError, CPUSimulatorError) as e:
         console.print(Panel(str(e), title='Build Error', border_style='red'))
         return 1
     except Exception as e:                       # 兜底: 不再向上抛裸 traceback
         console.print(Panel(str(e), title='Build Error', border_style='red'))
-        if config.log_level.upper() == 'DEBUG':
+        if config.debug_mode or config.log_level.upper() == 'DEBUG':
             console.print_exception()
         return 1
     console.print(Colors.colorize(f"AOT build 完成: {built}", Colors.GREEN))
@@ -281,6 +315,99 @@ def main(argv: Optional[List[str]] = None) -> int:
         sys.stdout.write(format_library_report() + "\n")
         return 0
 
+    if ns.emit_archive:
+        if not ns.link:
+            console.print(Panel("--emit-archive 需要至少一个 --link 对象",
+                                title='Error', border_style='red'))
+            return 1
+        from .object import ObjectError, read_input_object, write_archive
+        config = Config()
+        _apply_namespace(config, ns)
+        config.validate()
+        try:
+            objects = [read_input_object(p) for p in ns.link]
+            out = config.output_file or (
+                os.path.splitext(ns.link[0])[0] + '.colib')
+            written = write_archive(objects, out)
+        except (ObjectError, OSError) as e:
+            console.print(Panel(str(e), title='Archive Error',
+                                border_style='red'))
+            return 1
+        console.print(Colors.colorize(f"Archive: {written}", Colors.GREEN))
+        return 0
+
+    if ns.link:
+        from . import aot
+        from .object import ObjectError, link_files
+        config = Config()
+        _apply_namespace(config, ns)
+        config.validate()
+        try:
+            linked = link_files(ns.link, gc_sections=ns.gc_sections)
+        except (ObjectError, OSError) as e:
+            console.print(Panel(str(e), title='Link Error', border_style='red'))
+            return 1
+        out = config.output_file
+        if not out:
+            target = ns.build_target or aot.host_target()
+            goos, _ = aot.parse_target(target)
+            out = (os.path.splitext(ns.link[0])[0]
+                   + aot.exe_suffix(goos))
+        try:
+            cache_key = None
+            if ns.build_cache:
+                cache_key = aot.link_cache_key(
+                    ns.link, ns.build_target, ns.build_backend,
+                    config.optimize, linked['mem_size'],
+                    config.max_instructions, debug=ns.build_debug,
+                    gc_sections=ns.gc_sections)
+            built = aot.build_from_ir(
+                linked['instructions'], linked['labels'],
+                linked['data_labels'], linked['segments'],
+                entry_pc=linked['entry_pc'],
+                mem_size=linked['mem_size'],
+                sp=linked['sp'], heap_base=linked['heap_base'],
+                out=out, target=ns.build_target,
+                backend=ns.build_backend,
+                max_instructions=config.max_instructions,
+                optimize=config.optimize,
+                program_name='linked',
+                keep_temp=ns.build_keep_temp,
+                debug=ns.build_debug,
+                use_cache=ns.build_cache,
+                cache_key=cache_key,
+                logger=None)
+        except (aot.AotError, OSError) as e:
+            console.print(Panel(str(e), title='Link Error', border_style='red'))
+            return 1
+        console.print(Colors.colorize(f"Link 完成: {built}", Colors.GREEN))
+        return 0
+
+    if ns.emit_object:
+        if ns.program is None:
+            console.print(Panel("--emit-object 需要 CIN/ASM/PL 源文件",
+                                title='Error', border_style='red'))
+            return 1
+        ext = os.path.splitext(ns.program)[1].lower()
+        if ext not in ('.cin', '.asm', '.pl'):
+            console.print(Panel("--emit-object 仅支持 .cin/.asm/.pl",
+                                title='Error', border_style='red'))
+            return 1
+        from .object import ObjectError, compile_asm_object, compile_cin_object, write_object
+        try:
+            if ext == '.cin':
+                obj = compile_cin_object(ns.program)
+            else:
+                obj = compile_asm_object(ns.program)
+            out = ns.output or os.path.splitext(ns.program)[0] + '.co'
+            written = write_object(obj, out)
+        except (ObjectError, OSError) as e:
+            console.print(Panel(str(e), title='Object Error',
+                                border_style='red'))
+            return 1
+        console.print(Colors.colorize(f"Object: {written}", Colors.GREEN))
+        return 0
+
     if ns.program is None:
         console.print(Panel("No program file specified.\n"
                             "Use --help for usage information.",
@@ -323,7 +450,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             console.print(Panel(str(e), title="Load Error", border_style='red'))
         else:
             console.print(Panel(str(e), title="Error", border_style='red'))
-            if config.log_level.upper() == 'DEBUG':
+            if config.debug_mode or config.log_level.upper() == 'DEBUG':
                 # 超详细: rich 彩色完整堆栈
                 console.print_exception()
         return 1

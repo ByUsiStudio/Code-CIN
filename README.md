@@ -14,7 +14,7 @@ Code CIN 是一门简洁的类 C 高级语言及其跨平台运行时（VM）。
 
 **已完成 Go 优先（v5.9.0）**：Go 是语言实现的核心（`codecin/native/` 下的 CIN 编译器、字节码 VM、CROM），**Go 侧不提供任何 CLI 入口**；Python 只作为唯一 CLI 外壳。支持 CIN/PL/ASM 三语言、ARM64 与 RISC-V 指令集扩展、默认 1 GiB 稀疏分页内存、FFI 与完整网络系统调用、性能分析。
 
-模块化包结构（`codecin/`，Go 侧 `codecin/native/`），全线日志与错误输出基于 **rich**（彩色表格、面板、traceback），`--log-level DEBUG` 提供超详细追踪。
+模块化包结构（`codecin/`，Go 侧 `codecin/native/`），全线日志与错误输出基于 **rich**（彩色表格、面板、traceback），`--debug` / `--log-level DEBUG` 提供超详细诊断。
 
 ## 文档
 
@@ -119,10 +119,10 @@ graph LR
 | Go原生库 | c-shared (必需) | 整程序 VM 加速, 缺失时报 CPUSimulatorError 提示重建 |
 | FFI | SYS 140-144 | ffi_load/ffi_find/ffi_call/ffi_callf/lib_close, 标准 `lib/ffi.cin` |
 | 网络 | SYS 145-157 | HTTP/TCP/UDP/DNS, 标准 `lib/net.cin` |
-| 日志系统 | rich | 彩色日志/表格/面板/traceback, --log-level DEBUG 超详细追踪 |
+| 日志系统 | rich | 彩色日志/表格/面板/traceback, --debug / --log-level DEBUG 超详细诊断 |
 | 性能分析 | 指令级 | CPI + 内存统计 + 热指令 |
 | CROM压缩 | zlib | 段式格式 (v4), 只保存已分配页 (Go/Python双实现) |
-| AOT 静态编译 | 独立可执行 | 编译为 Windows/Linux/macOS 静态可执行文件, 不需 Python/Go/动态库 |
+| AOT 静态编译 | 独立可执行 | native 后端直接生成机器码 (VM 后端兼容), Windows/Linux/macOS 静态可执行 |
 
 ---
 
@@ -437,18 +437,79 @@ v5.9.0 起**只有一条执行路径**: Python 完成 CIN/PL/ASM 编译后, 通�
 
 ### 编译成独立可执行文件 (AOT)
 
-把 CIN 程序编译成**静态链接的独立可执行文件** —— 产物内嵌字节码与初始内存镜像,
-由内置 Go VM 执行, 运行时**不需要 Python、Go 工具链、libc 或任何动态库**。
-构建时会解析 `import` 闭包做依赖完整性检查, 并把**全部依赖库在编译期展开嵌入产物**
-(产物不读取任何 `.cin` 文件):
+把 CIN/ASM/PL/BIN/CO 程序编译成**静态链接的独立可执行文件** —— 运行时**不需要
+Python、Go 工具链、libc 或任何动态库**。CIN 构建时会解析 `import` 闭包做依赖
+完整性检查, 并把**全部依赖库在编译期展开嵌入产物** (产物不读取任何 `.cin` 文件)。
+
+默认使用 **auto 后端**: 指令数不超过 20000 时走 **native** (把编译后的指令流
+直接生成 Go 源码, 核心整数/控制流/内存/SYS 指令不再经过 UCBC 解码与 opcode
+dispatch, 由 Go 编译器产出目标平台机器码); 超过阈值自动回退 **VM** (内嵌 UCBC
+字节码), 避免大量指令展开导致 `go build` 极慢。`--build-backend auto|native|vm`
+可强制指定。超过 800 条指令的 native 程序会自动按基本块拆分成多个 Go
+函数，进一步控制编译时间。
 
 ```bash
-# 本机平台
+# 本机平台 (auto: 小程序 native, 大程序 VM)
 codecin program.cin --build-exe program          # Windows 自动补 .exe
 
-# 交叉编译 (只需要安装 Go 工具链)
+# 交叉编译 (只需要安装 Go 工具链; native/vm 后端都支持)
 codecin program.cin --build-exe app-linux --build-target linux/amd64
 codecin program.cin --build-exe app-mac   --build-target darwin/arm64
+
+# 强制某个后端 + 优化级别
+codecin program.cin --build-exe app-native --build-backend native --optimize 2
+codecin program.cin --build-exe app-vm --build-backend vm --optimize 2
+
+# 独立编译 + 链接 (ASM/PL): 每个对象单独汇编, 再由链接器合并
+codecin --emit-object main.asm -o main.co
+codecin --emit-object lib.asm  -o lib.co
+codecin --link main.co --link lib.co -o app --optimize 3
+
+# 也可以直接把源文件交给链接器 (即时编译为对象)
+codecin --link main.cin --link lib.cin -o app
+
+# CIN 库对象: 无 main 的文件作为函数库, 主文件用 extern 声明跨对象函数
+codecin --emit-object lib.cin  -o lib.co
+codecin --emit-object main.cin -o main.co
+codecin --link main.co --link lib.co -o app
+```
+
+静态库归档：
+
+```bash
+codecin --emit-archive --link lib.co --link lib2.co -o lib.colib
+codecin --link main.co --link lib.colib -o app
+codecin --link main.co --link lib.colib -o app-gc --gc-sections
+```
+
+链接器按 C 风格静态库语义，只拉取能解决当前未定义符号的成员。
+
+CIN 示例：
+
+```cin
+// lib.cin
+function helper() -> int {
+    return 7
+}
+
+// main.cin
+extern function helper() -> int
+
+function main() -> int {
+    println(int_to_str(helper()))
+    return 0
+}
+```
+
+跨对象全局变量同样用 `extern` 声明：
+
+```cin
+// lib.cin
+int counter = 5
+
+// main.cin
+extern int counter
+extern function bump()
 ```
 
 | 目标 | 说明 |
@@ -457,7 +518,12 @@ codecin program.cin --build-exe app-mac   --build-target darwin/arm64
 | `linux/amd64` `linux/arm64` | ELF, **无 PT_INTERP**, 不依赖 glibc |
 | `darwin/amd64` `darwin/arm64` | Mach-O, 静态 |
 
-常见选项: `--build-target OS/ARCH`、`--build-keep-temp` (保留 `go build` 临时目录排错)。
+常见选项: `--build-target OS/ARCH`、`--build-backend auto|native|vm`、
+`--optimize 0-3`、`--no-build-cache`、`--build-keep-temp` (保留 `go build`
+临时目录排错)。AOT 默认启用增量缓存 (源/依赖/工具链指纹命中时直接复用
+产物), 缓存目录可用 `CODECIN_AOT_CACHE` 覆盖。
+`--optimize` 作用于 CIN IR (窥孔/常量折叠/不可达代码删除); native 后端最终
+机器码仍由 Go 编译器生成, 其自身优化由 Go 工具链决定。
 `import "math.cin"`（裸名字 = codecin 内置标准库 `codecin/lib/`）在**编译期**展开, 因此产物自带用到的标准库, 运行时不需要任何 `.cin` 文件。
 正常结束退出码 0, 运行期错误打印 stderr 并以 1 退出。
 详见 [开发者编译文档 · AOT](docs/BUILDING.md#aot-编译独立可执行文件)。
@@ -476,6 +542,7 @@ codecin program.cin --build-exe app-mac   --build-target darwin/arm64
 - `--libs` - 列出内置标准库并标注执行路径要求
 
 **日志与运行时行为**
+- `--debug` - 调试模式 (强制 DEBUG 日志, 执行结束输出 CPU 状态与统计, 异常完整堆栈)
 - `--log-level DEBUG|INFO|WARNING|ERROR|CRITICAL` - 日志级别 (默认 INFO)
 - `--log-file <file>` - 日志输出到文件
 - `--sandbox` - 沙箱模式 (在 Go 引擎侧拦截全部宿主能力系统调用)
@@ -486,10 +553,21 @@ codecin program.cin --build-exe app-mac   --build-target darwin/arm64
 
 **编译选项**
 - `--compile` / `--compile-only` - 编译为 .bin 字节码
-- `--optimize 0-3` - 优化级别 (默认 0)
+- `--optimize 0-3` - IR 优化级别 (0 关闭; 1 窥孔; 2 常量折叠; 3 不可达代码删除)
 - `--disasm` - 反汇编 .bin 字节码为文本清单后退出
 - `-o, --output <file>` - 输出文件名 (.crom/.bin)
 - `--strict` - 严格汇编模式
+
+**AOT 选项 (`--build-exe`)**
+- `--build-target OS/ARCH` - 交叉编译目标
+- `--build-backend auto|native|vm` - auto 按指令数选 native/VM (默认) / 强制 native / 强制 VM
+- `--no-build-cache` - 禁用 AOT 增量构建缓存 (含对象/归档链接缓存)
+- `--build-debug` - 保留符号表/DWARF (不传 `-s -w`)，便于调试
+- `--build-keep-temp` - 保留 Go 构建临时目录
+- `--emit-object` - 把 CIN/ASM/PL 编译为可重定位 `.co` 对象
+- `--link OBJ` - 链接一个或多个 `.co`/`.colib` 为可执行文件 (可重复)
+- `--emit-archive` - 把 `--link` 输入打包为 `.colib` 静态库归档
+- `--gc-sections` - 链接时删除从入口不可达的函数/代码段
 
 **CROM选项**
 - `--save` - 执行后保存 .crom 内存镜像 (v4 段式)
@@ -509,19 +587,25 @@ codecin program.cin --build-exe app-mac   --build-target darwin/arm64
 | `ERROR` | 仅错误面板 |
 | `WARNING` | + 警告与兼容降级提示 |
 | `INFO` (默认) | + 编译汇总、执行起止、统计表 |
-| `DEBUG` | **超详细**: 全部埋点 + 逐指令追踪 |
+| `DEBUG` | **超详细**: 全部埋点 (CPU 初始化、编译标签、原生执行结果) |
+
+### 调试模式 (`--debug`)
+
+`--debug` 是比 `--log-level DEBUG` 更高层的开关 (与旧版一致, 始终强制 DEBUG):
+
+- **强制 DEBUG 日志**: 即使同时给出 `--log-level ERROR` 也按 DEBUG 输出
+- **收尾现场**: 执行结束打印寄存器/向量状态与执行统计表
+- **完整堆栈**: 未预期异常输出 rich 彩色完整 traceback
+
+v5.9.0 起程序由 Go 原生引擎一次性执行, 不再有 Python 解释器级逐指令追踪;
+逐指令/内存/SYS 级调试需在 Go 引擎侧扩展。
 
 ### 超详细输出 (`--log-level DEBUG`)
 
 - **CPU 初始化 dump**: 内存大小、SP 初值、堆基址
-- **逐指令追踪**: 每条指令输出 PC、全局序号、操作数值、SP 与执行后 NZCV 标志
-  ```
-  PC=0x0004 #00000002 ADD X1=0x0(0) X2=0x1(1)  SP=0xfff8
-    => pc=0x0005 N=0 Z=0 C=0 V=0
-  ```
-- **内存读写追踪**: `MEM WR @0x000c w=1 value=0x0`, 覆盖全部加载/存储指令
-- **SYS 系统调用** (功能号+参数, 含 FFI/网络调用)
-- **编译埋点**: CIN tokenize/parse 统计、原生库调用参数
+- **编译/装载**: 指令数与汇编标签表
+- **原生执行结果**: 状态、步数、PC、耗时、错误
+- **错误处理**: 加载/汇编/编译/运行错误统一 rich 面板, 未预期异常输出完整 traceback
 
 ### 错误处理
 
