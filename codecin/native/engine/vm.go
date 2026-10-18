@@ -355,6 +355,20 @@ func RunV2(opts *RunOptions) *Result {
 		return r
 	}
 
+	// 初始 SP 低于堆基址是"旧版 BIN 配新内存布局"的典型症状: v5.9.0 之前
+	// 默认 64 KiB, SP≈0xfff0; v5.9.0+ 默认 1 GiB, heap_base=0x20000000。
+	// 在进入指令循环前直接拒绝, 避免执行首条 PUSH 才报
+	// "Stack overflow (collides with heap)" 而被误认为真实栈溢出。
+	if vm.sp < vm.heapBase {
+		return finish(StatusError, fmt.Sprintf(
+			"invalid initial stack layout: SP 0x%x is below heap base 0x%x "+
+				"(memory %d bytes); this usually means a legacy BIN compiled "+
+				"for the old 64 KB default was loaded with the current "+
+				"1 GiB layout; recompile the source or use --mem-size "+
+				"matching the bytecode's layout",
+			vm.sp, vm.heapBase, memSize))
+	}
+
 	for {
 		if opts.MaxSteps > 0 && int64(vm.steps) >= opts.MaxSteps {
 			// 步数用尽不等于正常停机: 旧实现返回 StatusDone, 与 HALT 无法区分,
