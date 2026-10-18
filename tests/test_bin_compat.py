@@ -12,7 +12,7 @@ import struct
 
 import pytest
 
-from codecin import Config, crom
+from codecin import Config
 from codecin.cpu import CPU
 from codecin.disasm import disassemble_file
 from codecin.errors import CPUSimulatorError
@@ -144,12 +144,13 @@ def test_v2_truncated_payload_is_reported_as_corruption(workdir):
 
 def test_v3_invalid_heap_layout_fails_at_load(workdir):
     path = _write(workdir, 'bad_v3.bin',
-                  _v3_blob(heap_base=64 * 1024 - 8))
+                  _v3_blob(sp=64 * 1024 - 16, heap_base=64 * 1024 - 8))
     with pytest.raises(CPUSimulatorError) as ei:
         CPU(Config(log_level='ERROR', mem_size=64 * 1024), path)
     msg = str(ei.value)
     assert 'BIN v3' in msg
     assert 'heap_base' in msg
+    assert 'SP 低于 heap_base' in msg
 
 
 def test_v3_roundtrip_still_loads(workdir):
@@ -157,6 +158,15 @@ def test_v3_roundtrip_still_loads(workdir):
     cpu = CPU(Config(log_level='ERROR'), path)
     assert cpu.sp == (64 * 1024 - 8) & ~0x7
     assert cpu.heap_base == 32 * 1024
+    assert [op for op, _ in cpu.instructions] == ['HALT']
+
+
+def test_v3_tiny_memory_without_stack_use_still_loads(workdir):
+    """极小内存布局装不下 4 KiB 守卫线, 但 HALT 程序原本就能跑, 不应误拒。"""
+    path = _write(workdir, 'tiny_v3.bin', _v3_blob(mem_size=4096))
+    cpu = CPU(Config(log_level='ERROR', mem_size=4096), path)
+    assert cpu.sp == 4088
+    assert cpu.heap_base == 2048
     assert [op for op, _ in cpu.instructions] == ['HALT']
 
 

@@ -5,6 +5,27 @@
 
 ---
 
+## [Unreleased]
+
+### 修复 (Fixed)
+
+- **旧版 BIN v2 在 v5.9.0+ 内存布局下首条指令即误报栈溢出**：v2 头部只记录
+  `mem_size`/`sp`、不记录 `heap_base`，旧运行时固定按 `heap_base = mem_size // 2`
+  布局。用 v6.0.0 默认 1 GiB 加载旧版 64 KiB BIN 时，SP（≈`0xfff0`）远低于新
+  `heap_base`（`0x20000000`），首条 `PUSH`/`SYS ALLOCFRAME` 报
+  `Stack overflow (collides with heap)`，看起来像真实栈溢出。现在 `load_bin()`
+  在**加载阶段**检测到 v2 布局与当前 `--mem-size` 不一致时直接报
+  `CPUSimulatorError`（CLI 显示 `Load Error`），列出文件头/当前布局并提示
+  “用当前版本重新编译”或“使用 `--mem-size <文件头 mem_size>`”；原生引擎也会在
+  执行前拒绝 `SP < heap_base` 的非法初始状态（`steps=0`）。
+- BIN v2/v3 加载增加头部元数据校验：`mem_size` / `SP` / `heap_base` 越界、
+  段地址越过声明内存、文件截断等损坏输入均在加载阶段给出明确错误，而不是
+  执行到首条指令后才失败。
+- 文档补充“格式可读 ≠ 内存布局兼容”：BIN v2 需匹配 `--mem-size`，v5.9.0 之前
+  的旧 BIN 建议重新编译（见 `docs/runtime/formats.md`）。
+
+---
+
 ## [6.0.0] - 2026-10-17
 
 ### 新增 (Added)

@@ -293,7 +293,8 @@ FADD, FSUB, FMUL, FDIV, FCMP, FCVT, FABS, FNEG, LDRS, STRS, VADD, VSUB, VMUL, VD
 
 CROM v4 采用**段式内存镜像**: 只保存已分配的 4 KiB 页, 镜像体积与实际使用的内存成正比
 (默认 1 GiB 逻辑空间也只会写出真正写入过的页); 旧版 v3 整块镜像仍可读取 (仅兼容)。
-`.bin` 字节码格式同步升级为 **BIN v3** (同样段式, 旧 v2 仅兼容读取)。
+`.bin` 字节码格式同步升级为 **BIN v3** (同样段式, 旧 v2 仅兼容读取; v2 不记录 `heap_base`,
+需用 `--mem-size` 指定与文件头一致的内存布局, 否则加载阶段会报错并提示处理方式)。
 
 ```mermaid
 block-beta

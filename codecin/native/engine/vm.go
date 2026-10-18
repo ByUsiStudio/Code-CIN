@@ -362,7 +362,7 @@ func RunV2(opts *RunOptions) *Result {
 	if vm.sp < vm.heapBase {
 		return finish(StatusError, fmt.Sprintf(
 			"invalid initial stack layout: SP 0x%x is below heap base 0x%x "+
-				"(memory %d bytes); this usually means a legacy BIN compiled "+
+				"(memory %d bytes); this usually means a legacy BIN v2 compiled "+
 				"for the old 64 KB default was loaded with the current "+
 				"1 GiB layout; recompile the source or use --mem-size "+
 				"matching the bytecode's layout",

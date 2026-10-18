@@ -288,7 +288,14 @@ def _validate_bin_stack_layout(version: int, mem_size: int, sp: int,
         raise _bin_header_layout_error(
             version, mem_size, sp, heap_base,
             "SP 超出内存范围或未给栈槽位留出空间")
-    if sp < heap_base + BIN_STACK_GUARD + Constants.STACK_SLOT:
+    if sp < heap_base:
+        raise _bin_header_layout_error(
+            version, mem_size, sp, heap_base,
+            "SP 低于 heap_base")
+    # 只有内存本身足够大、能容纳 4 KiB 栈堆隔离区时才强制守卫线;
+    # 极小的 --mem-size 布局 (例如只跑 HALT 的 .bin) 不应仅因此被拒绝。
+    min_sp = heap_base + BIN_STACK_GUARD + Constants.STACK_SLOT
+    if min_sp <= mem_size - Constants.STACK_SLOT and sp < min_sp:
         raise _bin_header_layout_error(
             version, mem_size, sp, heap_base,
             "SP 低于堆警戒线 (heap_base + 4096)")
