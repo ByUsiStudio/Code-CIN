@@ -590,7 +590,9 @@ def tokenize(source: str,
 # ==================== import 预处理 (B3) ====================
 # import "path.cin" 仅在文件顶部/列首识别。解析规则:
 #   * "./x.cin" / "../x.cin"  -> 相对当前 .cin 文件所在目录;
-#   * 其余形式                -> codecin 内置标准库 codecin/lib/。
+#   * 其余形式                -> 依次查找 codecin 内置标准库、项目依赖目录、
+#                                CIN_PATH、已安装的 pic 包;
+#   * 包名 (无 .cin 后缀) 直接 import 该包的入口 (v6.2.0)。
 # 同一文件每个编译仅包含一次, 循环引用报错。
 
 _IMPORT_RE = re.compile(r'^import\s+["\']([^"\']+)["\']\s*;?\s*$')
@@ -603,19 +605,188 @@ _LIB_DIR = os.path.join(_CODECIN_ROOT, 'lib')
 #: 相对引用的前缀: 必须以 "." 开头
 _RELATIVE_PREFIXES = ('./', '../', '.\\', '..\\')
 
+#: 项目内依赖目录 (按优先级): mkn / pic --project / 旧式隐藏目录
+_PROJECT_DEP_DIRS = ('pic_modules', os.path.join('.mkn', 'deps'),
+                     os.path.join('.pic', 'packages'))
+
+#: 包名合法性 (与 packaging.model 保持一致, 这里不 import 以避免启动开销)
+_PKG_NAME_RE = re.compile(r'^[A-Za-z][A-Za-z0-9_-]{0,63}$')
+
 
 def _is_relative_import(name: str) -> bool:
     """``import "./x.cin"`` / ``import "../x.cin"`` 视为相对引用。"""
     return name.startswith(_RELATIVE_PREFIXES)
 
 
+def _cin_path_dirs() -> List[str]:
+    """``CIN_PATH`` 环境变量中的 import 搜索目录 (``os.pathsep`` 分隔)。"""
+    raw = os.environ.get('CIN_PATH', '')
+    return [os.path.abspath(p) for p in raw.split(os.pathsep) if p.strip()]
+
+
+def _project_roots(source_dir: str) -> List[str]:
+    """从源文件目录向上收集包含 mkn.toml / pic.toml 的项目根 (近到远)。"""
+    roots: List[str] = []
+    path = os.path.abspath(source_dir)
+    while True:
+        if (os.path.isfile(os.path.join(path, 'mkn.toml'))
+                or os.path.isfile(os.path.join(path, 'pic.toml'))):
+            roots.append(path)
+        parent = os.path.dirname(path)
+        if parent == path:
+            break
+        path = parent
+    return roots
+
+
+def _package_roots(source_dir: str) -> List[str]:
+    """候选包根目录 (按优先级): 项目依赖 -> CIN_PATH -> 全局 pic 存储。"""
+    roots: List[str] = []
+    for project in _project_roots(source_dir):
+        for rel in _PROJECT_DEP_DIRS:
+            candidate = os.path.join(project, rel)
+            if os.path.isdir(candidate):
+                roots.append(candidate)
+    roots.extend(_cin_path_dirs())
+
+    home = os.environ.get('PIC_HOME') or os.path.join(
+        os.path.expanduser('~'), '.pic')
+    packages = os.path.join(home, 'packages')
+    if os.path.isdir(packages):
+        # 全局存储按 <name>/<version> 布局; current 版本优先, 其余降序
+        current: Dict[str, str] = {}
+        index_path = os.path.join(home, 'index.json')
+        try:
+            import json
+            with open(index_path, encoding='utf-8') as f:
+                index = json.load(f)
+            for name, record in (index.get('packages') or {}).items():
+                if isinstance(record, dict) and record.get('current'):
+                    current[name] = str(record['current'])
+        except (OSError, ValueError, TypeError):
+            current = {}
+        try:
+            names = sorted(os.listdir(packages))
+        except OSError:
+            names = []
+        for name in names:
+            name_dir = os.path.join(packages, name)
+            if not os.path.isdir(name_dir):
+                continue
+            try:
+                versions = sorted(
+                    (v for v in os.listdir(name_dir)
+                     if os.path.isdir(os.path.join(name_dir, v))),
+                    reverse=True)
+            except OSError:
+                continue
+            chosen = current.get(name)
+            if chosen in versions:
+                versions.remove(chosen)
+                versions.insert(0, chosen)
+            for version in versions:
+                roots.append(os.path.join(name_dir, version))
+    return roots
+
+
+def _entry_from_package(pkg_dir: str, pkg: str,
+                        hinted_file: Optional[str] = None) -> Optional[str]:
+    """在包目录中解析入口文件: pic.toml 的 entry 优先, 再按约定回退。"""
+    base = pkg_dir
+    link = os.path.join(base, '.pic-link')
+    if os.path.isfile(link):
+        try:
+            with open(link, encoding='utf-8') as f:
+                target = f.read().strip()
+            if target:
+                base = os.path.abspath(target)
+        except OSError:
+            pass
+    if not os.path.isdir(base):
+        return None
+
+    if hinted_file:
+        for rel in (hinted_file, os.path.join('src', hinted_file)):
+            candidate = os.path.normpath(os.path.join(base, rel))
+            if os.path.isfile(candidate):
+                return candidate
+
+    manifest = os.path.join(base, 'pic.toml')
+    if os.path.isfile(manifest):
+        try:
+            from .packaging.model import load_package_manifest
+            meta = load_package_manifest(base, require_entry=False)
+            if meta.entry_path:
+                return meta.entry_path
+        except Exception:
+            # 清单损坏不应让 import 变成不可诊断的异常:
+            # 继续按目录约定查找, 最终在找不到时给出统一错误
+            pass
+
+    mkn_manifest = os.path.join(base, 'mkn.toml')
+    if os.path.isfile(mkn_manifest):
+        try:
+            from .packaging.model import load_mkn_manifest
+            project = load_mkn_manifest(base)
+            entry = project.entry_path
+            if entry:
+                return entry
+        except Exception:
+            pass
+
+    for rel in (os.path.join('src', f'{pkg}.cin'), f'{pkg}.cin',
+                os.path.join('src', 'main.cin'), 'main.cin'):
+        candidate = os.path.normpath(os.path.join(base, rel))
+        if os.path.isfile(candidate):
+            return candidate
+    return None
+
+
+def _resolve_package_import(name: str,
+                            source_dir: str) -> Optional[str]:
+    """按包名解析 import; 找不到返回 None。"""
+    normalized = name.replace('\\', '/')
+    parts = [p for p in normalized.split('/') if p]
+    if not parts:
+        return None
+
+    pkg = parts[0]
+    hinted: Optional[str] = None
+    if len(parts) == 1 and pkg.endswith('.cin'):
+        # `import "hello.cin"` 也允许命中名为 hello 的包
+        pkg = pkg[:-4]
+        hinted = parts[0]
+    if not _PKG_NAME_RE.match(pkg):
+        return None
+    sub = '/'.join(parts[1:]) if len(parts) > 1 else ''
+
+    for root in _package_roots(source_dir):
+        pkg_dir = os.path.join(root, pkg)
+        if not os.path.isdir(pkg_dir):
+            continue
+        if sub:
+            for base in (pkg_dir, os.path.join(pkg_dir, 'src')):
+                candidate = os.path.normpath(
+                    os.path.join(base, *sub.split('/')))
+                if os.path.isfile(candidate):
+                    return candidate
+            continue
+        entry = _entry_from_package(pkg_dir, pkg, hinted)
+        if entry:
+            return entry
+    return None
+
+
 def _resolve_import(name: str, source_dir: str) -> str:
     """解析 import 目标路径。
 
-    规则 (B3):
+    规则 (B3 + v6.2.0 包导入):
       * ``import "./x.cin"`` / ``import "../x.cin"`` —— 相对**当前 .cin 文件**所在目录;
-      * 其余任何形式 (``import "x.cin"``、``import "lib/x.cin"``) —— 直接解析到
-        **codecin 内置标准库** ``codecin/lib/`` (``lib/`` 前缀保留为兼容写法)。
+      * 其余形式先查 **codecin 内置标准库** ``codecin/lib/`` (``lib/`` 前缀保留
+        为兼容写法), 保持 "裸名字不会命中兄弟文件" 的既有语义;
+      * 再查项目依赖目录 (``pic_modules`` / ``.mkn/deps`` / ``.pic/packages``)、
+        ``CIN_PATH`` 与全局 pic 包存储; ``import "hello"`` 直接导入包入口,
+        ``import "hello/util.cin"`` 导入包内文件。
     """
     if _is_relative_import(name):
         cand = os.path.normpath(os.path.join(source_dir, name))
@@ -630,9 +801,16 @@ def _resolve_import(name: str, source_dir: str) -> str:
     for cand in candidates:
         if os.path.isfile(cand):
             return cand
+
+    package = _resolve_package_import(name, source_dir)
+    if package:
+        return package
+
     raise CompilerError(
-        f"Import file not found: {name!r} (内置标准库, 已查找 "
-        f"{os.path.join(_LIB_DIR, name)})")
+        f"Import file not found: {name!r} (内置标准库已查找 "
+        f"{os.path.join(_LIB_DIR, name)}; 也未在项目 pic_modules/"
+        f"CIN_PATH/已安装 pic 包中找到)。"
+        f"如需导入第三方包, 先运行 `pic install <name>`。")
 
 
 def _collect_module_lines(path: str, loaded: set, active: set,

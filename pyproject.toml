@@ -25,6 +25,9 @@ classifiers = [
 
 [project.scripts]
 codecin = "codecin.cli:main"
+mkn = "codecin.mkn:main"
+pic = "codecin.pic:main"
+cvm = "codecin.cvm:main"
 
 [project.optional-dependencies]
 dev = [
