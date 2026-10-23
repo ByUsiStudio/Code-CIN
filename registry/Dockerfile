@@ -14,5 +14,5 @@ ENV PIC_SERVER_ADDR=:8080 \
     PIC_PUBLIC_URL=https://package.codecin.org.cn \
     CDIFIT_API_BASE=https://www.cdifit.cn
 VOLUME ["/data"]
-EXPOSE 8080
+EXPOSE 28080
 ENTRYPOINT ["/usr/local/bin/pic-registry"]
