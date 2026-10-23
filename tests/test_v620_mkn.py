@@ -3,7 +3,14 @@
 import os
 import zipfile
 
+import pytest
+
 from codecin import mkn
+
+
+@pytest.fixture(autouse=True)
+def _pic_offline(monkeypatch):
+    monkeypatch.setenv('PIC_OFFLINE', '1')
 
 
 def test_mkn_new_build_package_install(workdir, monkeypatch):

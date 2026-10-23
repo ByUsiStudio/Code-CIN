@@ -13,6 +13,11 @@ pytestmark = pytest.mark.skipif(shutil.which('git') is None,
                                 reason='需要 git 命令')
 
 
+@pytest.fixture(autouse=True)
+def _pic_offline(monkeypatch):
+    monkeypatch.setenv('PIC_OFFLINE', '1')
+
+
 def _git(cwd, *args):
     subprocess.run(['git', *args], cwd=cwd, check=True,
                    capture_output=True, text=True, encoding='utf-8')

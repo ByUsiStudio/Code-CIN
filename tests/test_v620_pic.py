@@ -3,8 +3,16 @@
 import os
 import zipfile
 
+import pytest
+
 from codecin import pic
 from codecin.packaging.store import PackageStore
+
+
+@pytest.fixture(autouse=True)
+def _pic_offline(monkeypatch):
+    """这些用例只覆盖本地包流程; 在线注册表见 test_v620_pic_registry.py。"""
+    monkeypatch.setenv('PIC_OFFLINE', '1')
 
 
 def _init(path, name, version='1.0.0', repo=None):
