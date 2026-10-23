@@ -28,7 +28,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
-from .toml import TomlError, load as _load_toml
+from .toml import TomlError
+from .toml import load as _load_toml
 
 __all__ = [
     'Dependency', 'ManifestError', 'MknManifest', 'PackageMeta',

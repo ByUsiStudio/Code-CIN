@@ -15,12 +15,13 @@
 存储只负责文件与索引, 不执行网络/编译。
 """
 
+import contextlib
 import hashlib
 import json
 import os
 import shutil
 import tempfile
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional
 
@@ -154,10 +155,8 @@ class PackageStore:
             os.replace(tmp, self.index_path)
         finally:
             if os.path.exists(tmp):
-                try:
+                with contextlib.suppress(OSError):
                     os.remove(tmp)
-                except OSError:
-                    pass
 
     def scan(self) -> None:
         """从磁盘重建索引 (只读目录结构, 不需要 pic.toml)。"""

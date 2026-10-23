@@ -17,6 +17,7 @@ Maven                 mkn
 """
 
 import argparse
+import contextlib
 import glob
 import json
 import os
@@ -135,8 +136,7 @@ def build_project(project: MknManifest, *,
         project.build.get('bounds_check', False))
 
     if not _has_main(entry):
-        from .object import (ObjectError, compile_asm_object,
-                             compile_cin_object, write_object)
+        from .object import ObjectError, compile_asm_object, compile_cin_object, write_object
         out = output or os.path.join(
             project.target_dir, f'{project.name}-{project.version}.co')
         out = os.path.abspath(out)
@@ -151,8 +151,8 @@ def build_project(project: MknManifest, *,
             raise
         return out
 
-    from .cpu import CPU
     from . import crom as crom_mod
+    from .cpu import CPU
     cpu = CPU(config, entry)
     out = output or os.path.join(
         project.target_dir, f'{project.name}-{project.version}.bin')

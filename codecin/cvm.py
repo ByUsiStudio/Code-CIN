@@ -19,6 +19,7 @@ CVM 模块只依赖 Code CIN 原生引擎的 ABI, 与宿主 Python 版本无关;
 """
 
 import argparse
+import contextlib
 import json
 import os
 import shutil
@@ -140,10 +141,8 @@ def _compile_source(source: str, *, optimize: int = 0,
         with open(tmp, 'rb') as f:
             data = f.read()
     finally:
-        try:
+        with contextlib.suppress(OSError):
             os.remove(tmp)
-        except OSError:
-            pass
     info = _bin_header(data)
     info['mem_size'] = len(cpu.memory)
     info['optimize'] = config.optimize
@@ -321,10 +320,8 @@ def run_module(module: CVMModule, args: Optional[Sequence[str]] = None, *,
         cpu.run()
         return cpu
     finally:
-        try:
+        with contextlib.suppress(OSError):
             os.remove(tmp)
-        except OSError:
-            pass
 
 
 class CVM:

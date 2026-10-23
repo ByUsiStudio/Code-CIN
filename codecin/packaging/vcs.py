@@ -57,9 +57,7 @@ def is_git_spec(spec: str) -> bool:
     if not text:
         return False
     low = text.lower()
-    if low.startswith(_URL_PREFIXES):
-        return True
-    if low.endswith('.git'):
+    if low.startswith(_URL_PREFIXES) or low.endswith('.git'):
         return True
     # 本地已存在的目录: 由调用方决定是否作为路径依赖; 这里不臆测
     return False

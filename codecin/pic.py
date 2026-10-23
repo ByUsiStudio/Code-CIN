@@ -15,6 +15,7 @@
 """
 
 import argparse
+import contextlib
 import json
 import os
 import re
@@ -43,8 +44,6 @@ from .packaging.store import (
     resolve_link,
 )
 from .packaging.toml import dumps as toml_dumps
-from .packaging.toml import load as toml_load
-from .packaging.toml import loads as toml_loads
 
 __all__ = ['main', 'install_spec', 'install_path', 'install_git',
            'install_named', 'build_package', 'write_project_lock']
@@ -285,10 +284,8 @@ def install_git(url: str, store: PackageStore, *,
     meta = _load_any_manifest(cache)
     _check_expected(meta, expected_name, expected_version)
     rev = ''
-    try:
+    with contextlib.suppress(vcs.VcsError):
         rev = vcs.current_rev(cache)
-    except vcs.VcsError:
-        pass
     key = f'{meta.name}=={meta.version}'
     if key in seen:
         existing = store.get(meta.name, meta.version)

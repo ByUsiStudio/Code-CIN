@@ -32,7 +32,9 @@ from .model import (  # noqa: F401
     satisfies,
 )
 from .store import InstalledPackage, PackageStore, default_store  # noqa: F401
-from .toml import TomlError, dumps as toml_dumps, loads as toml_loads  # noqa: F401
+from .toml import TomlError  # noqa: F401
+from .toml import dumps as toml_dumps
+from .toml import loads as toml_loads
 
 __all__ = [
     'ArchiveError', 'Dependency', 'InstalledPackage', 'ManifestError',

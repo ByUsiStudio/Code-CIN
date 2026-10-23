@@ -1,6 +1,5 @@
 """v6.2.0: pic 包管理器端到端测试 (不依赖网络)。"""
 
-import json
 import os
 import zipfile
 

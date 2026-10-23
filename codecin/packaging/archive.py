@@ -13,7 +13,7 @@ import hashlib
 import os
 import re
 import zipfile
-from typing import Dict, Iterable, List, Optional, Tuple
+from typing import Dict, Iterable, List, Tuple
 
 __all__ = [
     'ArchiveError', 'is_safe_member', 'read_checksums', 'read_manifest_member',

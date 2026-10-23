@@ -1,6 +1,5 @@
 """v6.2.0: mkn 项目/依赖/生命周期测试。"""
 
-import json
 import os
 import zipfile
 
