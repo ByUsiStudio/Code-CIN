@@ -653,39 +653,8 @@ def _package_roots(source_dir: str) -> List[str]:
         os.path.expanduser('~'), '.pic')
     packages = os.path.join(home, 'packages')
     if os.path.isdir(packages):
-        # 全局存储按 <name>/<version> 布局; current 版本优先, 其余降序
-        current: Dict[str, str] = {}
-        index_path = os.path.join(home, 'index.json')
-        try:
-            import json
-            with open(index_path, encoding='utf-8') as f:
-                index = json.load(f)
-            for name, record in (index.get('packages') or {}).items():
-                if isinstance(record, dict) and record.get('current'):
-                    current[name] = str(record['current'])
-        except (OSError, ValueError, TypeError):
-            current = {}
-        try:
-            names = sorted(os.listdir(packages))
-        except OSError:
-            names = []
-        for name in names:
-            name_dir = os.path.join(packages, name)
-            if not os.path.isdir(name_dir):
-                continue
-            try:
-                versions = sorted(
-                    (v for v in os.listdir(name_dir)
-                     if os.path.isdir(os.path.join(name_dir, v))),
-                    reverse=True)
-            except OSError:
-                continue
-            chosen = current.get(name)
-            if chosen in versions:
-                versions.remove(chosen)
-                versions.insert(0, chosen)
-            for version in versions:
-                roots.append(os.path.join(name_dir, version))
+        # 全局存储是 <name>/<version>/; 具体版本由解析器按 current 选择
+        roots.append(packages)
     return roots
 
 
@@ -742,6 +711,35 @@ def _entry_from_package(pkg_dir: str, pkg: str,
     return None
 
 
+def _version_dirs(pkg_dir: str, root: str) -> List[str]:
+    """全局存储 ``<name>/<version>`` 下的版本目录 (current 优先)。"""
+    try:
+        versions = [
+            v for v in os.listdir(pkg_dir)
+            if os.path.isdir(os.path.join(pkg_dir, v))
+            and re.fullmatch(r'\d+\.\d+\.\d+(?:[-+].*)?', v)
+        ]
+    except OSError:
+        return []
+    current = None
+    if os.path.basename(root) == 'packages':
+        index_path = os.path.join(os.path.dirname(root), 'index.json')
+        try:
+            import json
+            with open(index_path, encoding='utf-8') as f:
+                index = json.load(f)
+            record = (index.get('packages') or {}).get(
+                os.path.basename(pkg_dir)) or {}
+            current = record.get('current')
+        except (OSError, ValueError, TypeError):
+            current = None
+    versions.sort(reverse=True)
+    if current in versions:
+        versions.remove(current)
+        versions.insert(0, current)
+    return [os.path.join(pkg_dir, v) for v in versions]
+
+
 def _resolve_package_import(name: str,
                             source_dir: str) -> Optional[str]:
     """按包名解析 import; 找不到返回 None。"""
@@ -764,8 +762,11 @@ def _resolve_package_import(name: str,
         pkg_dir = os.path.join(root, pkg)
         if not os.path.isdir(pkg_dir):
             continue
+        version_dirs = _version_dirs(pkg_dir, root)
         if sub:
-            for base in (pkg_dir, os.path.join(pkg_dir, 'src')):
+            for base in [pkg_dir, os.path.join(pkg_dir, 'src'),
+                         *(os.path.join(v, 'src') for v in version_dirs),
+                         *version_dirs]:
                 candidate = os.path.normpath(
                     os.path.join(base, *sub.split('/')))
                 if os.path.isfile(candidate):
@@ -774,6 +775,10 @@ def _resolve_package_import(name: str,
         entry = _entry_from_package(pkg_dir, pkg, hinted)
         if entry:
             return entry
+        for version_dir in version_dirs:
+            entry = _entry_from_package(version_dir, pkg, hinted)
+            if entry:
+                return entry
     return None
 
 

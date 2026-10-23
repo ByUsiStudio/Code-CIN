@@ -5,6 +5,85 @@
 
 ---
 
+## [6.2.0] - 2026-10-23
+
+一次以「工具链生态」为主题的发布：新增 **mkn**（Maven 风格构建）、**pic**
+（pip 风格去中心化包管理）与 **cvm**（JVM 风格虚拟机/模块运行时），三者共享
+清单、依赖解析与可复现归档格式；CIN 语言与 UCBC 指令集不变。
+
+### 新增 (Added)
+
+#### mkn：项目构建与依赖 (Maven 风格)
+
+- 新增 `codecin/mkn.py` 与 `mkn` 命令：`new` / `init` / `build`(=`compile`) /
+  `run` / `test` / `package` / `install` / `deploy` / `add` / `tree` /
+  `verify` / `clean` 完整生命周期。
+- `mkn.toml`（`[project]` / `[build]` / `[dependencies]`）：标准目录
+  `src/main.cin`、`src/test/**`、`target/`；依赖支持版本约束、Git 仓库与本地路径。
+- 依赖统一解析到项目 `pic_modules/`（`mkn` 复用 `pic` 的安装实现），并写入
+  `pic.lock`；本地仓库为 `$MKN_HOME/repository/<name>/<version>`。
+- 自动区分应用/库：入口及 import 闭包中没有 `function main` 时，`mkn build`
+  产出可重定位 `.co` 对象而不是误报缺少 `main`。
+- `mkn package` 生成确定性 `.mkn` 归档（含自动生成的 `pic.toml`、源码、
+  `target/*.bin|.co` 与 `META-INF/SHA256SUMS`）。
+
+#### pic：去中心化包管理 (pip 风格)
+
+- 新增 `codecin/pic.py` 与 `pic` 命令：`init` / `build` / `publish` /
+  `install` / `uninstall` / `list` / `show` / `freeze` / `search` /
+  `registry` / `doctor`。
+- **用户自建 Git 仓库**：`pic publish --repo <git-url> --name <name>` 校验清单、
+  生成 `.cinpkg`、创建 `v<version>` 标签、登记 `名称 -> 仓库` 注册表；
+  `--push` 可推送标签，`--index <dir>` 可写出分散索引条目。
+- 安装来源：`name@version`、`git+URL@ref`、本地路径、`.cinpkg`；支持传递依赖、
+  `--project` 项目隔离安装与 `-e/--editable`（`.pic-link`）开发模式。
+- 安装存储 `$PIC_HOME`（默认 `~/.pic`）：带自愈能力的 `index.json`、
+  `registry.json`、`packages/<name>/<version>/` 与 Git 缓存；归档安装前校验
+  `META-INF/SHA256SUMS`，解包拒绝绝对路径、盘符、`..` 与符号链接。
+
+#### CVM：虚拟机与 `.cvm` 模块 (JVM 风格)
+
+- 新增 `codecin/cvm.py` 与 `cvm` 命令：`build` / `run` / `inspect` /
+  `verify` / `install` / `which` / `list` / `env`；对外运行时概念为 **CVM**，
+  `CPU` 仅保留为内部执行核。
+- `.cvm` 模块（zip）：`CVM-INF/MANIFEST.TOML` + `code/program.bin` (BIN v3) +
+  `META-INF/SHA256SUMS`；清单记录格式版本、引擎、ABI、模块名/版本与构建信息。
+- 模块路径类似 `CLASSPATH`：`CVM_MODULE_PATH` + `$CVM_HOME/modules`；
+  `cvm install` / `which` 支持按名称解析模块。
+- 支持从 `.cin/.asm/.pl/.bin` 或含 `mkn.toml` 的项目构建模块；校验和/字节码
+  magic 任一不匹配都会在装载阶段失败。
+
+#### 包导入与共享基础设施
+
+- CIN `import` 新增包解析：`import "hello"` 导入包入口，
+  `import "hello/util.cin"` 导入包内文件；搜索顺序为
+  相对路径 → 内置标准库 → 项目 `pic_modules/`/`.mkn/deps`/`.pic/packages` →
+  `CIN_PATH` → 全局 `$PIC_HOME/packages/<name>/<current>`。
+- 新增 `codecin/packaging/`：零依赖 TOML 读写（兼容 Python 3.8）、清单与语义化
+  版本约束、包存储、Git 封装、确定性 zip/安全解包/校验和。
+- 新增 `codecin/toolkit.py`：工具 CLI 的 UTF-8 标准输出初始化。
+- 新增 console scripts：`mkn = codecin.mkn:main`、`pic = codecin.pic:main`、
+  `cvm = codecin.cvm:main`；`codecin --help` 增加工具链提示。
+
+### 变更 (Changed)
+
+- 版本号提升至 **6.2.0**（`codecin/__init__.py` 单一真源，
+  `codecin/native/engine/version_gen.go` 同步）。
+- 裸名字 import 仍**优先命中内置标准库**（如 `import "math.cin"`），避免既有程序
+  被同名第三方包劫持；第三方包推荐使用无 `.cin` 后缀的包名形式。
+- `mkn`/`pic`/`cvm` 的错误统一为 `prog: error: ...` 并返回退出码 1，不打印
+  Python traceback；`--help`/`--version` 退出码 0。
+
+### 兼容性
+
+- 现有 `codecin <program>` 参数、`.cin/.pl/.asm/.bin/.crom/.co/.colib` 格式、
+  ABI v2、BIN v3、CROM v4 全部不变；`tests/test_features_import.py` 的原有用例
+  保持通过。
+- 原生库版本自报仍为旧值时不影响执行；`codecin --build-info` 会提示不一致，
+  重建原生库后即可一致。
+
+---
+
 ## [6.0.1] - 2026-10-18
 
 ### 修复 (Fixed)

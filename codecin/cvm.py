@@ -578,6 +578,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     except (CVMError, ManifestError, archive.ArchiveError, OSError) as e:
         sys.stderr.write(f'cvm: error: {e}\n')
         return 1
+    except Exception as e:  # noqa: BLE001 - 编译/装载错误统一为一行
+        from .errors import CompilerError, CPUSimulatorError
+        if isinstance(e, (CompilerError, CPUSimulatorError)):
+            sys.stderr.write(f'cvm: error: {e}\n')
+            return 1
+        raise
 
 
 if __name__ == '__main__':

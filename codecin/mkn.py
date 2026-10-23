@@ -100,7 +100,14 @@ def _build_config(project: MknManifest, *, release: bool,
 
 
 def _has_main(entry: str) -> bool:
-    """入口及其 import 闭包中是否存在 ``function main(...)``。"""
+    """入口及其 import 闭包中是否存在 ``function main(...)`` / ``main:``。"""
+    if entry.lower().endswith(('.asm', '.pl')):
+        try:
+            with open(entry, encoding='utf-8-sig') as f:
+                return re.search(r'(?im)^\s*(?:global\s+)?main\s*:', f.read()) \
+                    is not None
+        except OSError:
+            return False
     files: List[str]
     try:
         from .cin import collect_imported_files
@@ -165,12 +172,21 @@ def build_project(project: MknManifest, *,
 # ==================== 依赖解析 ====================
 
 
+def _version_key(version: str):
+    try:
+        return tuple(int(part) for part in version.split('-')[0].split('.'))
+    except ValueError:
+        return (0, 0, 0)
+
+
 def _repo_versions(name: str) -> List[str]:
     path = os.path.join(_repository_dir(), name)
     if not os.path.isdir(path):
         return []
-    return sorted(v for v in os.listdir(path)
-                  if os.path.isdir(os.path.join(path, v)))
+    return sorted(
+        (v for v in os.listdir(path)
+         if os.path.isdir(os.path.join(path, v))),
+        key=_version_key)
 
 
 def _install_from_repository(name: str, constraint: str,
@@ -250,7 +266,7 @@ def resolve_dependencies(project: MknManifest, *, force: bool = False
 
     for dep in project.dependencies:
         _install(dep)
-    if installed:
+    if project.dependencies:
         from . import pic
         pic.write_project_lock(project.root, target)
     return installed
@@ -287,6 +303,14 @@ def _generated_pic_manifest(project: MknManifest) -> str:
     }
     if project.repo:
         data['package']['repo'] = project.repo
+    if project.dependencies:
+        deps: Dict[str, Any] = {}
+        for dep in project.dependencies:
+            if dep.path or dep.git or dep.optional:
+                deps[dep.name] = dep.to_dict()
+            else:
+                deps[dep.name] = dep.constraint
+        data['dependencies'] = deps
     return toml_dumps(data)
 
 
@@ -489,12 +513,19 @@ def cmd_test(args) -> int:
                                mem_size=args.mem_size)
         try:
             cpu = CPU(config, path)
+            cpu._capture_output = True  # noqa: SLF001 - 捕获测试断言输出
             cpu.run()
         except Exception as e:  # noqa: BLE001 - 单个测试失败不终止其余测试
             failures += 1
             print(f'FAIL {rel}: {e}')
             continue
-        if getattr(cpu, 'execution_failed', False):
+        output = ''.join(getattr(cpu, 'output_buffer', []))
+        if output:
+            sys.stdout.write(output)
+            if not output.endswith('\n'):
+                sys.stdout.write('\n')
+        reported_failure = re.search(r'(?m)^(FAIL |FAILED:)', output) is not None
+        if getattr(cpu, 'execution_failed', False) or reported_failure:
             failures += 1
             print(f'FAIL {rel}')
         else:
@@ -558,7 +589,11 @@ def cmd_add(args) -> int:
     data = toml_load(project.manifest_path)
     deps = data.setdefault('dependencies', {})
     if args.local_path:
-        value: Any = {'path': args.local_path}
+        local = args.local_path
+        if os.path.isabs(local):
+            with contextlib.suppress(ValueError):
+                local = os.path.relpath(local, project.root)
+        value: Any = {'path': local.replace(os.sep, '/')}
     elif args.git:
         value = {'git': args.git}
         if args.tag:
@@ -648,7 +683,11 @@ def cmd_doctor(args) -> int:
     print(f'go         : {shutil.which("go") or "NOT FOUND"}')
     if project:
         print(f'project    : {project.name} {project.version}')
-        print(f'entry      : {project.entry_path}')
+        try:
+            entry = project.entry_path
+        except ManifestError:
+            entry = '(missing)'
+        print(f'entry      : {entry}')
         print(f'target     : {project.target_dir}')
         print(f'deps       : {len(project.dependencies)}')
     return 0
@@ -737,7 +776,6 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument('--release', action='store_true')
     p.add_argument('--optimize', type=int, choices=range(0, 4))
     p.add_argument('--no-deps', action='store_true', dest='no_deps')
-    p.add_argument('--output')
     p.set_defaults(func=cmd_deploy)
 
     p = sub.add_parser('clean', help='删除 target/')
@@ -783,6 +821,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             vcs.VcsError, OSError) as e:
         sys.stderr.write(f'mkn: error: {e}\n')
         return 1
+    except Exception as e:  # noqa: BLE001 - 编译/链接错误统一为一行
+        from .errors import CompilerError, CPUSimulatorError
+        from .object import ObjectError
+        if isinstance(e, (CompilerError, CPUSimulatorError, ObjectError)):
+            sys.stderr.write(f'mkn: error: {e}\n')
+            return 1
+        raise
 
 
 if __name__ == '__main__':

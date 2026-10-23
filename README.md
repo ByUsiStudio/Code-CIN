@@ -16,6 +16,46 @@ Code CIN 是一门简洁的类 C 高级语言及其跨平台运行时（VM）。
 
 模块化包结构（`codecin/`，Go 侧 `codecin/native/`），全线日志与错误输出基于 **rich**（彩色表格、面板、traceback），`--debug` / `--log-level DEBUG` 提供超详细诊断。
 
+## v6.2.0 工具链：mkn / pic / cvm
+
+v6.2.0 在 `codecin` 之外提供三个独立命令，覆盖**构建 → 分发 → 运行**：
+
+| 命令 | 类比 | 作用 |
+|------|------|------|
+| `mkn` | Maven | 项目清单、标准目录、生命周期、依赖解析、打包与本地仓库 |
+| `pic` | pip | 去中心化包管理：用户自建 Git 仓库，发布填写仓库地址与标识名，安装后可直接 `import` |
+| `cvm` | JVM | Code CIN 虚拟机：构建/校验/运行 `.cvm` 模块，支持模块路径；`CPU` 仅作为内部执行核 |
+
+```bash
+# 项目构建
+mkn new demo && cd demo
+mkn build
+mkn run
+mkn test
+mkn package                     # target/demo-0.1.0.mkn
+
+# 包发布 / 安装
+pic init hello
+pic publish --repo https://github.com/you/cin-hello --name hello
+pic install hello@^1.0          # 或 git+https://...、本地路径、.cinpkg
+pic install hello --project     # 安装到项目 pic_modules/，可直接 import
+
+# 虚拟机
+cvm build src/main.cin -o app.cvm
+cvm verify app.cvm
+cvm run app.cvm -- arg1 arg2
+cvm env
+```
+
+安装后的包无需修改源码即可导入：
+
+```cin
+import "hello"                  // 包入口 (pic.toml 的 entry)
+import "hello/util.cin"         // 包内文件
+```
+
+完整设计、格式与验收标准见 [V6.2.0-PLAN.md](V6.2.0-PLAN.md)。
+
 ## 文档
 
 **官方文档站**位于独立仓库

@@ -93,3 +93,19 @@ def test_mkn_test_runner(workdir, monkeypatch):
     monkeypatch.chdir(project)
     assert mkn.main(['test']) == 0
     assert mkn.main(['doctor']) == 0
+
+
+def test_mkn_test_runner_detects_failed_assertion(workdir, monkeypatch):
+    monkeypatch.setenv('MKN_HOME', os.path.join(workdir, 'mkn-home'))
+    monkeypatch.chdir(workdir)
+    assert mkn.main(['new', 'fdemo']) == 0
+    project = os.path.join(workdir, 'fdemo')
+    monkeypatch.chdir(project)
+    with open(os.path.join(project, 'src', 'test', 'main_test.cin'), 'w',
+              encoding='utf-8') as f:
+        f.write('import "test.cin"\n\n'
+                'function main() -> int {\n'
+                '    t_eq_int(1, 2, "intentional failure")\n'
+                '    return t_report()\n'
+                '}\n')
+    assert mkn.main(['test']) == 1

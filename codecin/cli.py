@@ -28,6 +28,11 @@ HELP_INTRO = f"""{Colors.colorize(f'Code CIN v{__version__}', Colors.CYAN, True)
   .pl    Code CIN 汇编语言 (PL 关键字风格)
   .asm   Code CIN 汇编
   .bin   UCBC 字节码 (由 --compile 生成)
+
+{Colors.colorize('Toolchain (v6.2.0):', Colors.YELLOW)}
+  mkn   项目构建/依赖 (Maven 风格)
+  pic   去中心化包管理 (pip 风格, 安装后可直接 import)
+  cvm   CVM 虚拟机/模块运行时 (JVM 风格)
 """
 
 

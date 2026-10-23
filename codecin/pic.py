@@ -84,7 +84,7 @@ def _iter_package_files(root: str) -> Iterable[Tuple[str, str]]:
 
 def build_package(root: str, out: Optional[str] = None) -> Tuple[str, PackageMeta]:
     """把包目录打成 ``.cinpkg`` (含 ``META-INF/SHA256SUMS``)。"""
-    meta = load_package_manifest(root)
+    meta = _load_any_manifest(root)
     root = meta.root
     if out is None:
         out = os.path.join(root, 'dist',
@@ -221,7 +221,7 @@ def install_path(path: str, store: PackageStore, *,
     path = os.path.abspath(path)
     tmp_dir: Optional[str] = None
     try:
-        if os.path.isfile(path) and path.lower().endswith('.cinpkg'):
+        if os.path.isfile(path) and path.lower().endswith(('.cinpkg', '.mkn')):
             # 不用 tempfile.mkdtemp: 部分受限环境会给 mkdtemp 目录加不可写 ACL
             tmp_dir = os.path.join(
                 store.cache_dir, f'extract-{os.getpid()}-{uuid.uuid4().hex[:8]}')
@@ -357,9 +357,19 @@ def install_named(name: str, constraint: str, store: PackageStore, *,
             f'  也可用 `pic registry add <url> --name {name}` 登记名称。')
     repo = str(entry['repo'])
     ref = _choose_tag(repo, constraint) if constraint else None
-    return install_git(repo, store, ref=ref, target_root=target_root,
-                       editable=editable, force=force, no_deps=no_deps,
-                       expected_name=name, _seen=_seen)
+    installed = install_git(repo, store, ref=ref, target_root=target_root,
+                            editable=editable, force=force,
+                            no_deps=no_deps, expected_name=name,
+                            _seen=_seen)
+    if constraint and not satisfies(installed.version, constraint):
+        if target_root:
+            shutil.rmtree(os.path.join(target_root, name), ignore_errors=True)
+        else:
+            store.remove(name, installed.version)
+        raise PicError(
+            f'{name} 的最新可选版本 {installed.version} 不满足约束 '
+            f'{constraint!r}; 请检查仓库标签或放宽版本范围')
+    return installed
 
 
 def _install_dependency(dep: Dependency, store: PackageStore, *,
@@ -542,7 +552,8 @@ def _manifest_root(path: Optional[str]) -> str:
 def cmd_publish(args) -> int:
     root = _manifest_root(args.manifest)
     manifest_path = os.path.join(root, 'pic.toml')
-    meta = load_package_manifest(root)
+    meta = _load_any_manifest(root)
+    root = meta.root
     if args.name and args.name != meta.name:
         validate_name(args.name)
         meta.name = args.name
@@ -628,9 +639,14 @@ def cmd_publish(args) -> int:
     return 0
 
 
+def _project_root() -> str:
+    from .packaging.model import find_project_root
+    return find_project_root(os.getcwd()) or os.getcwd()
+
+
 def _target_root(args, store: PackageStore) -> Optional[str]:
     if getattr(args, 'project', False):
-        return project_modules_dir(os.getcwd())
+        return project_modules_dir(_project_root())
     return None
 
 
@@ -658,7 +674,7 @@ def cmd_install(args) -> int:
                 version=args.version, ref=args.ref))
 
     if target_root:
-        lock = write_project_lock(os.getcwd(), target_root)
+        lock = write_project_lock(_project_root(), target_root)
         if lock:
             print(f'Lockfile: {lock}')
     for pkg in installed:
@@ -669,11 +685,11 @@ def cmd_install(args) -> int:
 def cmd_uninstall(args) -> int:
     store = default_store()
     if args.project:
-        target = os.path.join(project_modules_dir(os.getcwd()), args.name)
+        target = os.path.join(project_modules_dir(_project_root()), args.name)
         if not os.path.isdir(target):
             raise PicError(f'项目未安装: {args.name}')
         shutil.rmtree(target)
-        write_project_lock(os.getcwd())
+        write_project_lock(_project_root())
         print(f'Removed {args.name} from pic_modules')
         return 0
     if not store.remove(args.name, args.version):
@@ -687,7 +703,7 @@ def cmd_uninstall(args) -> int:
 def cmd_list(args) -> int:
     store = default_store()
     if args.project:
-        target = project_modules_dir(os.getcwd())
+        target = project_modules_dir(_project_root())
         packages = _scan_project_packages(target)
         if args.json:
             print(json.dumps(packages, ensure_ascii=False, indent=2))
@@ -725,7 +741,7 @@ def cmd_show(args) -> int:
     store = default_store()
     pkg = store.get(args.name, args.version)
     if pkg is None and args.project:
-        path = os.path.join(project_modules_dir(os.getcwd()), args.name)
+        path = os.path.join(project_modules_dir(_project_root()), args.name)
         meta = _read_installed_manifest(path)
         if meta:
             pkg = InstalledPackage(meta.name, meta.version, path)
@@ -755,7 +771,7 @@ def cmd_show(args) -> int:
 def cmd_freeze(args) -> int:
     store = default_store()
     if args.project:
-        lock = write_project_lock(os.getcwd())
+        lock = write_project_lock(_project_root())
         if lock is None:
             print('No packages installed in this project.')
             return 0

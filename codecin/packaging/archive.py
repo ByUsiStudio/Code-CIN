@@ -45,7 +45,7 @@ def is_safe_member(name: str) -> bool:
     if not name or '\x00' in name:
         return False
     normalized = name.replace('\\', '/')
-    if normalized.startswith('/'):
+    if normalized.startswith('/') or ':' in normalized:
         return False
     if re.match(r'^[A-Za-z]:', normalized):
         return False
