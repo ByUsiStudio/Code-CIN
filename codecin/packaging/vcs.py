@@ -80,11 +80,24 @@ def split_git_spec(spec: str) -> Tuple[str, Optional[str]]:
     return text, ref
 
 
+def _local_repo_path(url: str) -> Optional[str]:
+    """把本地路径 / file:// URL 归一化为本地 Git 仓库目录。"""
+    text = str(url or '').strip()
+    if text.lower().startswith('file://'):
+        text = text[7:]
+        if re.match(r'^/[A-Za-z]:', text):   # file:///C:/...
+            text = text[1:]
+    if os.path.isdir(text) and is_repo(text):
+        return os.path.abspath(text)
+    return None
+
+
 def clone(url: str, dest: str, ref: Optional[str] = None,
           depth: Optional[int] = 1) -> str:
     """克隆到 ``dest``; ``ref`` 可为标签/分支/提交。
 
-    先克隆到同级临时目录, 成功后再改名, 避免失败时留下半个仓库。
+    本地仓库走文件复制 + ``reset --hard``, 避免受限环境里
+    ``git-upload-pack``/``sh`` 的命名管道限制; 远端仓库走浅克隆。
     """
     url, inline_ref = split_git_spec(url)
     ref = ref or inline_ref
@@ -96,13 +109,25 @@ def clone(url: str, dest: str, ref: Optional[str] = None,
     tmp = os.path.join(parent, f'.clone-{os.getpid()}-{os.urandom(4).hex()}')
     os.makedirs(tmp, exist_ok=True)
     work = os.path.join(tmp, 'repo')
-    attempt: List[str] = ['clone', '--quiet']
-    if depth and not (ref and _SHA_RE.match(ref)):
-        attempt += ['--depth', str(depth)]
-    if ref and not _SHA_RE.match(ref):
-        attempt += ['--branch', ref]
-    attempt += [url, work]
     try:
+        local = _local_repo_path(url)
+        if local is not None:
+            shutil.copytree(local, work)
+            _run(['reset', '--hard', '--quiet', ref or 'HEAD'], cwd=work)
+            if ref:
+                _run(['checkout', '--quiet', ref], cwd=work)
+            _run(['clean', '-fdxq'], cwd=work)
+            if os.path.exists(dest):
+                shutil.rmtree(dest)
+            os.replace(work, dest)
+            return dest
+
+        attempt: List[str] = ['clone', '--quiet']
+        if depth and not (ref and _SHA_RE.match(ref)):
+            attempt += ['--depth', str(depth)]
+        if ref and not _SHA_RE.match(ref):
+            attempt += ['--branch', ref]
+        attempt += [url, work]
         try:
             _run(attempt)
         except VcsError:
@@ -150,6 +175,8 @@ def remote_url(path: str, remote: str = 'origin') -> Optional[str]:
 
 
 def list_tags(path: Optional[str] = None, url: Optional[str] = None) -> List[str]:
+    if url is not None and path is None:
+        path = _local_repo_path(url)
     if path:
         out = _run(['tag', '--list'], cwd=path).stdout
     elif url:

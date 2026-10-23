@@ -558,19 +558,26 @@ def cmd_publish(args) -> int:
     if not vcs.git_available():
         raise PicError('未找到 git 命令; 发布需要 Git')
 
-    # 回写规范化清单 (name/version/repo/tag)
-    if args.repo or args.name or args.version or args.tag:
-        if args.tag:
-            meta.tag = args.tag
-        with open(manifest_path, 'w', encoding='utf-8', newline='\n') as f:
-            f.write(toml_dumps(meta.to_dict()))
-
     if vcs.is_repo(root):
         if not args.allow_dirty and not vcs.is_clean(root):
             raise PicError(
                 'Git 工作区不干净; 先提交改动, 或使用 --allow-dirty 强制发布')
     elif args.push:
         raise PicError('--push 需要在 Git 仓库内运行 (未找到 .git)')
+
+    # 回写规范化清单 (name/version/repo/tag)。注意: 这一步会修改工作区,
+    # 因此 --push 要求用户先把清单改动提交, 保证标签指向的提交包含发布元数据。
+    rewrite = bool(args.repo or args.name or args.version or args.tag)
+    if rewrite:
+        if args.tag:
+            meta.tag = args.tag
+        with open(manifest_path, 'w', encoding='utf-8', newline='\n') as f:
+            f.write(toml_dumps(meta.to_dict()))
+        if args.push and vcs.is_repo(root) and not args.allow_dirty \
+                and not vcs.is_clean(root):
+            raise PicError(
+                '发布元数据已写入 pic.toml, 但工作区随之变脏; '
+                '请先提交该文件, 再重新运行 --push')
 
     out, meta = build_package(root, args.output)
     tag = args.tag or f'v{meta.version}'

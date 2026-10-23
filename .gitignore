@@ -17,6 +17,7 @@ __pycache__/
 /pytest-tmp-*
 /pytest-base-tmp/
 /pytest-of-*/
+/pkgprobe-*/
 
 # ==================== Go 构建缓存 ====================
 /.gocache/

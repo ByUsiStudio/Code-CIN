@@ -52,6 +52,21 @@ def test_project_pic_modules_is_importable(workdir, monkeypatch):
     assert run_cin_file(main).regs.read(0) == 41
 
 
+def test_globally_installed_package_is_importable(workdir, monkeypatch):
+    home = os.path.join(workdir, 'home')
+    monkeypatch.setenv('PIC_HOME', home)
+    monkeypatch.delenv('CIN_PATH', raising=False)
+    pkg = _make_package(os.path.join(workdir, 'store-src'))
+    from codecin import pic
+    from codecin.packaging.store import PackageStore
+    pic.install_path(pkg, PackageStore())
+    main = os.path.join(workdir, 'main.cin')
+    with open(main, 'w', encoding='utf-8') as f:
+        f.write('import "greet"\n'
+                'function main() -> int { return greet() }\n')
+    assert run_cin_file(main).regs.read(0) == 41
+
+
 def test_package_import_missing_has_actionable_hint(workdir, monkeypatch):
     monkeypatch.delenv('CIN_PATH', raising=False)
     monkeypatch.delenv('PIC_HOME', raising=False)
