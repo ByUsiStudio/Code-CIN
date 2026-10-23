@@ -1,4 +1,6 @@
-pic-registry
-pic-registry.exe
+__pycache__/
+*.py[cod]
+.pytest_cache/
+test_server.py
 data/
 *.log

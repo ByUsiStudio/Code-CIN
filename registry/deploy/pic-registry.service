@@ -8,11 +8,12 @@ Type=simple
 User=pic
 Group=pic
 WorkingDirectory=/var/lib/pic-registry
-Environment=PIC_SERVER_ADDR=127.0.0.1:8080
+Environment=PYTHONUNBUFFERED=1
+Environment=PIC_SERVER_ADDR=127.0.0.1:18080
 Environment=PIC_SERVER_DATA=/var/lib/pic-registry/data
 Environment=PIC_PUBLIC_URL=https://package.codecin.org.cn
 Environment=CDIFIT_API_BASE=https://www.cdifit.cn
-ExecStart=/usr/local/bin/pic-registry
+ExecStart=/opt/pic-registry/venv/bin/python /opt/pic-registry/server.py
 Restart=on-failure
 RestartSec=3
 NoNewPrivileges=true

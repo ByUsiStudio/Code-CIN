@@ -72,10 +72,9 @@ aotout/
 /misc/vscode-cin/*.vsix
 
 # ====================== pic 中央服务器 ======================
-/registry/pic-registry
-/registry/*.exe
 /registry/data/
 /registry/*.log
+/registry/.pytest_cache/
 
 # ====================== 其他临时 ======================
 /.*/

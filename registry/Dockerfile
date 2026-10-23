@@ -1,18 +1,24 @@
-# package.codecin.org.cn registry server
-FROM golang:1.26-alpine AS build
-WORKDIR /src
-COPY go.mod ./
-COPY *.go ./
-RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w" -o /out/pic-registry .
+# package.codecin.org.cn registry server（Python 标准库 HTTP + rich）
+FROM python:3.12-slim
 
-FROM alpine:3.20
-RUN adduser -D -H -u 10001 pic && mkdir -p /data && chown pic:pic /data
-COPY --from=build /out/pic-registry /usr/local/bin/pic-registry
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+WORKDIR /app
+COPY requirements.txt ./
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY server.py store.py auth.py version.py ./
+RUN groupadd --gid 10001 pic \
+    && useradd --uid 10001 --gid 10001 --no-create-home \
+       --shell /usr/sbin/nologin pic \
+    && mkdir -p /data && chown pic:pic /data
+
 USER pic
-ENV PIC_SERVER_ADDR=:8080 \
+ENV PIC_SERVER_ADDR=:18080 \
     PIC_SERVER_DATA=/data \
     PIC_PUBLIC_URL=https://package.codecin.org.cn \
     CDIFIT_API_BASE=https://www.cdifit.cn
 VOLUME ["/data"]
-EXPOSE 28080
-ENTRYPOINT ["/usr/local/bin/pic-registry"]
+EXPOSE 18080
+ENTRYPOINT ["python", "/app/server.py"]

@@ -10,26 +10,34 @@
 
 **Cdifit (`https://www.cdifit.cn`) 只用于登录和 AccessToken 校验，不存储包数据。**
 
-## 构建
+服务端使用 Python 标准库的 `http.server`（不依赖 Flask），终端输出与日志由
+[rich](https://github.com/Textualize/rich) 渲染。
+
+## 环境要求
+
+* Python 3.10+
+* `rich`（见 `requirements.txt`）
+
+## 安装与运行
 
 ```bash
 cd registry
-go build -o pic-registry .
-```
+python -m venv .venv
+# Linux / macOS
+.venv/bin/pip install -r requirements.txt
+# Windows
+# .venv\Scripts\pip install -r requirements.txt
 
-## 运行
-
-```bash
-PIC_SERVER_ADDR=:8080 \
+PIC_SERVER_ADDR=:18080 \
 PIC_SERVER_DATA=/var/lib/pic-registry \
 PIC_PUBLIC_URL=https://package.codecin.org.cn \
 CDIFIT_API_BASE=https://www.cdifit.cn \
-./pic-registry
+.venv/bin/python server.py
 ```
 
 | 环境变量 | 默认 | 说明 |
 |----------|------|------|
-| `PIC_SERVER_ADDR` | `:8080` | 监听地址 |
+| `PIC_SERVER_ADDR` | `:18080` | 监听地址 |
 | `PIC_SERVER_DATA` | `./data` | 数据目录 |
 | `PIC_PUBLIC_URL` | `https://package.codecin.org.cn` | 对外地址（用于 artifact_url） |
 | `CDIFIT_API_BASE` | `https://www.cdifit.cn` | Cdifit 认证地址 |
@@ -41,6 +49,13 @@ data/
 ├── packages/<name>.json                 # 包记录/版本列表
 ├── artifacts/<name>/<version>.cinpkg    # 分发制品
 └── tmp/                                 # 上传临时文件
+```
+
+## 测试
+
+```bash
+cd registry
+python -m pytest test_server.py -q
 ```
 
 ## API
@@ -101,7 +116,7 @@ Content-Type: application/octet-stream
 ```bash
 docker build -t pic-registry .
 docker run -d --name pic-registry \
-  -p 0.0.0.0:28080:28080 \
+  -p 0.0.0.0:28080:18080 \
   -v /var/lib/pic-registry:/data \
   -e PIC_PUBLIC_URL=https://package.codecin.org.cn \
   -e CDIFIT_API_BASE=https://www.cdifit.cn \
@@ -121,7 +136,7 @@ server {
     client_max_body_size 300m;
 
     location / {
-        proxy_pass http://127.0.0.1:8080;
+        proxy_pass http://127.0.0.1:18080;
         proxy_set_header Host $host;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
@@ -137,7 +152,10 @@ server {
 ```bash
 sudo useradd --system --home /var/lib/pic-registry --shell /usr/sbin/nologin pic
 sudo install -d -o pic -g pic /var/lib/pic-registry
-sudo install -m 0755 pic-registry /usr/local/bin/pic-registry
+sudo install -d /opt/pic-registry
+sudo cp server.py store.py auth.py version.py requirements.txt /opt/pic-registry/
+sudo python3 -m venv /opt/pic-registry/venv
+sudo /opt/pic-registry/venv/bin/pip install -r /opt/pic-registry/requirements.txt
 sudo install -m 0644 deploy/pic-registry.service /etc/systemd/system/
 sudo systemctl daemon-reload
 sudo systemctl enable --now pic-registry
