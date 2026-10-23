@@ -116,7 +116,7 @@ Content-Type: application/octet-stream
 ```bash
 docker build -t pic-registry .
 docker run -d --name pic-registry \
-  -p 0.0.0.0:28080:18080 \
+  -p 0.0.0.0:18080:18080 \
   -v /var/lib/pic-registry:/data \
   -e PIC_PUBLIC_URL=https://package.codecin.org.cn \
   -e CDIFIT_API_BASE=https://www.cdifit.cn \
