@@ -640,10 +640,8 @@ def cmd_verify(args) -> int:
 
 def cmd_doctor(args) -> int:
     project = None
-    try:
+    with contextlib.suppress(MknError):
         project = _project_from_args(args)
-    except MknError:
-        pass
     print(f'mkn {__version__}')
     print(f'home       : {_home()}')
     print(f'git        : {shutil.which("git") or "NOT FOUND"}')
