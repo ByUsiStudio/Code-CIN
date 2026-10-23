@@ -1,0 +1,25 @@
+[Unit]
+Description=Code CIN pic central registry (package.codecin.org.cn)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pic
+Group=pic
+WorkingDirectory=/var/lib/pic-registry
+Environment=PIC_SERVER_ADDR=127.0.0.1:8080
+Environment=PIC_SERVER_DATA=/var/lib/pic-registry/data
+Environment=PIC_PUBLIC_URL=https://package.codecin.org.cn
+Environment=CDIFIT_API_BASE=https://www.cdifit.cn
+ExecStart=/usr/local/bin/pic-registry
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/pic-registry
+
+[Install]
+WantedBy=multi-user.target

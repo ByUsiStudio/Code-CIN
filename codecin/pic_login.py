@@ -13,6 +13,7 @@
 * 页面布局使用相对单位与 flex (`min(92vw, 26rem)`), 不使用绝对定位。
 """
 
+import contextlib
 import html
 import json
 import secrets
@@ -23,8 +24,14 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Dict, Optional
 from urllib.parse import urlsplit
 
-from .pic_api import (ApiError, AuthState, AuthStore, CdifitClient,
-                      TwoFactorRequired, DEFAULT_API_BASE)
+from .pic_api import (
+    DEFAULT_API_BASE,
+    ApiError,
+    AuthState,
+    AuthStore,
+    CdifitClient,
+    TwoFactorRequired,
+)
 
 __all__ = ['AuthError', 'LoginServer', 'run_login_flow']
 
@@ -502,10 +509,8 @@ def run_login_flow(api_base: str = DEFAULT_API_BASE, *,
     try:
         _print_url(url)
         if open_browser:
-            try:
+            with contextlib.suppress(Exception):
                 webbrowser.open(url)
-            except Exception:  # noqa: BLE001 - 浏览器失败不影响手动打开
-                pass
         state = server.wait(timeout)
         # 给浏览器留出加载 /done 的时间, 随后关闭临时服务
         time.sleep(0.4)

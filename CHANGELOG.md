@@ -8,8 +8,9 @@
 ## [6.2.0] - 2026-10-23
 
 一次以「工具链生态」为主题的发布：新增 **mkn**（Maven 风格构建）、**pic**
-（pip 风格去中心化包管理）与 **cvm**（JVM 风格虚拟机/模块运行时），三者共享
-清单、依赖解析与可复现归档格式；CIN 语言与 UCBC 指令集不变。
+（pip 风格包管理，package.codecin.org.cn 中央注册/分发 + Cdifit 浏览器登录）
+与 **cvm**（JVM 风格虚拟机/模块运行时），三者共享清单、依赖解析与可复现归档格式；
+CIN 语言与 UCBC 指令集不变。
 
 ### 新增 (Added)
 
@@ -27,19 +28,38 @@
 - `mkn package` 生成确定性 `.mkn` 归档（含自动生成的 `pic.toml`、源码、
   `target/*.bin|.co` 与 `META-INF/SHA256SUMS`）。
 
-#### pic：去中心化包管理 (pip 风格)
+#### pic：中央注册/分发 + 浏览器登录 (pip 风格)
 
-- 新增 `codecin/pic.py` 与 `pic` 命令：`init` / `build` / `publish` /
-  `install` / `uninstall` / `list` / `show` / `freeze` / `search` /
-  `registry` / `doctor`。
-- **用户自建 Git 仓库**：`pic publish --repo <git-url> --name <name>` 校验清单、
-  生成 `.cinpkg`、创建 `v<version>` 标签、登记 `名称 -> 仓库` 注册表；
-  `--push` 可推送标签，`--index <dir>` 可写出分散索引条目。
-- 安装来源：`name@version`、`git+URL@ref`、本地路径、`.cinpkg`；支持传递依赖、
-  `--project` 项目隔离安装与 `-e/--editable`（`.pic-link`）开发模式。
-- 安装存储 `$PIC_HOME`（默认 `~/.pic`）：带自愈能力的 `index.json`、
-  `registry.json`、`packages/<name>/<version>/` 与 Git 缓存；归档安装前校验
-  `META-INF/SHA256SUMS`，解包拒绝绝对路径、盘符、`..` 与符号链接。
+- 新增 `codecin/pic.py`、`codecin/pic_api.py`、`codecin/pic_login.py`、
+  `codecin/pic_registry.py` 与 `pic` 命令：`login` / `logout` / `whoami` /
+  `init` / `build` / `publish` / `install` / `uninstall` / `list` / `show` /
+  `freeze` / `search` / `registry` / `doctor`。
+- **独立中央服务器 `package.codecin.org.cn`**：新增 `registry/` Go 服务，
+  提供包记录、版本列表、`.cinpkg` 制品上传/下载、yank、搜索与健康检查；
+  Cdifit (`https://www.cdifit.cn`) 仅用于登录/Token 校验，不再存储包数据。
+- **首次使用登录**：`pic login` 在 `127.0.0.1` 随机端口启动临时 Web 服务并
+  打开浏览器；登录页使用相对布局（flex + `min(92vw, 26rem)`，无绝对定位），
+  支持密码与 2FA；令牌写入 `$PIC_HOME/auth.json` (0600)，服务随后关闭。
+  无 `auth.json` 时首次运行任意 `pic` 命令会自动进入登录流程；`PIC_OFFLINE=1`
+  可离线绕过。
+- **登录安全**：只绑定 loopback；同源 `Origin` + 随机 CSRF 校验；
+  `Cache-Control: no-store` / `X-Frame-Options: DENY`；密码不落盘、不写日志。
+- **发布**：`pic publish --repo <git-url> --name <name>` 校验清单、生成
+  `.cinpkg`、创建 `v<version>` 标签，向中央服务器提交元数据并上传制品；
+  `--push` 推送标签，`--no-tag` 改用 Git 提交记录。
+- **按名称安装**：从中央记录选版本 → 优先下载 `.cinpkg` 并校验 SHA-256，
+  否则回退 Git 拉取 → 重算源码/清单摘要与 `rev` 校验；任一不匹配则删除并拒绝。
+  仍然支持 `name@version`、`git+URL@ref`、本地路径、`.cinpkg`、`--project`
+  与 `-e/--editable`。
+- **详细输出**：`pic publish` 输出 8 步（认证/清单/Git/构建/标签/本地缓存/
+  中央注册/完成），`pic install` 输出解析/锁定/路径/来源/提交/入口/import 提示；
+  `search`/`registry list` 显示服务器与结果数。
+- **本地回退**：`PIC_OFFLINE=1` 或 `config.toml` 的 `offline=true` 时使用
+  `registry.json` 本地注册表；`pic registry add/remove` 保留为本地回退。
+- 安装存储 `$PIC_HOME`（默认 `~/.pic`）：`auth.json`、`config.toml`、
+  带自愈能力的 `index.json`、`packages/<name>/<version>/`、`cache/git/` 与
+  `cache/artifacts/`；归档安装前校验 `META-INF/SHA256SUMS`，解包拒绝绝对路径、
+  盘符、`..` 与符号链接。
 
 #### CVM：虚拟机与 `.cvm` 模块 (JVM 风格)
 
@@ -71,6 +91,9 @@
   `codecin/native/engine/version_gen.go` 同步）。
 - 裸名字 import 仍**优先命中内置标准库**（如 `import "math.cin"`），避免既有程序
   被同名第三方包劫持；第三方包推荐使用无 `.cin` 后缀的包名形式。
+- `pic` 首次运行（除 `login`/`logout`/`doctor`）要求登录 Cdifit；无 `auth.json`
+  时自动打开临时本地登录页。离线开发/CI 使用 `PIC_OFFLINE=1` 或
+  `pic --offline ...` 保持旧行为；`mkn` 按名称解析依赖同样走该登录。
 - `mkn`/`pic`/`cvm` 的错误统一为 `prog: error: ...` 并返回退出码 1，不打印
   Python traceback；`--help`/`--version` 退出码 0。
 

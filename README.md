@@ -23,7 +23,7 @@ v6.2.0 在 `codecin` 之外提供三个独立命令，覆盖**构建 → 分发 
 | 命令 | 类比 | 作用 |
 |------|------|------|
 | `mkn` | Maven | 项目清单、标准目录、生命周期、依赖解析、打包与本地仓库 |
-| `pic` | pip | 去中心化包管理：用户自建 Git 仓库，发布填写仓库地址与标识名，安装后可直接 `import` |
+| `pic` | pip | `package.codecin.org.cn` 中央注册/分发 + Cdifit 登录：发布登记标识名/Git 地址/版本列表/安全摘要并上传 `.cinpkg`，安装后可直接 `import` |
 | `cvm` | JVM | Code CIN 虚拟机：构建/校验/运行 `.cvm` 模块，支持模块路径；`CPU` 仅作为内部执行核 |
 
 ```bash
@@ -34,11 +34,14 @@ mkn run
 mkn test
 mkn package                     # target/demo-0.1.0.mkn
 
-# 包发布 / 安装
+# 包管理 (首次使用会打开临时本地网页登录 Cdifit)
+pic login
 pic init hello
 pic publish --repo https://github.com/you/cin-hello --name hello
 pic install hello@^1.0          # 或 git+https://...、本地路径、.cinpkg
 pic install hello --project     # 安装到项目 pic_modules/，可直接 import
+pic whoami
+pic logout
 
 # 虚拟机
 cvm build src/main.cin -o app.cvm
@@ -46,6 +49,11 @@ cvm verify app.cvm
 cvm run app.cvm -- arg1 arg2
 cvm env
 ```
+
+`pic` 的中央注册/分发服务器是 **`package.codecin.org.cn`**（元数据、
+`.cinpkg` 制品、版本/安全摘要）；**Cdifit (`https://www.cdifit.cn`) 只负责
+登录和 Token 校验**。服务端实现见 [registry/README.md](registry/README.md)，
+客户端可用 `PIC_REGISTRY_URL` 覆盖服务器地址。
 
 安装后的包无需修改源码即可导入：
 

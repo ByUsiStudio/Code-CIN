@@ -1,50 +1,48 @@
-"""pic 中央注册表 (Cdifit 文件 API)。
+"""pic 中央注册/分发服务器客户端。
 
-注册表存放在用户 Cdifit 网盘的 ``cloudreve://my/pic/v1`` 下::
+服务器: ``https://package.codecin.org.cn`` (可配置)
+认证:   Cdifit ``https://www.cdifit.cn`` 的 AccessToken (Bearer)
 
-    packages/<name>.json      # 标识名、Git 获取地址、版本列表、安全摘要
-    index.json                # 名称索引 (便于搜索)
-
-每个版本记录包含:
-
-* ``tag`` / ``rev``: 从哪个 Git 标签/提交安装;
-* ``source_sha256``: 对包源码树 (排除 .git/dist/target/pic_modules) 的确定性摘要;
-* ``manifest_sha256``: 规范化 ``pic.toml`` 的摘要;
-* ``archive_sha256``: 发布时 ``.cinpkg`` 的摘要 (若生成);
-* ``publisher`` / ``published_at``: 发布者与时间。
-
-安装时重新计算源码/清单摘要并与注册表比对, 不匹配则拒绝安装。这提供了
-"获取地址 + 版本列表 + 内容校验" 的完整链路, 且不要求中心服务器存储二进制。
+客户端只把 **元数据 + .cinpkg 制品** 上传到 package.codecin.org.cn;
+Cdifit 仅用于登录/身份校验, 不再用于包存储。
 """
 
+import contextlib
 import hashlib
 import json
 import os
-from datetime import datetime, timezone
+import urllib.error
+import urllib.parse
+import urllib.request
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from .packaging.model import PackageMeta, satisfies, validate_name
 from .packaging.toml import dumps as toml_dumps
-from .pic_api import ApiError, CdifitClient
 
 __all__ = [
-    'DEFAULT_NAMESPACE', 'REGISTRY_SCHEMA', 'Registry', 'RegistryError',
-    'iter_package_files', 'manifest_digest', 'source_digest',
+    'DEFAULT_REGISTRY_URL', 'DIGEST_ALGORITHM', 'RegistryClient',
+    'RegistryError', 'iter_package_files', 'manifest_digest', 'source_digest',
 ]
 
-DEFAULT_NAMESPACE = 'cloudreve://my/pic/v1'
-REGISTRY_SCHEMA = 'pic.registry/v1'
-INDEX_SCHEMA = 'pic.index/v1'
+DEFAULT_REGISTRY_URL = 'https://package.codecin.org.cn'
+DIGEST_ALGORITHM = 'sha256'
 
 _IGNORED_DIRS = frozenset({
     '.git', '.hg', '.svn', '__pycache__', '.pytest_cache', '.ruff_cache',
     'dist', 'build', 'target', 'pic_modules', '.pic', '.mkn',
-    'node_modules', '.venv', 'venv',
+    'node_modules', '.venv', 'venv', 'META-INF',
 })
 
 
 class RegistryError(RuntimeError):
-    """注册表读写/校验失败。"""
+    """中央服务器读写/校验失败。"""
+
+    def __init__(self, message: str, *, status: int = 0,
+                 code: str = '', data: Any = None):
+        super().__init__(message)
+        self.status = status
+        self.code = code
+        self.data = data
 
 
 def iter_package_files(root: str) -> Iterable[Tuple[str, str]]:
@@ -60,15 +58,8 @@ def iter_package_files(root: str) -> Iterable[Tuple[str, str]]:
             yield rel, path
 
 
-def _digest(parts: Iterable[bytes]) -> str:
-    h = hashlib.sha256()
-    for part in parts:
-        h.update(part)
-    return h.hexdigest()
-
-
 def source_digest(root: str) -> str:
-    """源码树摘要: 路径 + 长度 + 内容的 SHA-256, 与平台无关。"""
+    """源码树摘要: 路径 + 长度 + 内容 (换行归一) 的 SHA-256。"""
     h = hashlib.sha256()
     for rel, path in iter_package_files(root):
         if rel in ('pic.toml', '.pic-meta.json', '.mkn-meta.json'):
@@ -83,17 +74,12 @@ def source_digest(root: str) -> str:
         h.update(b'\0')
         h.update(str(len(normalized)).encode('ascii'))
         h.update(b'\0')
-        # 统一换行, 避免 Windows core.autocrlf 导致同一提交摘要不同
         h.update(normalized)
     return h.hexdigest()
 
 
 def manifest_digest(meta: PackageMeta) -> str:
-    """规范化清单摘要 (不依赖 TOML 排版/注释)。
-
-    ``repo`` / ``tag`` 属于发布位置元数据, 会随发布流程变化 (Git 提交里可能
-    尚未回写), 因此不参与内容摘要; 名称/版本/入口/依赖仍被覆盖。
-    """
+    """规范化清单摘要 (忽略 repo/tag 等发布位置字段)。"""
     data = meta.to_dict()
     package = data.get('package')
     if isinstance(package, dict):
@@ -103,8 +89,12 @@ def manifest_digest(meta: PackageMeta) -> str:
     return hashlib.sha256(text.encode('utf-8')).hexdigest()
 
 
-def _now() -> str:
-    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+def _file_sha256(path: str) -> str:
+    h = hashlib.sha256()
+    with open(path, 'rb') as f:
+        for chunk in iter(lambda: f.read(1 << 20), b''):
+            h.update(chunk)
+    return h.hexdigest()
 
 
 def _version_key(version: str) -> Tuple[int, int, int]:
@@ -118,182 +108,122 @@ def _highest(versions: Iterable[str]) -> str:
     return max(versions, key=_version_key)
 
 
-class Registry:
-    """Cdifit 上的 pic 中央注册表。"""
+class RegistryClient:
+    """package.codecin.org.cn API 客户端。"""
 
-    def __init__(self, client: CdifitClient,
-                 namespace: str = DEFAULT_NAMESPACE):
-        if not namespace.startswith('cloudreve://'):
+    def __init__(self, base_url: str = DEFAULT_REGISTRY_URL,
+                 token: Optional[str] = None, timeout: int = 30,
+                 user_agent: str = 'pic/6.2.0'):
+        self.base_url = (base_url or DEFAULT_REGISTRY_URL).rstrip('/')
+        self.token = token
+        self.timeout = timeout
+        self.user_agent = user_agent
+
+    @property
+    def api(self) -> str:
+        return self.base_url + '/api/v1'
+
+    def _url(self, path: str) -> str:
+        return self.api + path if path.startswith('/') else self.api + '/' + path
+
+    def _headers(self, auth: bool, content_type: str = '') -> Dict[str, str]:
+        headers = {'Accept': 'application/json',
+                   'User-Agent': self.user_agent}
+        if content_type:
+            headers['Content-Type'] = content_type
+        if auth and self.token:
+            headers['Authorization'] = 'Bearer ' + self.token
+        return headers
+
+    def _request(self, method: str, path: str,
+                 body: Optional[Dict[str, Any]] = None, *,
+                 auth: bool = False, raw: bool = False,
+                 content_type: str = 'application/json') -> Any:
+        data = None
+        if body is not None:
+            data = json.dumps(body, ensure_ascii=False).encode('utf-8')
+        request = urllib.request.Request(
+            self._url(path), data=data, method=method,
+            headers=self._headers(auth, content_type if data is not None else ''))
+        try:
+            with urllib.request.urlopen(request, timeout=self.timeout) as resp:
+                payload = resp.read()
+                status = resp.status
+        except urllib.error.HTTPError as e:
+            payload = e.read()
+            status = e.code
+        except urllib.error.URLError as e:
             raise RegistryError(
-                f'注册表 namespace 必须是 cloudreve:// URI: {namespace!r}')
-        self.client = client
-        self.namespace = namespace.rstrip('/')
+                f'无法连接中央注册服务器 {self.base_url}: {e.reason}') from e
+        except OSError as e:
+            raise RegistryError(
+                f'无法连接中央注册服务器 {self.base_url}: {e}') from e
 
-    # ---------------- URI ----------------
+        if raw:
+            if status >= 400:
+                raise RegistryError(
+                    f'中央服务器返回 HTTP {status}', status=status)
+            return payload
+        try:
+            envelope = json.loads(payload.decode('utf-8')) if payload else {}
+        except (ValueError, UnicodeDecodeError):
+            text = payload.decode('utf-8', 'replace')[:300]
+            raise RegistryError(
+                f'中央服务器返回非 JSON (HTTP {status}): {text}',
+                status=status) from None
+        if not isinstance(envelope, dict):
+            raise RegistryError(f'中央服务器响应格式错误 (HTTP {status})',
+                                status=status)
+        if status >= 400 or not envelope.get('ok'):
+            error = envelope.get('error') or {}
+            message = error.get('message') if isinstance(error, dict) else None
+            code = error.get('code') if isinstance(error, dict) else ''
+            raise RegistryError(
+                message or f'中央服务器请求失败 (HTTP {status})',
+                status=status, code=str(code or ''), data=envelope.get('data'))
+        return envelope.get('data', {})
 
-    @property
-    def packages_uri(self) -> str:
-        return self.namespace + '/packages'
+    # ---------------- 读 ----------------
 
-    @property
-    def index_uri(self) -> str:
-        return self.namespace + '/index.json'
+    def health(self) -> Dict[str, Any]:
+        return self._request('GET', '/health')
 
-    def package_uri(self, name: str) -> str:
-        return f'{self.packages_uri}/{validate_name(name)}.json'
-
-    # ---------------- 布局 ----------------
-
-    def ensure_layout(self) -> None:
-        self.client.create_folder(self.namespace)
-        self.client.create_folder(self.packages_uri)
-
-    # ---------------- 读取 ----------------
+    def list_packages(self, query: str = '') -> List[Dict[str, Any]]:
+        path = '/packages'
+        if query:
+            path += '?' + urllib.parse.urlencode({'q': query})
+        data = self._request('GET', path)
+        packages = data.get('packages') if isinstance(data, dict) else None
+        return packages if isinstance(packages, list) else []
 
     def get_package(self, name: str) -> Optional[Dict[str, Any]]:
+        validate_name(name)
         try:
-            data = self.client.read_json(self.package_uri(name))
-        except ApiError as e:
-            raise RegistryError(f'读取包记录失败 {name}: {e}') from e
-        if data is None:
+            data = self._request('GET', f'/packages/{name}')
+        except RegistryError as e:
+            if e.status == 404:
+                return None
+            raise
+        return data if isinstance(data, dict) else None
+
+    def get_version(self, name: str, version: str) -> Optional[Dict[str, Any]]:
+        validate_name(name)
+        try:
+            data = self._request('GET', f'/packages/{name}/{version}')
+        except RegistryError as e:
+            if e.status == 404:
+                return None
+            raise
+        if not isinstance(data, dict):
             return None
-        if data.get('schema') != REGISTRY_SCHEMA:
-            raise RegistryError(
-                f'包记录 schema 不兼容: {data.get("schema")!r} '
-                f'(需要 {REGISTRY_SCHEMA})')
-        if data.get('name') != validate_name(name):
-            raise RegistryError(
-                f'包记录名称不匹配: 期望 {name!r}, 实际 {data.get("name")!r}')
-        if not isinstance(data.get('versions'), dict):
-            raise RegistryError(f'包记录缺少 versions: {name}')
-        return data
-
-    def read_index(self) -> Dict[str, Any]:
-        data = self.client.read_json(self.index_uri)
-        if data is None:
-            return {'schema': INDEX_SCHEMA, 'updated_at': _now(),
-                    'packages': {}}
-        if data.get('schema') != INDEX_SCHEMA:
-            raise RegistryError(
-                f'索引 schema 不兼容: {data.get("schema")!r}')
-        if not isinstance(data.get('packages'), dict):
-            data['packages'] = {}
-        return data
-
-    def list_packages(self) -> List[Dict[str, Any]]:
-        try:
-            files = self.client.list_files(self.packages_uri)
-        except ApiError as e:
-            if e.status == 404 or e.code in (404, 40401, 40402):
-                return []
-            raise RegistryError(f'读取包列表失败: {e}') from e
-        out: List[Dict[str, Any]] = []
-        for item in files:
-            name = str(item.get('name') or '')
-            if not name.endswith('.json'):
-                continue
-            name = name[:-5]
-            try:
-                record = self.get_package(name)
-            except RegistryError:
-                continue
-            if record:
-                out.append(record)
-        return out
-
-    # ---------------- 写入 ----------------
-
-    def _publisher(self) -> Dict[str, Any]:
-        user = self.client.auth.user if self.client.auth else {}
-        return {
-            'id': user.get('id') or '',
-            'email': user.get('email') or '',
-            'nickname': user.get('nickname') or user.get('name') or '',
-        }
-
-    def publish(self, meta: PackageMeta, *, repo: str, tag: str,
-                rev: str = '', archive_path: Optional[str] = None,
-                source_hash: Optional[str] = None,
-                manifest_hash: Optional[str] = None) -> Dict[str, Any]:
-        """写入/合并一个版本记录, 并更新名称索引。"""
-        if not repo:
-            raise RegistryError('发布需要 Git 仓库地址')
-        self.ensure_layout()
-        record = self.get_package(meta.name) or {
-            'schema': REGISTRY_SCHEMA,
-            'name': meta.name,
-            'repo': repo,
-            'created_at': _now(),
-            'versions': {},
-        }
-        if record.get('repo') and record['repo'] != repo:
-            # 同名包换仓库属于破坏性变更, 要求显式处理
-            raise RegistryError(
-                f'包 {meta.name} 已登记为 {record["repo"]}, 与本次 {repo} 不同; '
-                f'请先在 Cdifit 中删除旧记录或使用其他标识名')
-        record['repo'] = repo
-        record['updated_at'] = _now()
-        versions = record.setdefault('versions', {})
-        previous = versions.get(meta.version) or {}
-        digest_source = source_hash or source_digest(meta.root)
-        digest_manifest = manifest_hash or manifest_digest(meta)
-        entry = {
-            'tag': tag,
-            'rev': rev or previous.get('rev', ''),
-            'source_sha256': digest_source,
-            'manifest_sha256': digest_manifest,
-            'published_at': _now(),
-            'publisher': self._publisher(),
-            'yanked': bool(previous.get('yanked', False)),
-            'security': {
-                'algorithm': 'sha256',
-                'source_digest': digest_source,
-                'manifest_digest': digest_manifest,
-            },
-        }
-        if archive_path and os.path.isfile(archive_path):
-            entry['archive_sha256'] = _file_sha256(archive_path)
-            entry['archive_name'] = os.path.basename(archive_path)
-            entry['archive_size'] = os.path.getsize(archive_path)
-        versions[meta.version] = entry
-        self.client.write_json(self.package_uri(meta.name), record)
-        self._update_index(meta.name, repo, _highest(versions))
-        return record
-
-    def _update_index(self, name: str, repo: str, latest: str) -> None:
-        try:
-            index = self.read_index()
-        except RegistryError:
-            index = {'schema': INDEX_SCHEMA, 'updated_at': _now(),
-                     'packages': {}}
-        index['updated_at'] = _now()
-        index.setdefault('packages', {})[name] = {
-            'repo': repo,
-            'latest': latest,
-            'updated_at': _now(),
-        }
-        self.client.write_json(self.index_uri, index)
-
-    def yank(self, name: str, version: str, yanked: bool = True) -> Dict[str, Any]:
-        record = self.get_package(name)
-        if record is None:
-            raise RegistryError(f'未找到包: {name}')
-        entry = record.get('versions', {}).get(version)
-        if entry is None:
-            raise RegistryError(f'未找到版本: {name}@{version}')
-        entry['yanked'] = bool(yanked)
-        record['updated_at'] = _now()
-        self.client.write_json(self.package_uri(name), record)
-        return record
-
-    # ---------------- 解析/校验 ----------------
+        entry = data.get('version')
+        return entry if isinstance(entry, dict) else None
 
     def resolve(self, name: str, constraint: str = ''
                 ) -> Tuple[str, str, Dict[str, Any]]:
-        """按名称+约束解析到 (repo, version, entry)。"""
         record = self.get_package(name)
         if record is None:
-            raise RegistryError(f'中央注册表未找到包: {name}')
+            raise RegistryError(f'中央注册服务器未找到包: {name}')
         versions = record.get('versions') or {}
         candidates = []
         for version, entry in versions.items():
@@ -302,28 +232,132 @@ class Registry:
             try:
                 if satisfies(version, constraint or '*'):
                     candidates.append((version, entry))
-            except Exception:  # noqa: BLE001 - 非法版本记录跳过
+            except Exception:  # noqa: BLE001 - 跳过非法历史记录
                 continue
         if not candidates:
+            available = ', '.join(sorted(versions)) or '(无)'
             raise RegistryError(
                 f'包 {name} 没有满足约束 {constraint or "*"} 的版本; '
-                f'可用: {", ".join(sorted(versions)) or "(无)"}')
+                f'可用: {available}')
         version, entry = max(candidates, key=lambda item: _version_key(item[0]))
         repo = str(record.get('repo') or entry.get('repo') or '')
         if not repo:
             raise RegistryError(f'包 {name} 的记录缺少 Git 仓库地址')
         return repo, version, entry
 
+    # ---------------- 写 ----------------
+
+    def publish(self, meta: PackageMeta, *, repo: str, tag: str, rev: str,
+                archive_path: str) -> Dict[str, Any]:
+        """提交元数据并上传 .cinpkg 制品。"""
+        if not repo:
+            raise RegistryError('发布需要 Git 仓库地址')
+        if not os.path.isfile(archive_path):
+            raise RegistryError(f'包归档不存在: {archive_path}')
+        source = source_digest(meta.root)
+        manifest = manifest_digest(meta)
+        archive_sha = _file_sha256(archive_path)
+        size = os.path.getsize(archive_path)
+        metadata = {
+            'name': meta.name,
+            'version': meta.version,
+            'repo': repo,
+            'tag': tag,
+            'rev': rev,
+            'source_sha256': source,
+            'manifest_sha256': manifest,
+            'archive_sha256': archive_sha,
+            'archive_size': size,
+        }
+        published = self._request(
+            'PUT', f'/packages/{meta.name}/{meta.version}', metadata,
+            auth=True)
+        artifact = self._upload_artifact(
+            meta.name, meta.version, archive_path, archive_sha)
+        result = dict(published) if isinstance(published, dict) else {}
+        result['artifact'] = artifact
+        result['source_sha256'] = source
+        result['manifest_sha256'] = manifest
+        result['archive_sha256'] = archive_sha
+        result['archive_size'] = size
+        return result
+
+    def _upload_artifact(self, name: str, version: str, path: str,
+                         digest: str) -> Dict[str, Any]:
+        with open(path, 'rb') as f:
+            data = f.read()
+        query = urllib.parse.urlencode({'sha256': digest})
+        request = urllib.request.Request(
+            self._url(f'/packages/{name}/{version}/artifact?' + query),
+            data=data, method='POST',
+            headers=self._headers(True, 'application/octet-stream'))
+        try:
+            with urllib.request.urlopen(request, timeout=self.timeout) as resp:
+                payload = resp.read()
+                status = resp.status
+        except urllib.error.HTTPError as e:
+            payload = e.read()
+            status = e.code
+        except urllib.error.URLError as e:
+            raise RegistryError(
+                f'上传制品失败 (网络): {e.reason}') from e
+        try:
+            envelope = json.loads(payload.decode('utf-8')) if payload else {}
+        except (ValueError, UnicodeDecodeError):
+            raise RegistryError(
+                f'上传制品返回非 JSON (HTTP {status})', status=status) from None
+        if status >= 400 or not envelope.get('ok'):
+            error = envelope.get('error') or {}
+            message = error.get('message') if isinstance(error, dict) else None
+            raise RegistryError(message or f'上传制品失败 (HTTP {status})',
+                                status=status,
+                                code=str((error or {}).get('code') or ''))
+        return envelope.get('data') or {}
+
+    def download_artifact(self, name: str, version: str, dest: str,
+                          expected_sha256: str = '') -> Tuple[str, str]:
+        """下载制品到 ``dest``; 返回 (路径, 实际 sha256)。"""
+        os.makedirs(os.path.dirname(os.path.abspath(dest)), exist_ok=True)
+        request = urllib.request.Request(
+            self._url(f'/packages/{name}/{version}/artifact'),
+            headers={'User-Agent': self.user_agent})
+        h = hashlib.sha256()
+        try:
+            with urllib.request.urlopen(request, timeout=self.timeout) as resp, \
+                    open(dest, 'wb') as out:
+                while True:
+                    chunk = resp.read(1 << 20)
+                    if not chunk:
+                        break
+                    out.write(chunk)
+                    h.update(chunk)
+        except urllib.error.HTTPError as e:
+            raise RegistryError(
+                f'下载制品失败 (HTTP {e.code}): {name}@{version}',
+                status=e.code) from e
+        except urllib.error.URLError as e:
+            raise RegistryError(f'下载制品失败: {e.reason}') from e
+        actual = h.hexdigest()
+        if expected_sha256 and actual != expected_sha256:
+            with contextlib.suppress(OSError):
+                os.remove(dest)
+            raise RegistryError(
+                f'制品 SHA-256 不匹配: 期望 {expected_sha256[:16]}…, '
+                f'实际 {actual[:16]}…')
+        return dest, actual
+
+    def yank(self, name: str, version: str, yanked: bool = True) -> Dict[str, Any]:
+        data = self._request('POST', f'/packages/{name}/{version}/yank',
+                             {'yanked': yanked}, auth=True)
+        return data if isinstance(data, dict) else {}
+
+    # ---------------- 校验 ----------------
+
     @staticmethod
     def verify_install(meta: PackageMeta, entry: Dict[str, Any], *,
                        rev: str = '') -> None:
-        """安装后校验源码/清单摘要与 Git 提交。"""
-        expected_source = str(entry.get('source_sha256')
-                              or (entry.get('security') or {}).get(
-                                  'source_digest') or '')
-        expected_manifest = str(entry.get('manifest_sha256')
-                                or (entry.get('security') or {}).get(
-                                    'manifest_digest') or '')
+        expected_source = str(entry.get('source_sha256') or '')
+        expected_manifest = str(entry.get('manifest_sha256') or '')
         if expected_source:
             actual = source_digest(meta.root)
             if actual != expected_source:
@@ -342,7 +376,7 @@ class Registry:
                 f'(期望 {expected_rev[:12]}…, 实际 {rev[:12]}…)')
 
     @staticmethod
-    def entry_summary(record: Dict[str, Any]) -> List[Tuple[str, str, str]]:
+    def version_rows(record: Dict[str, Any]) -> List[Tuple[str, str, str]]:
         rows = []
         for version in sorted(record.get('versions') or {},
                               key=_version_key, reverse=True):
@@ -350,22 +384,3 @@ class Registry:
             rows.append((version, str(entry.get('tag') or ''),
                          'yanked' if entry.get('yanked') else ''))
         return rows
-
-
-def _file_sha256(path: str) -> str:
-    h = hashlib.sha256()
-    with open(path, 'rb') as f:
-        for chunk in iter(lambda: f.read(1 << 20), b''):
-            h.update(chunk)
-    return h.hexdigest()
-
-
-def registry_from_env(client: Optional[CdifitClient] = None,
-                      namespace: Optional[str] = None) -> Optional[Registry]:
-    if client is None:
-        from .pic_api import client_from_store
-        client = client_from_store()
-    if client is None:
-        return None
-    return Registry(client, namespace or os.environ.get(
-        'PIC_REGISTRY_URI', DEFAULT_NAMESPACE))

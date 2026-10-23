@@ -88,6 +88,33 @@ jobs:
         env:
           CODECIN_AOT_TESTS: "1"
 
+  registry:
+    name: pic registry (Go)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: registry/go.mod
+          cache: true
+          cache-dependency-path: registry/go.mod
+      - name: go test
+        run: go test ./... -race -count=1
+        working-directory: registry
+      - name: go vet
+        run: go vet ./...
+        working-directory: registry
+      - name: gofmt
+        run: |
+          out="$(gofmt -l .)"
+          if [ -n "$out" ]; then
+            echo "以下文件未格式化:" >&2
+            echo "$out" >&2
+            exit 1
+          fi
+        working-directory: registry
+
   dist:
     name: 打包 (wheel/sdist 必须含内置标准库)
     runs-on: ubuntu-latest

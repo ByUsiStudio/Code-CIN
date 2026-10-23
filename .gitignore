@@ -71,6 +71,12 @@ aotout/
 # ====================== VSCode ======================
 /misc/vscode-cin/*.vsix
 
+# ====================== pic 中央服务器 ======================
+/registry/pic-registry
+/registry/*.exe
+/registry/data/
+/registry/*.log
+
 # ====================== 其他临时 ======================
 /.*/
 !.github/*

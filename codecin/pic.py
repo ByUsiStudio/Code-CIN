@@ -1,12 +1,13 @@
-"""``pic`` —— Code CIN 包管理器 (pip 风格, Cdifit 中央注册表)。
+"""``pic`` —— Code CIN 包管理器 (pip 风格)。
 
 核心约定 (v6.2.0+):
 
-* **中央注册表**: 包记录 (标识名、Git 获取地址、版本列表、源码/清单摘要、
-  发布者) 存放在 Cdifit 文件 API (``cloudreve://my/pic/v1``); 首次使用必须
-  通过浏览器登录 Cdifit;
-* **Git 作为内容源**: 包内容仍在用户自己的 Git 仓库; 中心只存元数据与安全摘要,
-  安装时按 Git 标签/提交拉取并校验摘要;
+* **中央注册/分发**: 包记录 (标识名、Git 获取地址、版本列表、源码/清单摘要、
+  发布者) 与 ``.cinpkg`` 制品存放在 ``package.codecin.org.cn``;
+* **Cdifit 只负责登录**: 首次使用通过临时本地网页登录 ``www.cdifit.cn``,
+  获取 AccessToken 后用于中央服务器鉴权;
+* **Git 作为源码来源**: 包内容仍在用户自己的 Git 仓库; 安装时可优先使用
+  中央制品, 否则按标签/提交拉取 Git 并校验摘要;
 * **安装即可直接 import**: 包安装到 ``$PIC_HOME/packages/<name>/<version>``
   或项目 ``pic_modules/<name>``; CIN 的 ``import "name"`` 会自动解析;
 * **依赖递归安装** / **可编辑安装** 与旧版一致;
@@ -57,8 +58,8 @@ from .pic_api import (
 )
 from .pic_login import AuthError, run_login_flow
 from .pic_registry import (
-    DEFAULT_NAMESPACE,
-    Registry,
+    DEFAULT_REGISTRY_URL,
+    RegistryClient,
     RegistryError,
     iter_package_files,
     manifest_digest,
@@ -76,6 +77,7 @@ _IGNORE = shutil.ignore_patterns(
 
 #: 进程内缓存的已登录客户端 (一次 CLI 调用只弹一次浏览器)
 _CLIENT: Optional[CdifitClient] = None
+_CLIENT_HOME: Optional[str] = None
 
 
 class PicError(RuntimeError):
@@ -88,7 +90,7 @@ class PicError(RuntimeError):
 @dataclass
 class PicConfig:
     api_base: str = DEFAULT_API_BASE
-    namespace: str = DEFAULT_NAMESPACE
+    registry_url: str = DEFAULT_REGISTRY_URL
     offline: bool = False
 
 
@@ -113,19 +115,23 @@ def load_config() -> PicConfig:
     login = data.get('login') or {}
     env_offline = os.environ.get('PIC_OFFLINE', '').lower() in (
         '1', 'true', 'yes', 'on')
+    api_base = os.environ.get('PIC_API_BASE') or registry.get('api_base')
+    if not api_base:
+        saved = AuthStore().load()
+        api_base = saved.api_base if saved is not None else DEFAULT_API_BASE
     return PicConfig(
-        api_base=str(os.environ.get('PIC_API_BASE')
-                     or registry.get('api_base') or DEFAULT_API_BASE).rstrip('/'),
-        namespace=str(os.environ.get('PIC_REGISTRY_URI')
-                      or registry.get('namespace') or DEFAULT_NAMESPACE).rstrip('/'),
+        api_base=str(api_base).rstrip('/'),
+        registry_url=str(os.environ.get('PIC_REGISTRY_URL')
+                         or registry.get('url') or DEFAULT_REGISTRY_URL).rstrip('/'),
         offline=env_offline or bool(registry.get('offline') or
                                     login.get('offline') or False),
     )
 
 
 def _reset_client() -> None:
-    global _CLIENT
+    global _CLIENT, _CLIENT_HOME
     _CLIENT = None
+    _CLIENT_HOME = None
 
 
 def _version_key(version: str) -> Tuple[int, int, int]:
@@ -135,23 +141,44 @@ def _version_key(version: str) -> Tuple[int, int, int]:
         return (0, 0, 0)
 
 
+def _step(index: int, total: int, title: str) -> None:
+    print(f'[{index}/{total}] {title}')
+
+
+def _detail(key: str, value: Any, indent: int = 6) -> None:
+    print(' ' * indent + f'{key:<11}: {value}')
+
+
+def _fmt_size(size: int) -> str:
+    value = float(size)
+    for unit in ('B', 'KiB', 'MiB', 'GiB'):
+        if value < 1024 or unit == 'GiB':
+            return f'{value:.1f} {unit}' if unit != 'B' else f'{int(value)} B'
+        value /= 1024
+    return f'{size} B'
+
+
 def get_client(*, interactive: bool = True,
                open_browser: bool = True,
                force_login: bool = False) -> CdifitClient:
     """返回已登录客户端; 未登录时按需启动浏览器登录。"""
-    global _CLIENT
+    global _CLIENT, _CLIENT_HOME
     config = load_config()
     if config.offline:
         raise PicError('PIC_OFFLINE=1: 中央注册表已禁用')
-    if _CLIENT is not None and not force_login:
-        return _CLIENT
     store = AuthStore()
     state = store.load()
+    home = _pic_home()
+    if _CLIENT is not None and not force_login and home == _CLIENT_HOME \
+            and state is not None and _CLIENT.auth is not None \
+            and _CLIENT.auth.access_token == state.access_token:
+        return _CLIENT
     if state is not None and state.api_base.rstrip('/') == config.api_base:
         client = CdifitClient(config.api_base, auth=state, store=store)
         try:
             client.ensure_token()
             _CLIENT = client
+            _CLIENT_HOME = home
             return client
         except ApiError:
             # access/refresh 都失效 -> 重新登录
@@ -162,16 +189,18 @@ def get_client(*, interactive: bool = True,
                            open_browser=open_browser)
     client = CdifitClient(config.api_base, auth=state, store=store)
     _CLIENT = client
+    _CLIENT_HOME = home
     return client
 
 
 def get_registry(*, interactive: bool = True,
-                 open_browser: bool = True) -> Optional[Registry]:
+                 open_browser: bool = True) -> Optional[RegistryClient]:
     config = load_config()
     if config.offline:
         return None
     client = get_client(interactive=interactive, open_browser=open_browser)
-    return Registry(client, config.namespace)
+    token = client.auth.access_token if client.auth else ''
+    return RegistryClient(config.registry_url, token=token)
 
 
 # ==================== 包文件与归档 ====================
@@ -457,17 +486,46 @@ def install_named(name: str, constraint: str, store: PackageStore, *,
         installed = None
         try:
             repo, version, registered = registry.resolve(name, constraint)
-            ref = str(registered.get('tag')
-                      or registered.get('rev') or '') or None
-            installed = install_git(
-                repo, store, ref=ref, target_root=target_root,
-                editable=editable, force=force, no_deps=no_deps,
-                expected_name=name, _seen=_seen)
-            meta = _read_installed_manifest(installed.real_path)
-            if meta is None:
-                raise RegistryError(
-                    f'安装后无法读取包清单: {installed.path}')
-            Registry.verify_install(meta, registered, rev=installed.rev)
+            artifact_sha = str(registered.get('archive_sha256') or '')
+            use_artifact = bool(artifact_sha and registered.get('artifact_url'))
+            _detail('中央注册表', registry.base_url)
+            _detail('解析', f'{name}@{version}'
+                    + (f' (约束 {constraint})' if constraint else ''))
+            _detail('获取地址', repo)
+            _detail('分发方式', '中央制品' if use_artifact else 'Git 仓库')
+            if use_artifact:
+                _detail('制品 SHA-256', artifact_sha)
+            if use_artifact:
+                cache = store.cache_path('artifacts')
+                dest = os.path.join(cache, f'{name}-{version}.cinpkg')
+                registry.download_artifact(name, version, dest, artifact_sha)
+                installed = install_path(
+                    dest, store, target_root=target_root, force=force,
+                    no_deps=no_deps, expected_name=name,
+                    expected_version=version, repo=repo,
+                    rev=str(registered.get('rev') or ''), _seen=_seen)
+                meta = _read_installed_manifest(installed.real_path)
+                if meta is None:
+                    raise RegistryError(
+                        f'安装后无法读取包清单: {installed.path}')
+                RegistryClient.verify_install(meta, registered)
+            else:
+                ref = str(registered.get('tag')
+                          or registered.get('rev') or '') or None
+                installed = install_git(
+                    repo, store, ref=ref, target_root=target_root,
+                    editable=editable, force=force, no_deps=no_deps,
+                    expected_name=name, _seen=_seen)
+                if installed.version != version:
+                    raise RegistryError(
+                        f'安装版本不匹配: 注册表为 {version}, 实际为 '
+                        f'{installed.version}')
+                meta = _read_installed_manifest(installed.real_path)
+                if meta is None:
+                    raise RegistryError(
+                        f'安装后无法读取包清单: {installed.path}')
+                RegistryClient.verify_install(meta, registered,
+                                              rev=installed.rev)
             return installed
         except RegistryError as e:
             if installed is not None:
@@ -482,7 +540,7 @@ def install_named(name: str, constraint: str, store: PackageStore, *,
     if not entry or not entry.get('repo'):
         raise PicError(
             f'未找到包 {name!r} 的仓库。\n'
-            f'  在线: 请确认包已通过 `pic publish` 登记到 Cdifit 中央注册表;\n'
+            f'  在线: 请确认包已通过 `pic publish` 登记到中央注册服务器;\n'
             f'  离线: 可用 `pic install git+<url>` 直接安装, 或在 pic.toml 中声明 '
             f'`[dependencies.{name}] git = "..."`;\n'
             f'  也可用 `pic registry add <url> --name {name}` 登记本地名称。')
@@ -669,7 +727,11 @@ def cmd_init(args) -> int:
 def cmd_build(args) -> int:
     root = _manifest_root(args.manifest)
     out, meta = build_package(root, args.output)
-    print(f'Built {meta.name} {meta.version}: {out}')
+    print(f'pic build {meta.name}@{meta.version}')
+    _detail('manifest', meta.manifest_path)
+    _detail('archive', out)
+    _detail('size', _fmt_size(os.path.getsize(out)))
+    _detail('sha256', archive.sha256_file(out))
     return 0
 
 
@@ -702,11 +764,33 @@ def cmd_publish(args) -> int:
 
     config = load_config()
     registry = None if config.offline else get_registry(interactive=True)
+    if registry is not None and not vcs.is_repo(root):
+        raise PicError(
+            '发布到中央注册表需要 Git 仓库: 请在包目录执行 git init/commit, '
+            '或使用 PIC_OFFLINE=1 仅登记本地注册表')
+
+    print(f'pic publish {meta.name}@{meta.version}')
+    _step(1, 8, '认证 / 配置')
+    auth = AuthStore().load()
+    if auth is not None:
+        _detail('Cdifit 用户', f'{auth.display_name} <{auth.email}>')
+    else:
+        _detail('登录', '离线模式 (未登录)')
+    _detail('注册服务器', config.registry_url)
+    _detail('Git 仓库', meta.repo)
+    _step(2, 8, '清单')
+    _detail('包名', meta.name)
+    _detail('版本', meta.version)
+    _detail('入口', meta.entry_rel)
+    _detail('清单文件', manifest_path)
 
     if vcs.is_repo(root):
+        _step(3, 8, 'Git 工作区检查')
+        _detail('仓库', root)
         if not args.allow_dirty and not vcs.is_clean(root):
             raise PicError(
                 'Git 工作区不干净; 先提交改动, 或使用 --allow-dirty 强制发布')
+        _detail('工作区', 'clean')
     elif args.push:
         raise PicError('--push 需要在 Git 仓库内运行 (未找到 .git)')
 
@@ -725,39 +809,64 @@ def cmd_publish(args) -> int:
                 '请先提交该文件, 再重新运行 --push')
 
     out, meta = build_package(root, args.output)
+    archive_sha = archive.sha256_file(out)
+    _step(4, 8, '构建 .cinpkg')
+    _detail('归档', out)
+    _detail('大小', _fmt_size(os.path.getsize(out)))
+    _detail('SHA-256', archive_sha)
+    _detail('源码摘要', source_digest(meta.root))
+    _detail('清单摘要', manifest_digest(meta))
     tag = args.tag or f'v{meta.version}'
     pushed = False
+    _step(5, 8, 'Git 标签')
     if vcs.is_repo(root) and not args.no_tag:
         created = vcs.create_tag(root, tag,
                                  message=f'{meta.name} {meta.version}')
-        if created:
-            print(f'Tagged {tag}')
-        else:
-            print(f'Tag {tag} already exists')
+        _detail('标签', tag + (' (新建)' if created else ' (已存在)'))
         if args.push:
             remote = args.remote or 'origin'
             try:
                 vcs.push_tag(root, tag, remote=remote)
                 pushed = True
+                _detail('推送', f'{remote}/{tag}')
             except vcs.VcsError as e:
                 raise PicError(f'推送标签失败: {e}') from e
+    else:
+        _detail('标签', '(跳过, 使用 Git 提交)')
 
     store = default_store()
     store.register(meta.name, meta.repo, meta.version, tag)
+    _step(6, 8, '本地缓存')
+    _detail('registry.json', '已登记 (离线回退)')
 
     if registry is not None:
+        _step(7, 8, '中央注册 / 分发')
         rev = ''
         if vcs.is_repo(root):
             with contextlib.suppress(vcs.VcsError):
                 rev = vcs.current_rev(root)
-        registry.publish(meta, repo=meta.repo, tag=tag, rev=rev,
-                         archive_path=out)
-        print(f'  central: {config.namespace}/packages/{meta.name}.json')
+        result = registry.publish(
+            meta, repo=meta.repo, tag=('' if args.no_tag else tag), rev=rev,
+            archive_path=out)
+        artifact = result.get('artifact') or {}
+        _detail('服务器', config.registry_url)
+        _detail('元数据', f'PUT /api/v1/packages/{meta.name}/{meta.version}')
+        _detail('制品', artifact.get('url') or '未上传')
+        _detail('制品大小', _fmt_size(int(artifact.get('size') or
+                                      os.path.getsize(out))))
+        _detail('发布者', (result.get('publisher') or {}).get('email')
+                or (auth.email if auth else 'unknown'))
+    else:
+        _step(7, 8, '中央注册 / 分发')
+        _detail('状态', '离线模式, 仅本地登记')
 
-    print(f'Published {meta.name} {meta.version}: {out}')
-    print(f'  repo : {meta.repo}')
-    print(f'  tag  : {tag}' + (' (pushed)' if pushed else ''))
-    print(f'  sha256: {archive.sha256_file(out)}')
+    _step(8, 8, '完成')
+    _detail('包', f'{meta.name}@{meta.version}')
+    _detail('获取地址', meta.repo)
+    _detail('标签', tag + (' (pushed)' if pushed else ''))
+    _detail('校验和', archive_sha)
+    _detail('安装', f'pic install {meta.name}@{meta.version}')
+    _detail('导入', f'import "{meta.name}"')
 
     if args.index:
         index_dir = os.path.abspath(args.index)
@@ -772,14 +881,14 @@ def cmd_publish(args) -> int:
                 meta.version: {
                     'tag': tag,
                     'file': os.path.basename(out),
-                    'sha256': archive.sha256_file(out),
+                    'sha256': archive_sha,
                 },
             },
         }
         indexPath = os.path.join(index_dir, f'{meta.name}.toml')
         with open(indexPath, 'w', encoding='utf-8', newline='\n') as f:
             f.write(toml_dumps(entry))
-        print(f'  index: {indexPath}')
+        _detail('索引', indexPath)
     return 0
 
 
@@ -798,6 +907,10 @@ def cmd_install(args) -> int:
     store = default_store()
     target_root = _target_root(args, store)
     installed: List[InstalledPackage] = []
+    print('pic install ' + (' '.join(args.specs) if args.specs else '(pic.toml)'))
+    _step(1, 3, '解析安装规格')
+    _detail('目标', target_root or store.root)
+    _detail('模式', '可编辑' if args.editable else '复制安装')
 
     specs = list(args.specs)
     if not specs:
@@ -817,12 +930,24 @@ def cmd_install(args) -> int:
                 force=args.force, no_deps=args.no_deps, name=args.name,
                 version=args.version, ref=args.ref))
 
+    _step(2, 3, '写入锁定信息')
     if target_root:
         lock = write_project_lock(_project_root(), target_root)
         if lock:
-            print(f'Lockfile: {lock}')
+            _detail('pic.lock', lock)
+    else:
+        _detail('pic.lock', '(全局安装)')
+
+    _step(3, 3, '安装完成')
     for pkg in installed:
-        print(f'Installed {pkg.name} {pkg.version} -> {pkg.path}')
+        meta = _read_installed_manifest(pkg.real_path)
+        _detail('包', f'{pkg.name}@{pkg.version}')
+        _detail('路径', pkg.real_path)
+        _detail('来源', pkg.repo or '(local)')
+        _detail('提交', pkg.rev or '-')
+        if meta is not None:
+            _detail('入口', meta.entry_rel)
+        _detail('导入', f'import "{pkg.name}"')
     return 0
 
 
@@ -941,13 +1066,10 @@ def cmd_search(args) -> int:
     rows = []
     if not config.offline:
         registry = get_registry(interactive=True)
-        for record in registry.list_packages():
+        for record in registry.list_packages(args.query or ''):
             name = str(record.get('name') or '')
             repo = str(record.get('repo') or '')
-            if query and query not in name.lower() and query not in repo.lower():
-                continue
-            versions = list((record.get('versions') or {}).keys())
-            latest = max(versions, key=_version_key) if versions else '-'
+            latest = str(record.get('latest') or '-')
             rows.append((name, repo, latest))
     else:
         data = default_store().load_registry().get('packages', {})
@@ -961,6 +1083,9 @@ def cmd_search(args) -> int:
     if not rows:
         print('No matching packages in registry.')
         return 0
+    print(f'pic search {args.query or "*"}')
+    print(f'  registry: {config.registry_url if not config.offline else "local"}')
+    print(f'  results : {len(rows)}')
     print('NAME                 LATEST      REPO')
     for name, repo, latest in sorted(rows):
         print(f'{name:<20} {latest:<11} {repo}')
@@ -1001,8 +1126,7 @@ def cmd_registry(args) -> int:
             return 0
         print('NAME                 LATEST      REPO')
         for record in sorted(records, key=lambda item: item.get('name', '')):
-            versions = list((record.get('versions') or {}).keys())
-            latest = max(versions, key=_version_key) if versions else '-'
+            latest = str(record.get('latest') or '-')
             print(f'{record.get("name", ""):<20} {latest:<11} '
                   f'{record.get("repo", "")}')
         return 0
@@ -1017,23 +1141,43 @@ def cmd_registry(args) -> int:
     return 0
 
 
+def _write_config_api_base(api_base: str) -> None:
+    path = os.path.join(_pic_home(), 'config.toml')
+    data = _read_config()
+    registry = data.setdefault('registry', {})
+    if not isinstance(registry, dict):
+        registry = {}
+        data['registry'] = registry
+    registry['api_base'] = api_base
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, 'w', encoding='utf-8', newline='\n') as f:
+        f.write(toml_dumps(data))
+
+
 def cmd_login(args) -> int:
     config = load_config()
     if args.api_base:
         config.api_base = args.api_base.rstrip('/')
+        _write_config_api_base(config.api_base)
+    print('pic login')
+    _step(1, 3, '连接 Cdifit')
+    _detail('认证地址', config.api_base)
+    _detail('注册服务器', config.registry_url)
     store = AuthStore()
     existing = store.load()
     if existing is not None and not args.force \
             and existing.api_base.rstrip('/') == config.api_base:
         client = CdifitClient(config.api_base, auth=existing, store=store)
         try:
-            user = client.userinfo()
-            print(f'Already logged in as {existing.display_name} '
-                  f'<{existing.email}>')
+            client.userinfo()
+            _step(2, 3, '已有有效会话')
+            _detail('用户', f'{existing.display_name} <{existing.email}>')
+            _step(3, 3, '完成')
             return 0
         except ApiError:
             store.clear()
 
+    _step(2, 3, '浏览器/凭据登录' if not args.email else '密码登录')
     if args.email:
         email = args.email
         password = args.password
@@ -1054,21 +1198,29 @@ def cmd_login(args) -> int:
                                timeout=args.timeout,
                                open_browser=not args.no_browser)
     _reset_client()
-    print(f'Logged in as {state.display_name} <{state.email}>')
-    print(f'  api: {state.api_base}')
-    print(f'  auth: {store.path}')
+    _step(3, 3, '保存令牌')
+    _detail('用户', f'{state.display_name} <{state.email}>')
+    _detail('API', state.api_base)
+    _detail('令牌文件', store.path)
+    _detail('Access 过期', state.access_expires or '(未知)')
     return 0
 
 
 def cmd_logout(args) -> int:
+    print('pic logout')
+    _step(1, 2, '撤销 Cdifit 令牌')
     store = AuthStore()
     client = client_from_store()
     if client is not None:
         client.logout()
+        _detail('远程', '已请求撤销 refresh token')
     else:
         store.clear()
+        _detail('本地', '没有登录记录')
+    _step(2, 2, '清理本地令牌')
+    _detail('auth.json', '已删除' if not os.path.isfile(store.path)
+            else store.path)
     _reset_client()
-    print('Logged out.')
     return 0
 
 
@@ -1095,9 +1247,9 @@ def cmd_doctor(args) -> int:
     print(f'git        : {shutil.which("git") or "NOT FOUND"}')
     print(f'packages   : {len(store.all())}')
     print(f'api base   : {config.api_base}')
-    print(f'namespace  : {config.namespace}')
+    print(f'registry   : {config.registry_url}')
     print(f'offline    : {config.offline}')
-    print(f'login      : ' + (
+    print('login      : ' + (
         f'{auth.display_name} <{auth.email}>' if auth else 'not logged in'))
     print(f'local reg  : {len(store.load_registry().get("packages", {}))}')
     return 0
@@ -1113,6 +1265,8 @@ def build_parser() -> argparse.ArgumentParser:
                     '安装后可直接 import)')
     parser.add_argument('--version', action='version',
                         version=f'pic {__version__}')
+    parser.add_argument('--offline', action='store_true',
+                        help='禁用中央注册表, 仅使用本地 registry.json')
     sub = parser.add_subparsers(dest='command', required=True)
 
     p = sub.add_parser('login', help='登录 Cdifit (默认打开浏览器)')
@@ -1222,14 +1376,15 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     configure_stdio()
     parser = build_parser()
     args = parser.parse_args(list(sys.argv[1:] if argv is None else argv))
+    if getattr(args, 'offline', False):
+        os.environ['PIC_OFFLINE'] = '1'
     try:
         # 首次使用门禁: 除登录/退出/诊断外, 没有本地 auth.json 时先走浏览器
         # 登录。PIC_OFFLINE=1 或 config.toml 的 offline=true 可绕过 (离线开发)。
         config = load_config()
         if not config.offline and args.command not in (
-                'login', 'logout', 'doctor'):
-            if AuthStore().load() is None:
-                get_client(interactive=True)
+                'login', 'logout', 'doctor') and AuthStore().load() is None:
+            get_client(interactive=True)
         return int(args.func(args) or 0)
     except (PicError, ManifestError, archive.ArchiveError,
             vcs.VcsError, ApiError, AuthError, RegistryError, OSError) as e:
