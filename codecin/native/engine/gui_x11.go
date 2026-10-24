@@ -105,10 +105,7 @@ func guiPlatformClose() {
 	}
 }
 
-// 虚拟键盘: 当前仅 Windows 实现屏幕/触摸键盘, X11 优雅失败。
-func guiVkbShow() bool { return false }
-
-func guiVkbHide() bool { return false }
+// 虚拟键盘实现见 vkb_linux.go (onboard / matchbox-keyboard / xvkbd)。
 
 // guiX11 当前连接 (gui.go 状态之外的平台侧句柄)。
 var guiX11 *x11Conn

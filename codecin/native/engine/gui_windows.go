@@ -565,8 +565,40 @@ func guiVkbAction(show bool) bool {
 	return int32(hr) >= 0 && ret != 0
 }
 
+// vkbWinShown 记录触摸键盘是否由本程序弹出 (退出时据此收起)。
+var (
+	vkbWinMu    sync.Mutex
+	vkbWinShown bool
+)
+
 // guiVkbShow 弹出屏幕/触摸键盘。
-func guiVkbShow() bool { return guiVkbAction(true) }
+func guiVkbShow() bool {
+	vkbWinMu.Lock()
+	defer vkbWinMu.Unlock()
+	ok := guiVkbAction(true)
+	if ok {
+		vkbWinShown = true
+	}
+	return ok
+}
 
 // guiVkbHide 收起屏幕/触摸键盘。
-func guiVkbHide() bool { return guiVkbAction(false) }
+func guiVkbHide() bool {
+	vkbWinMu.Lock()
+	defer vkbWinMu.Unlock()
+	ok := guiVkbAction(false)
+	if ok {
+		vkbWinShown = false
+	}
+	return ok
+}
+
+// vkbProcessCleanup 程序退出时收起本程序弹出的触摸键盘。
+func vkbProcessCleanup() {
+	vkbWinMu.Lock()
+	defer vkbWinMu.Unlock()
+	if vkbWinShown {
+		_ = guiVkbAction(false)
+		vkbWinShown = false
+	}
+}

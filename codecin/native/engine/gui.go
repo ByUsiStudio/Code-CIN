@@ -136,6 +136,21 @@ func guiMarkClosed() {
 	guiMu.Unlock()
 }
 
+// guiWindowOpen 是否已打开 GUI 窗口 (行输入据此决定是否走键码队列)。
+func guiWindowOpen() bool {
+	guiMu.Lock()
+	defer guiMu.Unlock()
+	return guiOpen
+}
+
+// guiUserClosed 用户已请求关闭且窗口仍标记为打开: 行输入应立即返回 EOF,
+// 避免窗口关闭后 input/input_str 永久阻塞在键码轮询上。
+func guiUserClosed() bool {
+	guiMu.Lock()
+	defer guiMu.Unlock()
+	return guiOpen && guiClosedF
+}
+
 // vkbShow SYS 158: 弹出 Windows 屏幕/触摸键盘 -> 0 成功 / -1 不可用。
 func (vm *vmState) vkbShow() uint64 {
 	if guiVkbShow() {

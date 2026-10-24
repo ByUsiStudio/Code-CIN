@@ -6,13 +6,15 @@ package engine
 //  1. 预读缓冲 vm.inData (管道/重定向输入由宿主一次性读入);
 //  2. 真实标准输入 (交互 TTY / AOT 产物 / 缓冲耗尽)。
 //
-// 平台差异收敛在 stdinReadLinePlatform:
-//   - Windows 真实控制台: ReadConsoleW (UTF-16 → UTF-8)。os.Stdin 直读在
-//     Windows 控制台拿到的是 OEM/ANSI 代码页字节 (中文 Windows 下 GBK),
-//     非 ASCII 输入必然乱码; ReadConsoleW 由控制台负责行编辑/回显,
-//     与 Linux/macOS 终端同样支持退格、方向键历史 (conhost 自带)。
-//   - 其余情况 (Unix 终端 / 全平台管道重定向): 字节流按行读,
-//     Unix 终端输入本就是 UTF-8, 管道字节原样透传。
+// 交互路径 (三平台统一): 真实终端或 GUI 窗口打开时, 走 stdinLineEditor;
+// 行编辑由引擎基于统一键码队列完成 (与 get_key 同一种事件监听)。
+//   - Windows: ReadConsoleInputW 键码 (raw 控制台, 不再用 ReadConsoleW
+//     的 OS 行编辑), 非 ASCII 由 UTF-16 解码, 无代码页乱码;
+//   - Unix/macOS: termios raw + 转义序列/UTF-8 解码;
+//   - GUI 窗口: 窗口过程注入 keyQueue, 与虚拟键盘输入同通道。
+//
+// 非交互路径 (管道/重定向/无 GUI): stdinReadLinePlatform 之后的通用
+// 字节流按行读, 管道字节原样透传, 输出字节与旧版本完全一致。
 
 import (
 	"bufio"
@@ -28,10 +30,14 @@ var (
 
 // stdinReadLine 阻塞读取一行标准输入, 返回 (行, 是否成功)。
 // 行尾 \n 与 Windows 风格 \r\n 已剥离; EOF / 读失败返回 ("", false)。
-// 键盘监听 (raw 模式) 激活时临时恢复行缓冲, 读完后重新启用。
+// 真实终端 / GUI 窗口下由 stdinLineEditor 接管 (raw 事件监听 + 引擎行编辑);
+// 其余情况临时恢复行缓冲后走平台/字节流路径。
 func stdinReadLine() (string, bool) {
 	stdinMu.Lock()
 	defer stdinMu.Unlock()
+	if line, ok, used := stdinLineEditor(); used {
+		return line, ok
+	}
 	lineInputBegin()
 	defer lineInputEnd()
 	if line, ok, handled := stdinReadLinePlatform(); handled {

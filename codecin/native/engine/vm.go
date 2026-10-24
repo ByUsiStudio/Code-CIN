@@ -329,6 +329,8 @@ func RunV2(opts *RunOptions) *Result {
 
 	// 键盘监听可能切换终端 raw mode, 任何出口都必须恢复 (幂等)
 	defer keyboardRestore()
+	// 虚拟键盘若由本程序弹出, 退出时收起 (不遗留屏幕键盘窗口/进程)
+	defer vkbProcessCleanup()
 
 	finish := func(status int, errMsg string) *Result {
 		// 输出超限一并报错: 不能把"被截断的输出"当成正常结果
@@ -1000,8 +1002,9 @@ func (vm *vmState) readLineInt() uint64 {
 		return 0
 	}
 	// 输入缓冲耗尽: 回退读标准输入 (交互 / AOT 产物)。
-	// 阻塞前先冲刷输出缓冲, 让 "请输入..." 提示先出现在终端上。
-	vm.flushOut()
+	// 阻塞前先冲刷输出缓冲, 让 "请输入..." 提示先出现在终端上;
+	// 真实终端上同时切入键盘监听 (行输入与 get_key 同一种事件通道)。
+	vm.prepareQueryInput()
 	line, ok := stdinReadLine()
 	if !ok {
 		return 0
