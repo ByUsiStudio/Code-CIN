@@ -5,6 +5,80 @@
 
 ---
 
+## [6.2.2] - 2026-10-24
+
+一次以「注册服务与输入设备」为主题的小版本：`registry` 服务端由 Go 迁移到
+Python；CIN 的键盘监听与查询输入（`input` / `input_str`）统一为同一套按键
+事件监听，行输入改由引擎自行编辑；虚拟键盘支持扩展为 Windows / Linux /
+macOS 全平台；修复 `pic publish` 因 Cdifit 认证接口调用方式错误而返回 502
+的问题。
+
+### 新增 (Added)
+
+#### 屏幕/触摸键盘 (虚拟键盘, 全平台)
+
+- 新增内建 `vkb_show()` / `vkb_hide()`（SYS 158/159）与标准库包装
+  `g_vkb_show()` / `g_vkb_hide()`：弹出/收起当前图形会话的屏幕键盘，
+  成功返回 `0`，不可用返回 `-1`。
+- **Windows**：经 WinRT `IInputPaneInterop` → `IInputPane2::TryShow/TryHide`
+  为顶层窗口弹出/收起系统触摸键盘 (TabTip / 输入体验)。绑定窗口优先
+  GUI 窗口；终端 raw 模式绑定可见的控制台窗口，ConPTY (Windows Terminal)
+  或无可控制台时退回前台窗口；GUI 窗口关闭 / 程序退出时自动收起键盘。
+- **Linux**：按 `onboard` → `matchbox-keyboard` → `xvkbd` 顺序探测并启动
+  屏幕键盘；收起时结束本进程启动的实例，并对桌面常驻实例兜底执行
+  `onboard -x` / `pkill`。无 `DISPLAY` / `WAYLAND_DISPLAY` 或均未安装时
+  返回 `-1`，程序退出时清理自启进程。
+- **macOS**：以 App 方式打开系统「辅助功能键盘」(Accessibility Keyboard)，
+  收起时结束对应进程；系统路径不存在或未启用时返回 `-1`。
+- 键盘监听补全虚拟键盘/输入法输入通道：Windows 窗口过程新增 `WM_UNICHAR`
+  (含 `UNICODE_NOCHAR` 能力探测) 与 `WM_IME_CHAR`，与既有
+  `WM_KEYDOWN`(VK_PACKET) / `WM_CHAR` 共用同一按键队列，`get_key` /
+  `key_wait` 无需区分按键来源；支持代理对与 emoji。
+- 终端侧确认 `VK_PACKET + UnicodeChar` (`KEYEVENTF_UNICODE` 注入) 按字符
+  入队，并补充对应回归测试。
+
+#### 统一的交互式行输入 (查询输入)
+
+- `input()` / `input_str()`（`IN` 指令 / SYS 131）在真实终端与 GUI 窗口中
+  改由引擎的 **raw 键码队列** 直接读取，与 `get_key` / `key_wait` 使用同一
+  套事件监听：不再临时把终端切回行规程（Windows `ReadConsoleW` / Unix
+  canonical 模式），也不再依赖操作系统自带行编辑。
+- 内置跨平台行编辑器：字符输入（UTF-8 / 代理对 / emoji）、退格、Delete、
+  左右方向键、Home/End、Ctrl+A/E/U/K/W、Ctrl+左右（按词移动）、Enter；
+  `Ctrl+D` 空行为 EOF，`Ctrl+C` 恢复终端后按 SIGINT / CTRL_C_EVENT 中断。
+  Windows 控制台（已开启 VT 输出）与 Unix 终端共用同一套 ANSI 重绘实现，
+  CJK 等宽字符按 2 列计算光标。
+- GUI 窗口打开时，窗口过程注入的按键（含虚拟键盘/输入法）直接作为查询
+  输入来源；窗口关闭后 `input()` 立即按 EOF 返回，不再永久阻塞。
+- 无真实终端且无 GUI 窗口（管道 / 重定向 / 测试捕获）时保持原有字节流
+  读取路径，输出字节与旧版本完全一致。
+
+### 变更 (Changed)
+
+- 交互式终端上首次执行 `input()` / `input_str()` 时，与键盘监听一样切换为
+  **直写输出**：提示与随后的 `print` 立即落到标准输出，不再等程序结束一次
+  性回传；管道 / 重定向 / 测试捕获仍保持纯缓冲语义。
+- **`registry` 服务端由 Go 迁移为 Python**：仅使用标准库 `http.server`
+  (`ThreadingHTTPServer`，不依赖 Flask)，终端输出与日志由 `rich` 渲染；
+  对外 HTTP API、存储布局与校验规则保持不变，默认监听端口为 `18080`，
+  Dockerfile / nginx / systemd 服务文件同步更新。
+- 服务端测试由 Go 改为 `registry/test_server.py`（pytest）；部署方式更新为
+  Python 3.10+ 虚拟环境 + `requirements.txt`，文档同步改写。
+
+### 修复 (Fixed)
+
+- 修复 `pic publish` 提交时返回 **502**：registry 调用 Cdifit 用户信息接口
+  误用了 `POST /api/v4/session/oauth/userinfo`（实际为 `GET`，POST 得到
+  `404 page not found`，被服务端包装成 `502 auth_unavailable`）。
+- 修复无效/过期 Token 被误报为 502：Cdifit 以 `HTTP 200 + code=401` 返回
+  鉴权失败，服务端现将其映射为客户端 `401`；`pic_api.userinfo()` 同步改为
+  `GET`，并让 `code=401/403` 触发 Token 刷新，而非作为未知状态码上报。
+- 修复 SYS 号 158/159 被 `syscallSupported` 上限拦截，导致 `vkb_show` /
+  `vkb_hide` 报 `unsupported SYS call id`。
+- 修正 `registry/README.md` 中 Docker 端口映射为 `18080:18080`。
+
+---
+
 ## [6.2.0] - 2026-10-23
 
 一次以「工具链生态」为主题的发布：新增 **mkn**（Maven 风格构建）、**pic**
