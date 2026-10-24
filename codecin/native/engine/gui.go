@@ -136,6 +136,22 @@ func guiMarkClosed() {
 	guiMu.Unlock()
 }
 
+// vkbShow SYS 158: 弹出 Windows 屏幕/触摸键盘 -> 0 成功 / -1 不可用。
+func (vm *vmState) vkbShow() uint64 {
+	if guiVkbShow() {
+		return 0
+	}
+	return mask64
+}
+
+// vkbHide SYS 159: 收起 Windows 屏幕/触摸键盘 -> 0 成功 / -1 不可用。
+func (vm *vmState) vkbHide() uint64 {
+	if guiVkbHide() {
+		return 0
+	}
+	return mask64
+}
+
 func guiInjectKey(code uint64) {
 	keyMu.Lock()
 	keyQueue = append(keyQueue, code)

@@ -521,9 +521,11 @@ const sysUDPSENDTO = 154
 const sysUDPRECVFROM = 155
 const sysUDPCLOSE = 156
 const sysDNSLOOKUP = 157
+const sysVKBSHOW = 158
+const sysVKBHIDE = 159
 
 // SYS 功能号名 (按下标索引, 用于错误信息; 与 isa.py Syscall 名一致)
-var syscallNames = [158]string{
+var syscallNames = [160]string{
 	sysSQRT:           "SQRT",
 	sysPOW:            "POW",
 	sysABS:            "ABS",
@@ -682,4 +684,6 @@ var syscallNames = [158]string{
 	sysUDPRECVFROM:    "UDPRECVFROM",
 	sysUDPCLOSE:       "UDPCLOSE",
 	sysDNSLOOKUP:      "DNSLOOKUP",
+	sysVKBSHOW:        "VKBSHOW",
+	sysVKBHIDE:        "VKBHIDE",
 }

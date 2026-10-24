@@ -253,6 +253,9 @@ HOST_BUILTINS = {
     'mouse_x': (Syscall.MOUSEX, 0, 'int'),
     'mouse_y': (Syscall.MOUSEY, 0, 'int'),
     'mouse_button': (Syscall.MOUSEBTN, 0, 'int'),
+    # 虚拟键盘 (Windows 屏幕/触摸键盘 TabTip; 其他平台 -1)
+    'vkb_show': (Syscall.VKBSHOW, 0, 'int'),
+    'vkb_hide': (Syscall.VKBHIDE, 0, 'int'),
     # 音频扩展 (播放进度与蜂鸣合成)
     'audio_pos': (Syscall.AUDIOPOS, 0, 'int'),
     'beep': (Syscall.AUDIOBEEP, 2, 'int'),

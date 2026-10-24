@@ -40,6 +40,7 @@ const (
 	wmKeydown     = 0x0100
 	wmChar        = 0x0102
 	wmSyskeydown  = 0x0104
+	wmUnichar     = 0x0109 // UTF-32 字符提交 (输入法/虚拟键盘)
 	wmMousemove   = 0x0200
 	wmLbuttondown = 0x0201
 	wmLbuttonup   = 0x0202
@@ -47,6 +48,9 @@ const (
 	wmRbuttonup   = 0x0205
 	wmMbuttondown = 0x0207
 	wmMbuttonup   = 0x0208
+	wmImeChar     = 0x0286 // IME/触摸键盘提交的 UTF-16 字符
+
+	unicodeNoChar = 0xFFFF // WM_UNICHAR 探测: 应答复 1 表示支持
 
 	wsOverlappedWindow = 0x00CF0000
 	wsVisible          = 0x10000000
@@ -316,6 +320,7 @@ func guiWndProc(hwnd uintptr, msg uintptr, wp, lp uintptr) uintptr {
 		}
 		return 0
 	case wmClose:
+		guiVkbHide()    // 程序窗口关闭时连带收起触摸键盘
 		guiMarkClosed() // gui_closed() 置 1; 交给 DefWindowProc 销毁窗口
 	case wmDestroy:
 		// 窗口已销毁 (无论来自 gui_close 还是用户点 X): 清理句柄,
@@ -331,6 +336,16 @@ func guiWndProc(hwnd uintptr, msg uintptr, wp, lp uintptr) uintptr {
 		return 0
 	case wmChar:
 		guiWinChar(wp, lp)
+		return 0
+	case wmImeChar:
+		// IME / 屏幕键盘提交的字符可能绕过 WM_CHAR
+		guiWinChar(wp, lp)
+		return 0
+	case wmUnichar:
+		if wp == unicodeNoChar {
+			return 1 // 宣告本窗口支持 WM_UNICHAR
+		}
+		guiWinUniChar(wp)
 		return 0
 	case wmSyskeydown:
 		// Alt+F4 等交给 DefWindowProc (产生 WM_CLOSE)
@@ -366,14 +381,7 @@ func guiWinKeyDown(vk, lp uintptr) {
 	if repeat > 8 {
 		repeat = 8
 	}
-	state := uint32(0)
-	if s, _, _ := procGetKeyState.Call(vkShift); s&0x8000 != 0 {
-		state |= ksShift
-	}
-	if s, _, _ := procGetKeyState.Call(vkControl); s&0x8000 != 0 {
-		state |= ksLeftCtrl
-	}
-	if code, ok := consoleKeyCode(uint16(vk), 0, state); ok {
+	if code, ok := consoleKeyCode(uint16(vk), 0, guiWinKeyState()); ok {
 		guiInjectKey(code)
 		for i := 1; i < repeat; i++ {
 			guiInjectKey(code)
@@ -381,7 +389,8 @@ func guiWinKeyDown(vk, lp uintptr) {
 	}
 }
 
-// guiWinChar WM_CHAR: UTF-16 字符 (含代理对组合 / Ctrl+字母控制字节)。
+// guiWinChar WM_CHAR / WM_IME_CHAR: UTF-16 字符
+// (含代理对组合 / Ctrl+字母控制字节)。
 func guiWinChar(wp, lp uintptr) {
 	repeat := int(lp & 0xFFFF)
 	if repeat < 1 {
@@ -390,6 +399,29 @@ func guiWinChar(wp, lp uintptr) {
 	if repeat > 8 {
 		repeat = 8
 	}
+	if code, ok := consoleKeyCode(0, rune(wp), guiWinKeyState()); ok {
+		guiInjectKey(code)
+		for i := 1; i < repeat; i++ {
+			guiInjectKey(code)
+		}
+	}
+}
+
+// guiWinUniChar WM_UNICHAR: UTF-32 字符 (虚拟键盘/输入法的文本提交通道)。
+func guiWinUniChar(wp uintptr) {
+	if wp > 0x10FFFF || (wp >= 0xD800 && wp <= 0xDFFF) {
+		return // 越界码点或裸代理项: 丢弃
+	}
+	if wp == 0 {
+		return
+	}
+	if code, ok := consoleKeyCode(0, rune(wp), guiWinKeyState()); ok {
+		guiInjectKey(code)
+	}
+}
+
+// guiWinKeyState 取当前 Shift/Ctrl 状态位 (与控制台 dwControlKeyState 对齐)。
+func guiWinKeyState() uint32 {
 	state := uint32(0)
 	if s, _, _ := procGetKeyState.Call(vkShift); s&0x8000 != 0 {
 		state |= ksShift
@@ -397,12 +429,7 @@ func guiWinChar(wp, lp uintptr) {
 	if s, _, _ := procGetKeyState.Call(vkControl); s&0x8000 != 0 {
 		state |= ksLeftCtrl
 	}
-	if code, ok := consoleKeyCode(0, rune(wp), state); ok {
-		guiInjectKey(code)
-		for i := 1; i < repeat; i++ {
-			guiInjectKey(code)
-		}
-	}
+	return state
 }
 
 // guiMouseXY lParam 拆坐标 (16 位有符号)。
@@ -424,3 +451,115 @@ func rgbaToBgra(pix []byte, w, h int) {
 		winScratch[i+3] = 0
 	}
 }
+
+// ---------------- 虚拟键盘 (Windows 屏幕/触摸键盘) ----------------
+//
+// 通过 WinRT InputPane 的桌面互操作接口为指定顶层窗口弹出/收起触摸键盘
+// (TabTip / 输入体验)。这类键盘的按键由系统注入 (WM_KEYDOWN VK_PACKET +
+// WM_CHAR / WM_IME_CHAR / WM_UNICHAR), 已由窗口过程统一转入按键队列,
+// 因此 get_key 无需感知按键来源。
+
+var (
+	combaseDLL                 = syscall.NewLazyDLL("combase.dll")
+	procRoInitialize           = combaseDLL.NewProc("RoInitialize")
+	procRoGetActivationFactory = combaseDLL.NewProc("RoGetActivationFactory")
+	procWindowsCreateString    = combaseDLL.NewProc("WindowsCreateString")
+	procWindowsDeleteString    = combaseDLL.NewProc("WindowsDeleteString")
+	procGetConsoleWindow       = kernel32.NewProc("GetConsoleWindow")
+)
+
+// winGUID GUID (Data1..Data4, sizeof=16)。
+type winGUID struct {
+	Data1 uint32
+	Data2 uint16
+	Data3 uint16
+	Data4 [8]byte
+}
+
+var (
+	// IInputPaneInterop (Win32 桌面互操作, inputpaneinterop.h)
+	iidInputPaneInterop = winGUID{0x75CF2C57, 0x9195, 0x4931,
+		[8]byte{0x83, 0x32, 0xF0, 0xB4, 0x09, 0xE9, 0x16, 0xAF}}
+	// IInputPane2 提供 TryShow / TryHide
+	iidInputPane2 = winGUID{0x8A6B3F26, 0x7090, 0x4793,
+		[8]byte{0x94, 0x4C, 0xC3, 0xF2, 0xCD, 0xE2, 0x62, 0x76}}
+)
+
+const (
+	vtRelease       = 2                 // IUnknown::Release
+	vtFirstMethod   = 6                 // IUnknown(3) + IInspectable(3) 之后的第一个接口方法
+	vtInputPaneShow = vtFirstMethod     // IInputPane2::TryShow
+	vtInputPaneHide = vtFirstMethod + 1 // IInputPane2::TryHide
+	rpcEChangedMode = 0x80010106
+)
+
+// winVtFn 读取 COM 对象虚表第 idx 项的函数指针。
+func winVtFn(obj unsafe.Pointer, idx int) uintptr {
+	vt := *(*unsafe.Pointer)(obj)
+	return *(*uintptr)(unsafe.Add(vt, uintptr(idx)*unsafe.Sizeof(uintptr(0))))
+}
+
+// guiVkbTargetHwnd 虚拟键盘的绑定窗口: 优先 GUI 窗口, 无 GUI 时用控制台窗口
+// (终端 raw 模式下同样可用)。
+func guiVkbTargetHwnd() uintptr {
+	guiWinMu.Lock()
+	h := guiWinHwnd
+	guiWinMu.Unlock()
+	if h != 0 {
+		return h
+	}
+	h, _, _ = procGetConsoleWindow.Call()
+	return h
+}
+
+// guiVkbAction 在 STA 线程上取得目标窗口的 IInputPane2 并调用 TryShow/TryHide。
+func guiVkbAction(show bool) bool {
+	hwnd := guiVkbTargetHwnd()
+	if hwnd == 0 {
+		return false
+	}
+	// InputPane 只支持 STA: 固定 OS 线程并初始化单线程套间。
+	// 已初始化时 RoInitialize 返回 S_FALSE (1), 仍可继续。
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+	if hr, _, _ := procRoInitialize.Call(0 /*RO_INIT_SINGLETHREADED*/); int32(hr) < 0 &&
+		uint32(hr) != rpcEChangedMode {
+		return false
+	}
+	name := "Windows.UI.ViewManagement.InputPane"
+	u16, _ := syscall.UTF16FromString(name)
+	var hstr uintptr
+	if hr, _, _ := procWindowsCreateString.Call(uintptr(unsafe.Pointer(&u16[0])),
+		uintptr(len(u16)-1), uintptr(unsafe.Pointer(&hstr))); int32(hr) < 0 || hstr == 0 {
+		return false
+	}
+	defer procWindowsDeleteString.Call(hstr)
+	var factory unsafe.Pointer
+	if hr, _, _ := procRoGetActivationFactory.Call(hstr,
+		uintptr(unsafe.Pointer(&iidInputPaneInterop)),
+		uintptr(unsafe.Pointer(&factory))); int32(hr) < 0 || factory == nil {
+		return false
+	}
+	defer syscall.SyscallN(winVtFn(factory, vtRelease), uintptr(factory))
+	var pane unsafe.Pointer
+	if hr, _, _ := syscall.SyscallN(winVtFn(factory, vtFirstMethod), uintptr(factory), hwnd,
+		uintptr(unsafe.Pointer(&iidInputPane2)),
+		uintptr(unsafe.Pointer(&pane))); int32(hr) < 0 || pane == nil {
+		return false
+	}
+	defer syscall.SyscallN(winVtFn(pane, vtRelease), uintptr(pane))
+	idx := vtInputPaneShow
+	if !show {
+		idx = vtInputPaneHide
+	}
+	var ret byte // WinRT boolean (1 字节)
+	hr, _, _ := syscall.SyscallN(winVtFn(pane, idx), uintptr(pane),
+		uintptr(unsafe.Pointer(&ret)))
+	return int32(hr) >= 0 && ret != 0
+}
+
+// guiVkbShow 弹出屏幕/触摸键盘。
+func guiVkbShow() bool { return guiVkbAction(true) }
+
+// guiVkbHide 收起屏幕/触摸键盘。
+func guiVkbHide() bool { return guiVkbAction(false) }

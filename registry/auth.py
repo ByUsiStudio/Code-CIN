@@ -89,11 +89,9 @@ class Authenticator:
             raise RuntimeError("CDIFIT_API_BASE is not configured")
         request = urllib.request.Request(
             self.base_url + "/api/v4/session/oauth/userinfo",
-            data=b"{}",
-            method="POST",
+            method="GET",
             headers={
                 "Authorization": "Bearer " + token,
-                "Content-Type": "application/json",
                 "Accept": "application/json",
                 "User-Agent": "codecin-pic-registry/" + __version__,
             },
@@ -120,7 +118,11 @@ class Authenticator:
         if not isinstance(payload, dict):
             raise RuntimeError("cdifit userinfo: invalid JSON: expected object")
 
+        # Cdifit 对无效/过期 Token 常以 HTTP 200 + code=401 返回,
+        # 必须映射为 Unauthorized, 否则会被当成上游故障而报 502。
         code = payload.get("code", 0)
+        if code in (401, 403):
+            raise Unauthorized()
         if code not in (0, 200):
             raise RuntimeError(f"cdifit userinfo: {payload.get('msg') or code}")
         fields = payload.get("data")

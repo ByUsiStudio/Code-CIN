@@ -162,3 +162,5 @@ const SysUDPSENDTO = 154
 const SysUDPRECVFROM = 155
 const SysUDPCLOSE = 156
 const SysDNSLOOKUP = 157
+const SysVKBSHOW = 158
+const SysVKBHIDE = 159

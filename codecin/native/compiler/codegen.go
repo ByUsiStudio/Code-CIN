@@ -122,6 +122,9 @@ var hostBuiltins = map[string]hostBuiltin{
 	"mouse_x":      {SysMOUSEX, 0, kInt},
 	"mouse_y":      {SysMOUSEY, 0, kInt},
 	"mouse_button": {SysMOUSEBTN, 0, kInt},
+	// 虚拟键盘 (Windows 屏幕/触摸键盘 TabTip; 其他平台 -1)
+	"vkb_show": {SysVKBSHOW, 0, kInt},
+	"vkb_hide": {SysVKBHIDE, 0, kInt},
 	// 音频扩展 (播放进度与蜂鸣合成)
 	"audio_pos": {SysAUDIOPOS, 0, kInt},
 	"beep":      {SysAUDIOBEEP, 2, kInt},

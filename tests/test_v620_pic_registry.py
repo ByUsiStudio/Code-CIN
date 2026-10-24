@@ -105,6 +105,19 @@ class FakeCdifit(_BaseServer):
                     return
                 self._json(404, {'code': 404, 'msg': 'not found'})
 
+            def do_GET(self):
+                if urllib.parse.urlsplit(self.path).path != (
+                        '/api/v4/session/oauth/userinfo'):
+                    self._json(404, {'code': 404, 'msg': 'not found'})
+                    return
+                if self.headers.get('Authorization') != (
+                        'Bearer ' + outer.access):
+                    self._json(200, {'code': 401, 'msg': 'Login required'})
+                    return
+                self._json(200, {'code': 0, 'data': {
+                    'sub': 'u1', 'name': 'Tester',
+                    'email': outer.user['email']}})
+
             def do_PUT(self):
                 if urllib.parse.urlsplit(self.path).path == (
                         '/api/v4/session/token/refresh'):

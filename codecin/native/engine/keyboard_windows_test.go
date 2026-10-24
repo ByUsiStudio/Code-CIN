@@ -87,6 +87,32 @@ func TestConsoleKeyCodeSurrogatePair(t *testing.T) {
 	}
 }
 
+// 屏幕/触摸键盘以 KEYEVENTF_UNICODE 注入字符时, conhost 给出
+// VK_PACKET + UnicodeChar 的 KEY_EVENT; 必须按字符入队而不是丢弃。
+func TestDecodeKeyEventVKPacket(t *testing.T) {
+	resetKeyState()
+	defer resetKeyState()
+	rec := make([]byte, 16)
+	putLE32(rec[0:4], 1)
+	putLE16(rec[4:6], 1)
+	putLE16(rec[6:8], 0xE7) // VK_PACKET
+	putLE16(rec[10:12], '中')
+	code, ok := decodeKeyEvent(rec)
+	if !ok || code != '中' {
+		t.Fatalf("VK_PACKET 应产出字符 '中', 实际 %d ok=%v", code, ok)
+	}
+	// 高代理 + 低代理连续两次注入 (emoji) 仍应组合成完整码点
+	putLE16(rec[10:12], 0xD83D)
+	if _, ok := decodeKeyEvent(rec); ok {
+		t.Fatal("VK_PACKET 高代理不应单独入队")
+	}
+	putLE16(rec[10:12], 0xDE00) // U+1F600
+	code, ok = decodeKeyEvent(rec)
+	if !ok || code != 0x1F600 {
+		t.Fatalf("VK_PACKET 代理对应组合为 0x1F600, 实际 %d ok=%v", code, ok)
+	}
+}
+
 func putLE16(b []byte, v uint16) { b[0] = byte(v); b[1] = byte(v >> 8) }
 
 func putLE32(b []byte, v uint32) {

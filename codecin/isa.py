@@ -303,6 +303,9 @@ class Syscall(IntEnum):
                     #   -> 实际字节数; 来源 "ip:port" 写入 x2 (0 为不关心)
     UDPCLOSE = 156  # udp_close(x0=句柄) -> 0 成功 / -1 失败
     DNSLOOKUP = 157 # dns_lookup(x0=域名) -> 首个 IP 地址 (新堆字符串; 失败为空串)
+    # ---- 宿主能力: 虚拟键盘 (Windows 屏幕/触摸键盘; 其他平台 -1) ----
+    VKBSHOW = 158   # vkb_show() -> 0 已弹出触摸键盘 / -1 不可用
+    VKBHIDE = 159   # vkb_hide() -> 0 已收起 (本就收起也算成功) / -1 不可用
 
 
 class Cond:

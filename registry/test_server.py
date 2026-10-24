@@ -23,16 +23,19 @@ TEST_TOKEN = "test-token"
 
 
 class _AuthHandler(BaseHTTPRequestHandler):
-    def do_POST(self) -> None:  # noqa: N802
+    def do_GET(self) -> None:  # noqa: N802
         if self.path != "/api/v4/session/oauth/userinfo":
             self.send_error(404)
             return
         if self.headers.get("Authorization") != "Bearer " + TEST_TOKEN:
-            body = b'{"code":401,"msg":"unauthorized"}'
-            self.send_response(401)
+            # 与真实 Cdifit 一致: 无效 Token 返回 HTTP 200 + code=401
+            body = b'{"code":401,"msg":"Login required"}'
         else:
-            body = b'{"sub":"u1","email":"user@example.com","name":"Tester"}'
-            self.send_response(200)
+            body = (
+                b'{"code":0,"data":{"sub":"u1","email":"user@example.com",'
+                b'"name":"Tester"}}'
+            )
+        self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()

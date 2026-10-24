@@ -7,7 +7,7 @@ Cdifit (``https://www.cdifit.cn``) **只用于登录/Token 校验**; 包记录�
 * ``POST /api/v4/session/token`` 密码登录 (含 2FA);
 * ``PUT /api/v4/session/token/refresh`` 刷新令牌;
 * ``DELETE /api/v4/session/token`` 退出;
-* ``POST /api/v4/session/oauth/userinfo`` 用户信息。
+* ``GET /api/v4/session/oauth/userinfo`` 用户信息。
 
 API 文档: https://docs.cdifit.com/zh/api/session
 """
@@ -218,8 +218,11 @@ class CdifitClient:
         if code == 203:
             raise TwoFactorRequired(str(payload.get('data') or ''))
         if code not in (0, None):
+            # Cdifit 对无效 Token 返回 HTTP 200 + code=401/403,
+            # 这里归一为 status, 让 _request 的刷新逻辑生效。
             raise ApiError(str(payload.get('msg') or 'Cdifit API 请求失败'),
-                           status=status, code=int(code or 0),
+                           status=int(code) if code in (401, 403) else status,
+                           code=int(code or 0),
                            data=payload.get('data'))
         return payload.get('data', payload)
 
@@ -332,8 +335,8 @@ class CdifitClient:
             self.store.clear()
 
     def userinfo(self) -> Dict[str, Any]:
-        payload = self._request('POST',
-                                API_PREFIX + '/session/oauth/userinfo', {})
+        payload = self._request('GET',
+                                API_PREFIX + '/session/oauth/userinfo')
         if isinstance(payload, dict) and payload.get('sub'):
             if self.auth:
                 self.auth.user.update(payload)

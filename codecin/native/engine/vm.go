@@ -1360,6 +1360,11 @@ func (vm *vmState) doSyscall(id uint64) string {
 		vm.setReg(0, vm.mouseBtn())
 	case sysGUIACTIVE:
 		vm.setReg(0, vm.guiActiveQ())
+	// 虚拟键盘 (Windows 屏幕/触摸键盘; 其他平台优雅失败)
+	case sysVKBSHOW:
+		vm.setReg(0, vm.vkbShow())
+	case sysVKBHIDE:
+		vm.setReg(0, vm.vkbHide())
 	// 音频扩展 (播放进度与蜂鸣合成)
 	case sysAUDIOPOS:
 		vm.setReg(0, vm.audioPos())

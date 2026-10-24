@@ -120,6 +120,16 @@ function g_mouse_middle() -> int {
     return 0
 }
 
+// 弹出 Windows 屏幕/触摸键盘 (TabTip): 0 成功 / -1 不可用 (非 Windows)
+function g_vkb_show() -> int {
+    return vkb_show()
+}
+
+// 收起 Windows 屏幕/触摸键盘: 0 成功 / -1 不可用 (非 Windows)
+function g_vkb_hide() -> int {
+    return vkb_hide()
+}
+
 // ==================== 二、离屏绘图助手 ====================
 
 // 打包 RGB 颜色 (0xRRGGBB)

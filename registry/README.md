@@ -74,7 +74,7 @@ Base: `/api/v1`
 | POST | `/packages/{name}/{version}/yank` | Bearer | 撤回/恢复版本 |
 
 认证：`Authorization: Bearer <Cdifit AccessToken>`。服务端把 Token 转发到
-`POST https://www.cdifit.cn/api/v4/session/oauth/userinfo` 校验，并缓存
+`GET https://www.cdifit.cn/api/v4/session/oauth/userinfo` 校验，并缓存
 5 分钟；发布者由返回的 `sub` 决定。
 
 ### 发布元数据示例
