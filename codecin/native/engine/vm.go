@@ -1033,12 +1033,23 @@ func (vm *vmState) readLineStr() uint64 {
 		}
 		return vm.hs(trimEOL(line))
 	}
-	vm.flushOut()
+	vm.prepareQueryInput()
 	line, ok := stdinReadLine()
 	if !ok {
 		return vm.empty()
 	}
 	return vm.hs(trimEOL(line))
+}
+
+// prepareQueryInput 阻塞行输入前调用: 先冲刷缓冲输出让交互提示可见,
+// 真实终端上同时启用键盘监听 (raw 输入 + 直写输出) —— input/input_str
+// 与 get_key 从此共用同一套键码队列, 不再依赖操作系统行规程。
+// 管道/重定向/测试捕获下 keyEnsure 失败, 语义与旧版本完全一致。
+func (vm *vmState) prepareQueryInput() {
+	vm.flushOut()
+	if keyEnsure() {
+		vm.enterDirectOut()
+	}
 }
 
 // flushOut 在阻塞读标准输入前, 把已缓冲输出冲刷到真实终端。
