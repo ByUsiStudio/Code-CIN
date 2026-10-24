@@ -120,12 +120,14 @@ function g_mouse_middle() -> int {
     return 0
 }
 
-// 弹出 Windows 屏幕/触摸键盘 (TabTip): 0 成功 / -1 不可用 (非 Windows)
+// 弹出屏幕/触摸键盘: 0 成功 / -1 不可用
+// (Windows: TabTip/输入体验; Linux: onboard/matchbox-keyboard/xvkbd;
+//  macOS: 辅助功能键盘)
 function g_vkb_show() -> int {
     return vkb_show()
 }
 
-// 收起 Windows 屏幕/触摸键盘: 0 成功 / -1 不可用 (非 Windows)
+// 收起屏幕/触摸键盘: 0 成功 / -1 不可用
 function g_vkb_hide() -> int {
     return vkb_hide()
 }
