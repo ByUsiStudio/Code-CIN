@@ -466,6 +466,8 @@ var (
 	procWindowsCreateString    = combaseDLL.NewProc("WindowsCreateString")
 	procWindowsDeleteString    = combaseDLL.NewProc("WindowsDeleteString")
 	procGetConsoleWindow       = kernel32.NewProc("GetConsoleWindow")
+	procIsWindowVisible        = user32.NewProc("IsWindowVisible")
+	procGetForegroundWindow    = user32.NewProc("GetForegroundWindow")
 )
 
 // winGUID GUID (Data1..Data4, sizeof=16)。
@@ -499,8 +501,8 @@ func winVtFn(obj unsafe.Pointer, idx int) uintptr {
 	return *(*uintptr)(unsafe.Add(vt, uintptr(idx)*unsafe.Sizeof(uintptr(0))))
 }
 
-// guiVkbTargetHwnd 虚拟键盘的绑定窗口: 优先 GUI 窗口, 无 GUI 时用控制台窗口
-// (终端 raw 模式下同样可用)。
+// guiVkbTargetHwnd 虚拟键盘的绑定窗口: 优先 GUI 窗口; 终端模式下用可见的
+// 控制台窗口; ConPTY (Windows Terminal) / 无控制台时退回前台窗口。
 func guiVkbTargetHwnd() uintptr {
 	guiWinMu.Lock()
 	h := guiWinHwnd
@@ -508,8 +510,13 @@ func guiVkbTargetHwnd() uintptr {
 	if h != 0 {
 		return h
 	}
-	h, _, _ = procGetConsoleWindow.Call()
-	return h
+	if ch, _, _ := procGetConsoleWindow.Call(); ch != 0 {
+		if v, _, _ := procIsWindowVisible.Call(ch); v != 0 {
+			return ch
+		}
+	}
+	fg, _, _ := procGetForegroundWindow.Call()
+	return fg
 }
 
 // guiVkbAction 在 STA 线程上取得目标窗口的 IInputPane2 并调用 TryShow/TryHide。
