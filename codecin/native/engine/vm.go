@@ -440,7 +440,7 @@ func opcodeSupported(op uint8) bool {
 }
 
 func syscallSupported(id uint64) bool {
-	return id <= sysDNSLOOKUP
+	return id <= sysVKBHIDE
 }
 
 func (vm *vmState) reg(n int) uint64 {
