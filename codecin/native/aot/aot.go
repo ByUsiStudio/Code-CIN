@@ -54,13 +54,17 @@ func Main(bytecode, segFile []byte) int {
 		MemSize:  int64(memSize),
 		Input:    in,
 		MaxSteps: maxSteps,
+		// AOT 产物在真实终端下边跑边输出; 管道/重定向保持结束一次性打印。
+		StreamOutput: true,
 	})
 	if res == nil {
 		fmt.Fprintln(os.Stderr, "runtime error: no result")
 		return 1
 	}
 	engine.ConsoleInit()
-	fmt.Print(res.Output)
+	if !res.Streamed { // 实时模式下输出已写到终端, Output 只是缓存
+		fmt.Print(res.Output)
+	}
 	if res.Status == engine.StatusError ||
 		res.Status == engine.StatusUnsupported {
 		msg := res.ErrMsg

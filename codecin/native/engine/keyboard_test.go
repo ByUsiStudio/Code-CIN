@@ -178,8 +178,8 @@ func TestKeyHitAndDrainGuard(t *testing.T) {
 	}
 }
 
-// TestEnterDirectOutStreamsBuffer 直写模式: 激活时先落盘已缓冲输出,
-// 之后 outWrite 逐条直写且不进缓冲 (Result.Output 保持为空, 不双打)。
+// TestEnterDirectOutStreamsBuffer 实时输出模式: 激活时先把已缓冲输出落盘,
+// 之后 outWrite 逐条直写, 同时缓冲保留完整缓存 (Result.Output 仍可读取)。
 func TestEnterDirectOutStreamsBuffer(t *testing.T) {
 	resetKeyState()
 	defer resetKeyState()
@@ -191,21 +191,21 @@ func TestEnterDirectOutStreamsBuffer(t *testing.T) {
 	vm := newHostVM(4096)
 	vm.outWrite("A")
 	if vm.out.String() != "A" {
-		t.Fatalf("直写激活前输出应留在缓冲, 实际 %q", vm.out.String())
+		t.Fatalf("实时输出激活前输出应留在缓冲, 实际 %q", vm.out.String())
 	}
 	vm.enterDirectOut()
 	if len(got) != 1 || got[0] != "A" {
 		t.Fatalf("激活时应把已缓冲输出落盘, 实际 %v", got)
 	}
-	if vm.out.Len() != 0 || !vm.outDirect {
-		t.Fatal("激活后缓冲应清空且置直写标志")
+	if vm.out.String() != "A" || !vm.outDirect {
+		t.Fatalf("激活后应保留输出缓存且置实时标志, 实际 %q", vm.out.String())
 	}
 	vm.outWrite("B")
 	if len(got) != 2 || got[1] != "B" {
 		t.Fatalf("激活后输出应逐条直写, 实际 %v", got)
 	}
-	if vm.out.Len() != 0 {
-		t.Fatalf("直写模式下不应再进缓冲, 实际 %q", vm.out.String())
+	if vm.out.String() != "AB" {
+		t.Fatalf("实时模式下仍应缓存完整输出, 实际 %q", vm.out.String())
 	}
 	if vm.outCount != 2 {
 		t.Fatalf("outCount 应累计 2, 实际 %d", vm.outCount)

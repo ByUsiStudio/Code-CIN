@@ -33,6 +33,14 @@ NATIVE_HINT = (
     "或 codecin/native/build.sh (Linux/Termux/macOS), 然后重试。")
 
 
+def _stdout_is_tty() -> bool:
+    """stdout 是否为真实终端 (决定是否请求实时输出)。"""
+    try:
+        return bool(sys.stdout is not None and sys.stdout.isatty())
+    except (OSError, ValueError, AttributeError):
+        return False
+
+
 class CPU:
     def __init__(self, config, filename: Optional[str] = None,
                  crom_file: Optional[str] = None,
@@ -184,6 +192,13 @@ class CPU:
         bytecode = encode_program(self.instructions, self.entry_pc, all_labels)
         segments = self.memory.snapshot_segments()
         import time as _time
+        # 真实终端 + 非捕获模式: 请求原生引擎边执行边输出 (输出缓存仍会回传)。
+        stream = (not self._capture_output) and _stdout_is_tty()
+        if stream:
+            try:
+                sys.stdout.flush()  # 先落盘 Python 侧日志, 保证输出顺序
+            except (OSError, ValueError):
+                pass
         t0 = _time.perf_counter()
         result = engine.run_v2(
             bytecode=bytecode,
@@ -197,6 +212,7 @@ class CPU:
             args=list(self.config.program_args),
             seed=self.config.seed,
             sandbox=self.config.sandbox_mode,
+            stream_output=stream,
         )
         elapsed = _time.perf_counter() - t0
         if result is None:
@@ -211,7 +227,11 @@ class CPU:
 
         self._apply_native_state(result)
         if result.get('output'):
-            self._emit_text(result['output'])
+            if result.get('streamed'):
+                # 终端已实时显示; 这里只把完整输出放进缓存供调用方读取
+                self.output_buffer.append(result['output'])
+            else:
+                self._emit_text(result['output'])
         if result.get('error'):
             raise ExecutionError(result['error'])
         return False

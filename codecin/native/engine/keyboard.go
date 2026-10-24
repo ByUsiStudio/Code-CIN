@@ -80,12 +80,17 @@ var keyOutSink = func(s string) {
 }
 
 // keyEnsure 惰性启用键盘监听; 可重复调用 (恢复后再次调用会重新启用)。
-// 返回是否"本次调用刚激活" (真实终端首次启用), 供 VM 切换直写输出。
+// 返回是否"本次调用刚激活" (真实终端首次启用), 供 VM 切换实时输出。
+// 激活时把终端里已经键入、尚未被程序读取的字符读入队列 (type-ahead 缓存),
+// 不丢弃 —— 用户在程序启动/编译期间敲下的输入不会丢失。
 func keyEnsure() bool {
 	keyMu.Lock()
 	defer keyMu.Unlock()
 	if !keyReady && !keyForcedOff {
 		keyReady = keyEnablePlatform()
+		if keyReady {
+			keyDrainLocked()
+		}
 		return keyReady
 	}
 	return false
@@ -155,6 +160,7 @@ func (vm *vmState) keyGet() uint64 {
 }
 
 // keyFlush SYS 118: key_flush() 清空键码队列与解码中间态 -> 0
+// 同时丢弃终端里尚未读取的输入缓存, 避免下一次轮询又把旧键读回来。
 func (vm *vmState) keyFlush() uint64 {
 	if keyEnsure() {
 		vm.enterDirectOut()
@@ -168,6 +174,9 @@ func (vm *vmState) keyFlush() uint64 {
 	keyU8N = 0
 	keyU8Acc = 0
 	keyResetPlatform()
+	if keyReady {
+		keyFlushPlatform()
+	}
 	return 0
 }
 

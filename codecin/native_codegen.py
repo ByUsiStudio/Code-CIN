@@ -820,6 +820,7 @@ class _Generator:
                    f'{self.sp}, {self.heap_base}, nativeSegments, '
                    f'{self.max_steps})')
         self._emit('\trt.SetInput(in)')
+        self._emit('\trt.SetStreamOutput(true) // 真实终端: 边执行边输出')
         self._emit('\tok := run(rt)')
         self._emit('\tos.Exit(rt.Finish(ok))')
         self._emit('}')

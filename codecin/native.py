@@ -221,7 +221,7 @@ class NativeEngine:
             ctypes.c_longlong, ctypes.c_longlong,  # entry, sp
             ctypes.c_longlong, ctypes.c_longlong,  # heapBase, memSize
             ctypes.c_longlong,                   # maxSteps
-            ctypes.c_longlong, ctypes.c_longlong,  # seed, flags (bit0=sandbox)
+            ctypes.c_longlong, ctypes.c_longlong,  # seed, flags (bit0=sandbox bit1=实时输出)
         ]
         lib.codecin_run_v2.restype = ctypes.c_void_p
         lib.codecin_free.argtypes = [ctypes.c_void_p]
@@ -275,7 +275,8 @@ class NativeEngine:
     def run_v2(self, bytecode: bytes, segments, entry: int, sp: int,
                heap_base: int, mem_size: int, input_data: bytes = b'',
                max_steps: int = 0, args: Optional[List[str]] = None,
-               seed: Optional[int] = None, sandbox: bool = False
+               seed: Optional[int] = None, sandbox: bool = False,
+               stream_output: bool = False
                ) -> Optional[Dict[str, Any]]:
         req = self._build_request_v2(bytecode, segments, input_data)
         req_buf = ctypes.create_string_buffer(req, len(req))
@@ -287,7 +288,7 @@ class NativeEngine:
             arr = (ctypes.c_char_p * len(enc))(*enc)
             self._set_args(arr, len(enc))
 
-        flags = 1 if sandbox else 0
+        flags = (1 if sandbox else 0) | (2 if stream_output else 0)
         ptr = self.lib.codecin_run_v2(
             ctypes.cast(req_buf, ctypes.c_void_p), len(req),
             entry, sp, heap_base, mem_size,
@@ -307,6 +308,7 @@ class NativeEngine:
         head = ctypes.string_at(base, 36)
         status = head[0]
         flg = head[1]
+        streamed = bool(head[2])
         pc, sp, heap_ptr, steps = struct.unpack_from('<QQQQ', head, 4)
         off = 36
         regs_raw = ctypes.string_at(base + off, 33 * 8)
@@ -357,6 +359,7 @@ class NativeEngine:
             'vec_regs': vec_regs,
             'segments': segments,
             'output': out_data.decode('utf-8', 'replace'),
+            'streamed': streamed,
             'error': error,
         }
 

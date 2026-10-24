@@ -85,6 +85,12 @@ func NewNativeRuntime(memSize, sp, heapBase int64, segments []MemSeg,
 // SetInput 设置 stdin 重定向数据 (IN 指令使用)。
 func (r *NativeRuntime) SetInput(data []byte) { r.vm.inData = data }
 
+// SetStreamOutput 请求实时输出 (AOT 产物): 真实终端下逐条直写 stdout,
+// 同时保留完整缓存 (Finish 不会再打印缓存, 避免重复)。
+func (r *NativeRuntime) SetStreamOutput(on bool) {
+	r.vm.outDirect = on && stdoutIsTerminal()
+}
+
 // SetSandbox 打开沙箱宿主调用限制。
 func (r *NativeRuntime) SetSandbox(on bool) { r.vm.sandbox = on }
 
@@ -620,7 +626,7 @@ func (r *NativeRuntime) Finish(ok bool) int {
 			r.errMsg = "output limit exceeded (16 MiB)"
 		}
 	}
-	if r.vm.out.Len() > 0 {
+	if r.vm.out.Len() > 0 && !r.vm.outDirect {
 		fmt.Print(r.vm.out.String())
 	}
 	if ok {

@@ -52,8 +52,8 @@ var (
 	keySurrogate rune // UTF-16 高代理缓存 (与下一事件低代理组合)
 )
 
-// keyEnablePlatform 校验 stdin 为真实控制台后启用, 并清空启动前残留的
-// 输入缓存 (如启动命令时敲下的回车), 避免程序一激活就吃到旧键。
+// keyEnablePlatform 校验 stdin 为真实控制台后启用。启动前已键入的字符
+// 不再丢弃: keyEnsure 会立即把它们读入键码队列 (终端输入缓存)。
 func keyEnablePlatform() bool {
 	h := consoleHandle()
 	if h == 0 {
@@ -71,7 +71,6 @@ func keyEnablePlatform() bool {
 	raw |= cmExtendedFlags
 	raw &^= cmQuickEdit
 	_, _, _ = procSetConsoleMode.Call(h, uintptr(raw))
-	_, _, _ = procFlushInputBuf.Call(h)
 	return true
 }
 
@@ -86,6 +85,13 @@ func keyRestorePlatform() {
 
 // keyResetPlatform 重置平台侧解码中间态 (key_flush 调用)。
 func keyResetPlatform() { keySurrogate = 0 }
+
+// keyFlushPlatform 丢弃控制台输入缓冲里尚未读取的残留事件 (key_flush)。
+func keyFlushPlatform() {
+	if h := consoleHandle(); h != 0 {
+		_, _, _ = procFlushInputBuf.Call(h)
+	}
+}
 
 func consoleHandle() uintptr {
 	h, _, _ := procGetStdHandle.Call(stdInputHandle)
@@ -105,27 +111,33 @@ var vkKeycode = map[uint16]uint64{
 // keyNext 非阻塞取下一个已解码键码 (PeekConsoleInputW 先行探测, 不会阻塞)。
 // INPUT_RECORD/KEY_EVENT_RECORD 按固定偏移手工解码
 // (sizeof(INPUT_RECORD)=20; keyDown@4 repeat@8 vk@10 char@14 state@16)。
+// 鼠标/窗口/焦点事件与 key-up 事件直接丢弃并继续读, 直到取到按键或队列为空。
 func keyNext() (uint64, bool) {
 	h := consoleHandle()
 	if h == 0 {
 		return 0, false
 	}
-	var buf [20]byte
-	var n uint32
-	r, _, _ := procPeekInput.Call(h, uintptr(unsafe.Pointer(&buf[0])), 1,
-		uintptr(unsafe.Pointer(&n)))
-	if r == 0 || n == 0 {
-		return 0, false
+	for {
+		var buf [20]byte
+		var n uint32
+		r, _, _ := procPeekInput.Call(h, uintptr(unsafe.Pointer(&buf[0])), 1,
+			uintptr(unsafe.Pointer(&n)))
+		if r == 0 || n == 0 {
+			return 0, false
+		}
+		r, _, _ = procReadInput.Call(h, uintptr(unsafe.Pointer(&buf[0])), 1,
+			uintptr(unsafe.Pointer(&n)))
+		if r == 0 || n == 0 {
+			return 0, false
+		}
+		if le16(buf[0:2]) != evtKeyEvent {
+			continue // 鼠标/窗口/焦点等事件: 已读出并丢弃
+		}
+		if code, ok := decodeKeyEvent(buf[4:20]); ok {
+			return code, true
+		}
+		// key-up / 修饰键 / 代理对中间态: 继续读下一个事件
 	}
-	r, _, _ = procReadInput.Call(h, uintptr(unsafe.Pointer(&buf[0])), 1,
-		uintptr(unsafe.Pointer(&n)))
-	if r == 0 || n == 0 {
-		return 0, false
-	}
-	if le16(buf[0:2]) != evtKeyEvent {
-		return 0, false // 鼠标/窗口/焦点等事件: 已读出并丢弃
-	}
-	return decodeKeyEvent(buf[4:20])
 }
 
 func le16(b []byte) uint16 { return uint16(b[0]) | uint16(b[1])<<8 }

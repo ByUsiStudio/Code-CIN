@@ -8,6 +8,7 @@ import argparse
 import contextlib
 import os
 import sys
+import time
 from typing import List, Optional
 
 from . import __version__
@@ -34,6 +35,14 @@ HELP_INTRO = f"""{Colors.colorize(f'Code CIN v{__version__}', Colors.CYAN, True)
   pic   去中心化包管理 (pip 风格, 安装后可直接 import)
   cvm   CVM 虚拟机/模块运行时 (JVM 风格)
 """
+
+
+def _stdout_is_tty() -> bool:
+    """stdout 是否为真实终端 (仅此时打印运行前进度状态)。"""
+    try:
+        return bool(sys.stdout is not None and sys.stdout.isatty())
+    except (OSError, ValueError, AttributeError):
+        return False
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -446,6 +455,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     if ns.build_exe is not None:
         return _run_aot_build(ns, console, program_file, config)
 
+    tty = _stdout_is_tty()
+    if tty:
+        console.print(Colors.colorize(
+            f"Loading {os.path.basename(program_file)} ...", Colors.CYAN))
+    load_started = time.perf_counter()
     try:
         from .cpu import CPU
         cpu = CPU(config, program_file, crom_file=crom_file)
@@ -459,6 +473,12 @@ def main(argv: Optional[List[str]] = None) -> int:
                 # 超详细: rich 彩色完整堆栈
                 console.print_exception()
         return 1
+
+    if tty:
+        console.print(Colors.colorize(
+            f"Loaded {len(cpu.instructions)} instructions in "
+            f"{(time.perf_counter() - load_started) * 1000:.1f} ms",
+            Colors.GREEN))
 
     try:
         # 管道/重定向输入预读到 input_buffer: 让 input() 在原生与解释器路径下
@@ -477,6 +497,9 @@ def main(argv: Optional[List[str]] = None) -> int:
             if config.compile_only:
                 return 0
 
+        if tty:
+            console.print(Colors.colorize("Running ...", Colors.CYAN))
+            sys.stdout.flush()  # 状态行先落盘, 程序实时输出紧随其后
         cpu.run()
     except KeyboardInterrupt:
         pass

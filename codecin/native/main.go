@@ -25,7 +25,7 @@ import (
 //   err_len u16 | err ...
 
 // v2 结果缓冲布局 (与 codecin/native.py _parse_result_v2 严格一致):
-//   status u8 | NZCV 标志 u8 (bit0=N bit1=Z bit2=C bit3=V) | 2B pad
+//   status u8 | NZCV 标志 u8 (bit0=N bit1=Z bit2=C bit3=V) | streamed u8 | pad u8
 //   pc u64  sp u64  heap_ptr u64  steps u64
 //   regs 33×u64
 //   vec  32×4×f64
@@ -158,6 +158,7 @@ func marshalResultV2(res *engine.Result) unsafe.Pointer {
 
 	var status byte
 	var flg byte
+	var streamed byte
 	pc, sp, heap, steps := uint64(0), uint64(0), uint64(0), uint64(0)
 	var regs [33]uint64
 	var vec [32][4]float64
@@ -184,6 +185,9 @@ func marshalResultV2(res *engine.Result) unsafe.Pointer {
 		if res.Flags.V {
 			flg |= 8
 		}
+		if res.Streamed {
+			streamed = 1
+		}
 	}
 
 	segsBytes := 0
@@ -195,6 +199,7 @@ func marshalResultV2(res *engine.Result) unsafe.Pointer {
 
 	buf[0] = status
 	buf[1] = flg
+	buf[2] = streamed
 	pos := 4
 	binary.LittleEndian.PutUint64(buf[pos:], pc)
 	binary.LittleEndian.PutUint64(buf[pos+8:], sp)
@@ -276,13 +281,14 @@ func codecin_run_v2(reqPtr unsafe.Pointer, reqLen C.int,
 	}
 
 	opts := &engine.RunOptions{
-		Entry:    int64(entry),
-		SP:       int64(sp),
-		HeapBase: int64(heapBase),
-		MemSize:  int64(memSize),
-		MaxSteps: int64(maxSteps),
-		Seed:     int64(seed),
-		Sandbox:  flags&1 != 0,
+		Entry:        int64(entry),
+		SP:           int64(sp),
+		HeapBase:     int64(heapBase),
+		MemSize:      int64(memSize),
+		MaxSteps:     int64(maxSteps),
+		Seed:         int64(seed),
+		Sandbox:      flags&1 != 0,
+		StreamOutput: flags&2 != 0,
 	}
 	pos := 0
 	bcLen := readU32(&pos)

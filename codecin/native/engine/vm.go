@@ -57,7 +57,7 @@ type vmState struct {
 	out       strings.Builder
 	outOver   bool // 输出超过 maxOutputBytes (截断并置错误)
 	outCount  int  // 两种模式的累计输出字节 (16 MiB 限额依据)
-	outDirect bool // 键盘监听激活 (真实终端): 输出直写 stdout, 不进缓冲
+	outDirect bool // 实时输出模式: 逐条直写 stdout, 同时保留缓冲 (Result.Output 缓存)
 	sysIdx    int
 	rng       *rand.Rand
 	inData    []byte
@@ -144,10 +144,9 @@ func (vm *vmState) outWrite(s string) {
 	}
 	vm.outCount += len(s)
 	if vm.outDirect {
-		keyOutSink(s)
-		return
+		keyOutSink(s) // 实时可见
 	}
-	vm.out.WriteString(s)
+	vm.out.WriteString(s) // 同时缓存: 调用方仍可通过 Result.Output 读取完整输出
 }
 
 // outByte 追加单字节输出 (同上限)。
@@ -161,16 +160,15 @@ func (vm *vmState) outByte(b byte) {
 	}
 	vm.outCount++
 	if vm.outDirect {
-		keyOutSink(string(b))
-		return
+		keyOutSink(string(b)) // 实时可见
 	}
-	vm.out.WriteByte(b)
+	vm.out.WriteByte(b) // 同时缓存
 }
 
-// enterDirectOut 键盘监听激活时切换直写模式: 先把已缓冲输出落到终端
-// (激活前的提示先显示), 之后输出逐条直写 stdout, 不再等程序结束一次性回传。
-// 非终端 (管道/测试捕获) 永远不会激活, 不会走到这里。
-// 激活后 vm.out 恒空 -> Result.Output 为空 -> Python 侧不再打印 (不双打)。
+// enterDirectOut 切换到实时输出模式: 先把已缓冲输出落到终端 (激活前的提示
+// 先显示), 之后输出逐条直写 stdout, 不再等程序结束。缓冲保留, 因此
+// Result.Output 仍包含完整输出 (输出缓存), 调用方依据 Streamed 跳过重复打印。
+// 非终端 (管道/测试捕获) 不会主动切换; 键盘监听激活时也可能走到这里。
 func (vm *vmState) enterDirectOut() {
 	if vm.outDirect {
 		return
@@ -178,7 +176,6 @@ func (vm *vmState) enterDirectOut() {
 	vm.outDirect = true
 	if vm.out.Len() > 0 {
 		keyOutSink(vm.out.String())
-		vm.out.Reset()
 	}
 }
 
@@ -199,6 +196,7 @@ type Result struct {
 	Vec      [32][4]float64
 	Flags    struct{ N, Z, C, V bool }
 	Output   string
+	Streamed bool // 输出已实时写到终端 (Output 仅为缓存, 调用方不要再打印)
 	ErrMsg   string
 	Segments []MemSeg // 脏页合并段 (稀疏内存回传)
 	MemSize  int64
@@ -216,6 +214,9 @@ type RunOptions struct {
 	MaxSteps int64
 	Sandbox  bool  // 沙箱: 屏蔽宿主能力系统调用
 	Seed     int64 // 随机种子; 0 = 时间随机
+	// StreamOutput 请求实时输出: 真实终端下边执行边写 stdout,
+	// 同时保留完整输出缓存 (Result.Output)。非终端忽略此请求。
+	StreamOutput bool
 }
 
 func decodeBytecode(bc []byte) ([]instruction, int, bool) {
@@ -318,6 +319,8 @@ func RunV2(opts *RunOptions) *Result {
 	if opts.Seed != 0 {
 		vm.rng.Seed(opts.Seed)
 	}
+	// 真实终端才启用实时输出; 管道/重定向/测试捕获保持"结束一次性回传"。
+	vm.outDirect = opts.StreamOutput && stdoutIsTerminal()
 	vm.dirtyBits = make([]uint64,
 		(uint64(memSize)+(1<<(dirtyPageShift+6))-1)>>(dirtyPageShift+6))
 	// 初始段视为已写内容: 数据段通常会被改写, 直接并入脏位图, 免去逐字节 touch。
@@ -341,16 +344,17 @@ func RunV2(opts *RunOptions) *Result {
 			}
 		}
 		r := &Result{
-			Status:  status,
-			Pc:      vm.pc,
-			Sp:      vm.sp,
-			HeapPtr: vm.heapPtr,
-			Steps:   vm.steps,
-			Regs:    vm.regs,
-			Vec:     vm.vec,
-			Output:  vm.out.String(),
-			ErrMsg:  errMsg,
-			MemSize: memSize,
+			Status:   status,
+			Pc:       vm.pc,
+			Sp:       vm.sp,
+			HeapPtr:  vm.heapPtr,
+			Steps:    vm.steps,
+			Regs:     vm.regs,
+			Vec:      vm.vec,
+			Output:   vm.out.String(),
+			Streamed: vm.outDirect,
+			ErrMsg:   errMsg,
+			MemSize:  memSize,
 		}
 		r.Flags.N, r.Flags.Z, r.Flags.C, r.Flags.V = vm.flags.N, vm.flags.Z, vm.flags.C, vm.flags.V
 		r.Segments = vm.dirtySegments()
@@ -1055,14 +1059,15 @@ func (vm *vmState) prepareQueryInput() {
 // flushOut 在阻塞读标准输入前, 把已缓冲输出冲刷到真实终端。
 // 仅在 stdout 为终端时生效 (交互提示可见); 管道/重定向/测试捕获保持
 // 纯缓冲语义 —— 输出仍随 Result.Output 一次性回传, 字节序列不变。
-// 冲刷后 vm.out 清空, 回传结果里不再包含这部分 (不重复打印)。
+// 冲刷后保持实时模式且不清空缓存: 后续输出继续直写, Result.Output 仍是
+// 完整缓存 (Result.Streamed=true, Python 侧据此不重复打印)。
 func (vm *vmState) flushOut() {
 	if vm.outDirect || vm.out.Len() == 0 || !stdoutIsTerminal() {
 		return
 	}
 	consoleInit()
 	keyOutSink(vm.out.String())
-	vm.out.Reset()
+	vm.outDirect = true
 }
 
 // ---------------- SYS ----------------
