@@ -145,7 +145,9 @@ func stdinLineEditor() (string, bool, bool) {
 				lineRewrite(buf, pos)
 			}
 		default:
-			if code > 0x10FFFF {
+			// 扩展键码 (方向键/功能键/修饰组合, >= keyUp) 在单行编辑中无含义,
+			// 不能当成 Unicode 码点插入。
+			if code >= keyUp || code > 0x10FFFF {
 				continue
 			}
 			r := rune(code)
