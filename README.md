@@ -58,11 +58,9 @@ cvm env
 安装后的包无需修改源码即可导入：
 
 ```cin
-import "hello"                  // 包入口 (pic.toml 的 entry)
-import "hello/util.cin"         // 包内文件
+import "hello"
+import "hello/util.cin"
 ```
-
-完整设计、格式与验收标准见 [V6.2.0-PLAN.md](V6.2.0-PLAN.md)。
 
 ## 文档
 
