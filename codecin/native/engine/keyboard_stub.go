@@ -11,4 +11,7 @@ func keyRestorePlatform() {}
 // keyResetPlatform 重置平台侧解码中间态 (key_flush 调用; stub 无)。
 func keyResetPlatform() {}
 
+// keyFlushPlatform 丢弃平台侧残留输入 (stub 无)。
+func keyFlushPlatform() {}
+
 func keyNext() (uint64, bool) { return 0, false }

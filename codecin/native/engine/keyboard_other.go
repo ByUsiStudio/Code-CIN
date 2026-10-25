@@ -31,15 +31,7 @@ func keyEnablePlatform() bool {
 	if ttyIoctl(ttySetAttr, &raw) != nil {
 		return false
 	}
-	// 清空激活前残留的输入缓存 (如启动命令时敲下的回车)。
-	// 已是非阻塞 (VMIN=0/VTIME=0): read 无输入时立即返回 0, 不会卡住。
-	var b [64]byte
-	for {
-		n, err := syscall.Read(0, b[:])
-		if n <= 0 || err != nil {
-			break
-		}
-	}
+	
 	return true
 }
 
@@ -52,6 +44,18 @@ func keyRestorePlatform() {
 
 // keyResetPlatform 重置平台侧解码中间态 (key_flush 调用; Unix 无)。
 func keyResetPlatform() {}
+
+// keyFlushPlatform 丢弃内核输入队列里尚未读取的字节 (key_flush)。
+// 仅在 raw 模式 (VMIN=0/VTIME=0) 下调用, read 无输入时立即返回 0。
+func keyFlushPlatform() {
+	var b [64]byte
+	for {
+		n, err := syscall.Read(0, b[:])
+		if n <= 0 || err != nil {
+			break
+		}
+	}
+}
 
 // keyNext 非阻塞读 stdin 并经转义序列状态机解码。
 func keyNext() (uint64, bool) {

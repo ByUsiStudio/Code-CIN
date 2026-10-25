@@ -455,7 +455,9 @@ def main(argv: Optional[List[str]] = None) -> int:
     if ns.build_exe is not None:
         return _run_aot_build(ns, console, program_file, config)
 
-    tty = _stdout_is_tty()
+    # 运行前进度/状态只在真实终端且未静音 (log-level ERROR) 时显示,
+    # 管道/重定向与"保持示例输出干净"的场景不受影响。
+    tty = _stdout_is_tty() and config.log_level.upper() not in ('ERROR', 'CRITICAL')
     if tty:
         console.print(Colors.colorize(
             f"Loading {os.path.basename(program_file)} ...", Colors.CYAN))
