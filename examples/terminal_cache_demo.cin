@@ -1,0 +1,135 @@
+// Code CIN v6.3.1 演示: 终端缓存 + 实时输出
+//
+// 运行 (请在真实终端中执行, 效果最佳):
+//   codecin examples/terminal_cache_demo.cin
+//
+// v6.3.1 特性:
+//   1) 实时输出: print / println 在执行过程中就写到终端, 不再等程序结束
+//      才一次性显示; 管道 / 重定向 / 测试捕获仍保持"缓冲 + 结束回传".
+//   2) 终端缓存 (type-ahead): 程序启动、动画期间提前键入的内容会进入缓存,
+//      之后 get_key / key_hit / input_str 可以立即读到, 不会丢失;
+//      key_flush() 可显式清空键码队列与终端残留输入.
+//   3) 输出缓存: 实时模式下的完整输出仍保存在执行结果 Result.Output 中,
+//      并以 streamed 标记告知宿主"已经显示过, 不要重复打印".
+
+string C_RESET = "\x1b[0m"
+string C_CYAN = "\x1b[36m"
+string C_GREEN = "\x1b[32m"
+string C_YELLOW = "\x1b[33m"
+string C_DIM = "\x1b[2m"
+string C_CLR = "\x1b[2K\r"
+
+// 逐个字符输出, 用 sleep_ms 拉开时间间隔 —— 实时模式下能立刻看到打字机效果。
+function typewrite(string s, int delay_ms) -> void {
+    int n = strlen(s)
+    for (int i = 0; i < n; i = i + 1) {
+        print(substr(s, i, 1))
+        sleep_ms(delay_ms)
+    }
+}
+
+// 旋转指示器: 在同一行原地刷新, 演示终端特效能实时呈现。
+function spinner(int total_ms, string label) -> void {
+    string frames = "|/-\\"
+    int start = time_ms()
+    int i = 0
+    while (time_ms() - start < total_ms) {
+        print(C_CLR + C_CYAN + substr(frames, i % 4, 1) + C_RESET + " " + label)
+        i = i + 1
+        sleep_ms(80)
+    }
+    print(C_CLR)
+}
+
+// 进度条: 20 格逐段推进, 每帧都立即显示。
+function progress(int total_ms, string label) -> void {
+    int steps = 20
+    int frame_ms = total_ms / steps
+    for (int step = 1; step <= steps; step = step + 1) {
+        string bar = ""
+        for (int j = 0; j < steps; j = j + 1) {
+            if (j < step) { bar = bar + "#" } else { bar = bar + "." }
+        }
+        int pct = step * 100 / steps
+        print(C_CLR + C_GREEN + label + " [" + bar + "] " + int_to_str(pct) + "%" + C_RESET)
+        sleep_ms(frame_ms)
+    }
+    print(C_CLR)
+}
+
+// 键码 -> 可读标签 (只美化常见键, 其余显示为数值)。
+function key_label(int k) -> string {
+    string upper_az = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    string lower_az = "abcdefghijklmnopqrstuvwxyz"
+    string digits = "0123456789"
+    if (k == 13) { return "Enter" }
+    if (k == 32) { return "空格" }
+    if (k == 9) { return "Tab" }
+    if (k == 27) { return "Esc" }
+    if (k >= 65 && k <= 90) { return substr(upper_az, k - 65, 1) }
+    if (k >= 97 && k <= 122) { return substr(lower_az, k - 97, 1) }
+    if (k >= 48 && k <= 57) { return substr(digits, k - 48, 1) }
+    return "[" + int_to_str(k) + "]"
+}
+
+function main() -> int {
+    int t0 = time_ms()
+
+    println(C_CYAN + "==================================================" + C_RESET)
+    print(C_CYAN)
+    typewrite("  Code CIN v6.3.1  Terminal Cache + Live Output\n", 5)
+    print(C_RESET)
+    println(C_CYAN + "==================================================" + C_RESET)
+
+    // ---- 1. 实时输出 ----
+    println(C_DIM + "1) 实时输出: 下面的动画是边执行边显示的" + C_RESET)
+    spinner(900, "初始化终端缓存")
+    progress(1400, "实时输出进度")
+    println(C_GREEN + "动画全程用时 " + int_to_str(time_ms() - t0) +
+            " ms, 每一帧都在执行过程中立即出现" + C_RESET)
+    println()
+
+    // ---- 2. 终端缓存: 提前输入的一行文字 ----
+    println(C_YELLOW + "2) 终端缓存: 提前输入一行" + C_RESET)
+    println("   接下来 2 秒动画期间, 请提前输入一行文字并按回车。")
+    println(C_DIM + "   动画结束后程序会直接读取缓存, 不再等待你重新输入。" + C_RESET)
+    sleep_ms(300)
+    progress(2000, "提前输入窗口")
+    print(C_GREEN + "缓存行 > " + C_RESET)
+    string cached_line = input_str()
+    if (strlen(cached_line) > 0) {
+        println(C_GREEN + "直接读到提前输入: " + cached_line + C_RESET)
+    } else {
+        println(C_DIM + "未读到内容 (没有提前输入, 或当前不是真实终端)" + C_RESET)
+    }
+    println()
+
+    // ---- 3. 终端缓存: 原始键码 ----
+    println(C_YELLOW + "3) 终端缓存: 原始键码 (不用回车)" + C_RESET)
+    println("   再播放 1.5 秒动画, 期间请随便敲几个键。")
+    sleep_ms(300)
+    progress(1500, "原始键码缓存中")
+
+    int count = 0
+    string labels = ""
+    while (key_hit() == 1 && count < 16) {
+        int k = get_key()
+        if (k >= 0) {
+            labels = labels + " " + key_label(k)
+            count = count + 1
+        }
+    }
+    if (count > 0) {
+        println(C_GREEN + "一次性读出 " + int_to_str(count) + " 个缓存按键:" + labels + C_RESET)
+    } else {
+        println(C_DIM + "没有缓存按键 (未提前输入, 或当前不是真实终端)" + C_RESET)
+    }
+
+    // 显式清理: 键码队列 + 终端残留输入一起丢弃。
+    key_flush()
+    println(C_DIM + "已调用 key_flush(): 清空剩余键码与终端残留输入。" + C_RESET)
+    println()
+
+    println(C_CYAN + "v6.3.1 演示结束: 实时输出 + 终端输入/输出缓存。" + C_RESET)
+    return 0
+}
