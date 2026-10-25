@@ -21,8 +21,6 @@ r"""codec.cin (纯 CIN 编解码与简单密码) 的回归测试。
 
 import os
 
-import pytest
-
 from tests.helpers import run_cin_file
 
 ROUNDTRIP_SAFE = 'codec_xor_cipher(codec_xor_cipher("abc", "k"), "k")'

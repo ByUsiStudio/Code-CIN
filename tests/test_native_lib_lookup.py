@@ -10,6 +10,7 @@ import platform
 
 from codecin import native
 
+
 def test_os_and_arch_slugs():
     assert native._os_slug() in ('windows', 'macos', 'linux')
     assert native._arch_slug() in ('x64', 'arm64', 'x86') or native._arch_slug()

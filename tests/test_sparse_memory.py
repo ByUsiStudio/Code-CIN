@@ -4,7 +4,6 @@ v5.9.0 起内存默认 1 GiB (OS 按需提交, 4 KiB 页), 只占用实际写入
 持久化格式只保存已分配页 (段式), 旧全量镜像格式已被替换。
 """
 
-import struct
 
 import pytest
 
@@ -68,7 +67,7 @@ def test_string_roundtrip():
     m.write_string(256, 'hello 中文')
     assert m.read_string(256) == 'hello 中文'
     raw = m.read_cstr_bytes(256)
-    assert raw == 'hello 中文'.encode('utf-8')
+    assert raw == 'hello 中文'.encode()
 
 def test_snapshot_segments_sorted_and_minimal():
     m = FastMemory()

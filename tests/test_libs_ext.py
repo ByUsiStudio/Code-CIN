@@ -7,6 +7,7 @@ import os
 
 from tests.helpers import run_cin_file
 
+
 def _run(workdir, source, name='lib_ext_test.cin', **cfg):
     path = os.path.join(workdir, name)
     with open(path, 'w', encoding='utf-8') as f:

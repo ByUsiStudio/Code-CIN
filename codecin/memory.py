@@ -1,5 +1,5 @@
 import struct
-from typing import Dict, Iterator, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from .console import Console, Table
 from .errors import MemoryAccessError

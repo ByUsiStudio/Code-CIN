@@ -12,9 +12,8 @@ CIN 侧 main() 返回 0 表示全部通过, 非 0 为失败点编号。
 
 import os
 
-import pytest
-
 from tests.helpers import run_cin_file
+
 
 def _run(workdir, source, name='lib_dp_test.cin', **cfg):
     path = os.path.join(workdir, name)

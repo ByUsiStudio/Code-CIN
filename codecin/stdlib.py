@@ -69,7 +69,7 @@ def library_report() -> List[Dict[str, str]]:
     for name in names:
         path = os.path.join(LIB_DIR, name)
         try:
-            with open(path, 'r', encoding='utf-8') as f:
+            with open(path, encoding='utf-8') as f:
                 text = f.read()
         except OSError:
             continue

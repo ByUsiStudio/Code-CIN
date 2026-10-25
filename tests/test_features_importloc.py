@@ -8,6 +8,7 @@ from codecin.cin import CINCompiler
 from codecin.errors import CompilerError
 from tests.helpers import run_cin_file
 
+
 def _write(workdir, name, text):
     p = os.path.join(workdir, name)
     with open(p, 'w', encoding='utf-8') as f:

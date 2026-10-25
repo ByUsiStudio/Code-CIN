@@ -6,9 +6,8 @@
 
 import os
 
-import pytest
-
 from tests.helpers import run_cin_file
+
 
 def _run(workdir, source, name='lib_frac_test.cin', **cfg):
     path = os.path.join(workdir, name)

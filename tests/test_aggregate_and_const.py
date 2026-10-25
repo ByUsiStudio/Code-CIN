@@ -21,6 +21,7 @@ from codecin.cin import CINCompiler
 from codecin.errors import CompilerError
 from tests.helpers import run_cin_source
 
+
 def expr_type_kind(err: str) -> str:
     return err.splitlines()[0]
 

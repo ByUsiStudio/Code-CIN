@@ -14,7 +14,6 @@ import uuid
 
 import pytest
 
-from codecin import native
 from codecin.cin import CINCompiler
 from tests.conftest import TMP_ROOT
 from tests.helpers import new_cpu

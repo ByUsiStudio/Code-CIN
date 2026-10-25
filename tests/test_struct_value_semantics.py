@@ -26,6 +26,7 @@ from codecin.cin import CINCompiler
 from codecin.errors import CompilerError
 from tests.helpers import run_cin_source
 
+
 def _main_only(body: str, prelude: str = '') -> str:
     return f'{prelude}function main() -> int {{ {body} }}'
 

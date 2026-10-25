@@ -7,6 +7,7 @@ from codecin.cin import CINCompiler
 from codecin.errors import CompilerError
 from tests.helpers import run_cin_source
 
+
 def test_bitwise_operators():
     src = """
 function main() -> int {
