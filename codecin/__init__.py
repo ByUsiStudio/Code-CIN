@@ -1,4 +1,4 @@
-__version__ = "6.2.2"
+__version__ = "6.3.1"
 __author__ = "ByUsi Studio"
 
 from .config import Config
