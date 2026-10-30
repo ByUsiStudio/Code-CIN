@@ -52,6 +52,31 @@ def test_pic_install_by_name_from_registry_git(workdir, monkeypatch):
     assert pkg is not None and pkg.version == '1.2.0'
 
 
+def test_pic_install_by_name_defaults_to_latest(workdir, monkeypatch):
+    monkeypatch.setenv('PIC_HOME', os.path.join(workdir, 'home'))
+    repo = _init_and_commit(os.path.join(workdir, 'greet'), version='1.0.0')
+    with open(os.path.join(repo, 'pic.toml'), encoding='utf-8') as f:
+        manifest = f.read()
+    with open(os.path.join(repo, 'pic.toml'), 'w', encoding='utf-8') as f:
+        f.write(manifest.replace('1.0.0', '2.0.0'))
+    _git(repo, 'add', '-A')
+    _git(repo, 'commit', '-m', 'v2', '--quiet')
+    _git(repo, 'tag', '-a', 'v2.0.0', '-m', 'v2.0.0')
+
+    assert pic.main(['registry', 'add', 'greet', repo]) == 0
+    # 本地注册表登记两个版本: 不写版本时选最高
+    from codecin.packaging.store import default_store
+    store = default_store()
+    store.register('greet', repo, '1.0.0', 'v1.0.0')
+    store.register('greet', repo, '2.0.0', 'v2.0.0')
+    assert pic.main(['install', 'greet']) == 0
+    assert PackageStore().get('greet').version == '2.0.0'
+
+    # 已装 2.0.0 时再次安装仍指向最新 (不报错)
+    assert pic.main(['install', 'greet']) == 0
+    assert PackageStore().get('greet').version == '2.0.0'
+
+
 def test_pic_publish_creates_tag(workdir, monkeypatch):
     monkeypatch.setenv('PIC_HOME', os.path.join(workdir, 'home'))
     repo = _init_and_commit(os.path.join(workdir, 'greet'), version='2.0.0')

@@ -206,7 +206,14 @@ class FakeRegistry(_BaseServer):
                         self._json(404, {'ok': False, 'error': {
                             'code': 'not_found', 'message': 'package not found'}})
                         return
-                    self._json(200, {'ok': True, 'data': record})
+                    active = [v for v, entry in record['versions'].items()
+                              if not entry.get('yanked')]
+                    payload = dict(record)
+                    payload['latest'] = max(
+                        active, key=lambda v: tuple(
+                            int(x) for x in v.split('-')[0].split('.'))
+                    ) if active else ''
+                    self._json(200, {'ok': True, 'data': payload})
                     return
                 if len(parts) == 6 and parts[-1] == 'artifact':
                     name, version = parts[3], parts[4]
@@ -398,6 +405,43 @@ def test_publish_and_install_through_central_registry(
     assert pkg is not None and pkg.version == '1.0.0'
     assert pic.main(['search', 'hello']) == 0
     assert pic.main(['registry', 'list']) == 0
+
+
+def test_install_without_version_picks_latest(
+        fake_services, workdir, monkeypatch, capsys):
+    auth, registry = fake_services
+    _auth(monkeypatch, auth, registry, workdir)
+    repo = _make_repo(os.path.join(workdir, 'hello'), '1.0.0')
+    assert pic.main(['publish', '--manifest', repo, '--repo', repo,
+                     '--no-tag']) == 0
+
+    # 发布 2.0.0
+    with open(os.path.join(repo, 'pic.toml'), encoding='utf-8') as f:
+        manifest = f.read()
+    with open(os.path.join(repo, 'pic.toml'), 'w', encoding='utf-8') as f:
+        f.write(manifest.replace('1.0.0', '2.0.0'))
+    with open(os.path.join(repo, 'src', 'hello.cin'), 'w',
+              encoding='utf-8') as f:
+        f.write('function hello() -> int { return 43 }\n')
+    _git(repo, 'add', '-A')
+    _git(repo, 'commit', '-m', 'v2', '--quiet')
+    _git(repo, 'tag', '-a', 'v2.0.0', '-m', 'v2.0.0')
+    assert pic.main(['publish', '--manifest', repo, '--repo', repo,
+                     '--no-tag']) == 0
+
+    # 先装旧版本, 再不带版本安装 -> 必须升级到最新 2.0.0
+    assert pic.main(['install', 'hello@1.0.0']) == 0
+    assert PackageStore().get('hello').version == '1.0.0'
+    assert pic.main(['install', 'hello']) == 0
+    store = PackageStore()
+    assert store.get('hello').version == '2.0.0'
+    assert store.index['packages']['hello']['current'] == '2.0.0'
+
+    # versions / info 为公开只读命令
+    assert pic.main(['versions', 'hello']) == 0
+    out = capsys.readouterr().out
+    assert '2.0.0' in out and 'latest' in out
+    assert pic.main(['info', 'hello', '--json']) == 0
 
 
 def test_tampered_registry_is_rejected(fake_services, workdir, monkeypatch):

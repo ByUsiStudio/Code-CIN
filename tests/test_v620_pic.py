@@ -109,5 +109,41 @@ def test_pic_registry_add_search_remove(workdir, monkeypatch):
     assert pic.main(['registry', 'add', 'greet',
                      'https://example.com/greet.git']) == 0
     assert pic.main(['search', 'greet']) == 0
+    assert pic.main(['search', 'greet', '--json']) == 0
     assert pic.main(['registry', 'list']) == 0
     assert pic.main(['registry', 'remove', 'greet']) == 0
+
+
+def test_pic_modules_and_info_offline(workdir, monkeypatch, capsys):
+    monkeypatch.setenv('PIC_HOME', os.path.join(workdir, 'home'))
+    pkg = os.path.join(workdir, 'greet')
+    _init(pkg, 'greet', '1.0.0')
+    with open(os.path.join(pkg, 'src', 'extra.cin'), 'w',
+              encoding='utf-8') as f:
+        f.write('function extra() -> int { return 1 }\n')
+    assert pic.main(['install', pkg]) == 0
+    capsys.readouterr()
+    assert pic.main(['modules', 'greet']) == 0
+    out = capsys.readouterr().out
+    assert 'extra' in out
+    assert 'import "greet:*"' in out
+    assert pic.main(['info', 'greet', '--json']) == 0
+
+
+def test_pic_use_switches_current_version(workdir, monkeypatch, capsys):
+    monkeypatch.setenv('PIC_HOME', os.path.join(workdir, 'home'))
+    first = os.path.join(workdir, 'greet1')
+    second = os.path.join(workdir, 'greet2')
+    _init(first, 'greet', '1.0.0')
+    _init(second, 'greet', '2.0.0')
+    assert pic.main(['install', first]) == 0
+    assert pic.main(['install', second]) == 0
+    assert PackageStore().get('greet').version == '2.0.0'
+    capsys.readouterr()
+    assert pic.main(['use', 'greet', '1.0.0']) == 0
+    assert PackageStore().get('greet').version == '1.0.0'
+    assert pic.main(['use', 'greet']) == 0
+    assert PackageStore().get('greet').version == '2.0.0'
+    # 显式安装已存在的版本也要切换 current
+    assert pic.main(['install', 'greet@1.0.0']) == 0
+    assert PackageStore().get('greet').version == '1.0.0'
