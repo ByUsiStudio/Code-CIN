@@ -3,10 +3,11 @@
 这是 `pic` 的独立中央服务，负责：
 
 * 包标识名 / Git 获取地址；
-* 版本列表、标签/提交、发布者、时间；
-* `.cinpkg` 制品上传与下载；
+* 版本列表、标签/提交、发布者、时间、latest 指针；
+* `.cinpkg` 制品上传与下载（含下载计数）；
 * 源码树 / 规范化清单 / 制品的 SHA-256；
-* yank（撤回版本）、搜索、健康检查。
+* 搜索（名称/仓库/描述/关键词、排序、分页）、yank、版本删除；
+* 浏览器后台管理页 `/admin`。
 
 **Cdifit (`https://www.cdifit.cn`) 只用于登录和 AccessToken 校验，不存储包数据。**
 
@@ -41,6 +42,10 @@ CDIFIT_API_BASE=https://www.cdifit.cn \
 | `PIC_SERVER_DATA` | `./data` | 数据目录 |
 | `PIC_PUBLIC_URL` | `https://package.codecin.org.cn` | 对外地址（用于 artifact_url） |
 | `CDIFIT_API_BASE` | `https://www.cdifit.cn` | Cdifit 认证地址 |
+| `PIC_ADMIN_EMAILS` | 空 | 管理员邮箱，逗号/空白分隔 |
+| `PIC_ADMIN_IDS` | 空 | 管理员 Cdifit `sub`，逗号/空白分隔 |
+
+未配置管理员时，登录用户仍可管理自己发布的版本。
 
 数据目录：
 
@@ -65,17 +70,38 @@ Base: `/api/v1`
 | 方法 | 路径 | 认证 | 说明 |
 |------|------|------|------|
 | GET | `/health` | 否 | 健康检查 |
-| GET | `/packages?q=` | 否 | 搜索/列表 |
+| GET | `/stats` | 否 | 统计 |
+| GET | `/me` | Bearer | 当前用户/管理员标记 |
+| GET | `/packages?q=&keyword=&sort=&order=&limit=&offset=` | 否 | 搜索/列表 |
 | GET | `/packages/{name}` | 否 | 包记录 |
 | GET | `/packages/{name}/{version}` | 否 | 单版本 |
 | PUT | `/packages/{name}/{version}` | Bearer | 提交元数据 |
 | POST | `/packages/{name}/{version}/artifact?sha256=` | Bearer | 上传 `.cinpkg` |
 | GET | `/packages/{name}/{version}/artifact` | 否 | 下载 `.cinpkg` |
 | POST | `/packages/{name}/{version}/yank` | Bearer | 撤回/恢复版本 |
+| POST | `/packages/{name}/{version}/latest` | Bearer | 设置 latest |
+| DELETE | `/packages/{name}/{version}` | Bearer | 删除版本 |
+| DELETE | `/packages/{name}` | Bearer | 删除整个包 |
+
+后台管理页：`GET /admin`（无需认证，操作时在页面填入 `pic admin
+--print-token` 打印的 AccessToken）。
 
 认证：`Authorization: Bearer <Cdifit AccessToken>`。服务端把 Token 转发到
 `GET https://www.cdifit.cn/api/v4/session/oauth/userinfo` 校验，并缓存
 5 分钟；发布者由返回的 `sub` 决定。
+
+## 后台管理
+
+打开 `https://package.codecin.org.cn/admin`，或在客户端运行 `pic admin`
+（自动打开并填入令牌）。后台支持：
+
+- 统计概览（包/版本/制品/已撤回/下载/存储）；
+- 搜索结果按名称/最新版本/更新时间/下载量/版本数排序；
+- 查看版本、标签、提交、制品大小/SHA-256、发布者、下载量；
+- 撤回/恢复版本、设置 latest、删除版本、删除整个包。
+
+删除与 latest 的权限：发布者本人，或 `PIC_ADMIN_EMAILS` / `PIC_ADMIN_IDS`
+中配置的管理员。
 
 ### 发布元数据示例
 

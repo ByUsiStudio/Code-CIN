@@ -23,7 +23,7 @@ from contextlib import suppress
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from functools import cmp_to_key
-from typing import Any, Iterable
+from typing import Any
 
 NAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_-]{0,63}$")
 VERSION_RE = re.compile(r"^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.+-]+)?$")
@@ -526,6 +526,8 @@ class Store:
             if not force and entry.publisher.id \
                     and entry.publisher.id != user_id:
                 raise Forbidden("forbidden")
+            if entry.yanked:
+                raise StoreError("cannot set latest to a yanked version")
             pkg.latest = version
             pkg.updated_at = utc_now()
             self._write_package(pkg)
@@ -586,15 +588,14 @@ class Store:
 
     def record_download(self, name: str, version: str) -> None:
         """制品下载计数 (失败不影响下载)。"""
-        with suppress(OSError, StoreError):
-            with self._lock:
-                pkg = self.get(name)
-                entry = pkg.versions.get(version)
-                if entry is None:
-                    return
-                entry.downloads += 1
-                pkg.downloads += 1
-                self._write_package(pkg)
+        with suppress(OSError, StoreError), self._lock:
+            pkg = self.get(name)
+            entry = pkg.versions.get(version)
+            if entry is None:
+                return
+            entry.downloads += 1
+            pkg.downloads += 1
+            self._write_package(pkg)
 
     def summary(self, pkg: Package) -> PackageSummary:
         return PackageSummary(
@@ -669,10 +670,7 @@ class Store:
 
         total = len(scored)
         start = max(0, offset)
-        if limit and limit > 0:
-            page = scored[start:start + limit]
-        else:
-            page = scored[start:]
+        page = scored[start:start + limit] if limit and limit > 0 else scored[start:]
         return [self.summary(pkg) for _score, pkg in page], total
 
     def stats(self) -> dict[str, Any]:

@@ -361,3 +361,17 @@ def test_admin_page_and_delete_version(registry) -> None:
     assert json.loads(body)["data"]["package_removed"] is True
     status, _, _ = call(httpd, "GET", "/api/v1/packages/hello")
     assert status == 404
+
+
+def test_me_reports_admin_flag(registry) -> None:
+    app, httpd = registry
+    status, _, body = call(httpd, "GET", "/api/v1/me")
+    assert status == 200, body
+    assert json.loads(body)["data"]["admin"] is False
+
+    app.admin_ids = {"u1"}
+    status, _, body = call(httpd, "GET", "/api/v1/me")
+    assert status == 200, body
+    data = json.loads(body)["data"]
+    assert data["admin"] is True
+    assert data["email"] == "user@example.com"

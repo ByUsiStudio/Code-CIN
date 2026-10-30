@@ -30,14 +30,12 @@ from rich.table import Table
 from store import (
     Forbidden,
     NotFound,
-    PackageSummary,
     RepoMismatch,
     Store,
     StoreError,
     Version,
     VersionExists,
     format_time,
-    latest,
     validate_digest,
     validate_name,
     validate_version,
@@ -841,10 +839,8 @@ def _int_query(request: Request, name: str, default: int,
 def _identity_set(value: Any) -> set[str]:
     if value is None:
         return set()
-    if isinstance(value, str):
-        items = re.split(r"[\s,;]+", value)
-    else:
-        items = [str(item) for item in value]
+    items = (re.split(r"[\s,;]+", value) if isinstance(value, str)
+             else [str(item) for item in value])
     return {item.strip() for item in items if item.strip()}
 
 
