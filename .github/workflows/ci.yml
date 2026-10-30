@@ -45,7 +45,7 @@ jobs:
           # .gotmp/.gocache 是记录在案的构建缓存/临时目录 (见 README 与 aot.py),
           # 它们里面确实会有 .cin/.py 文件, 不能算"被意外吞掉的源码"。
           leaks=$(git ls-files --others --ignored --exclude-standard -- '*.py' '*.go' '*.cin' '*.asm' \
-            | grep -vE '^(\.tmp|\.gotmp|\.gocache|dist/|build/|pytest-cache-)' || true)
+            | grep -vE '^(\.tmp|\.gotmp|\.gocache|\.aotbuild-|\.aotprobe-|\.pytest_tmp|pytest-cache-|pytest-tmp-|dist/|build/)' || true)
           if [ -n "$leaks" ]; then
             echo "以下源码/样例被 .gitignore 忽略, 不会被提交:" >&2
             echo "$leaks" >&2
