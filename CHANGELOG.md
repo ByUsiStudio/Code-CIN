@@ -5,6 +5,107 @@
 
 ---
 
+## [6.4.0] - 2026-10-30
+
+一次以「pic 搜索 / 版本管理 / 分块导入」为主题的发布：CIN 的 `import` 现在可以
+按包、模块和版本选择（`rich:*` / `rich:table` / `rich::1.1.1:*`），不再只能
+整包导入；`pic install` 默认安装最新版本；中央注册服务器补齐搜索、统计、
+latest 指针、版本删除与浏览器后台管理页。
+
+### 新增 (Added)
+
+#### CIN 分块导入 (pic 包)
+
+- `import` 新增包规格语法，与 `pic install` 共用
+  `codecin/packaging/spec.py`：
+  - `import "rich"` —— 包入口（兼容旧写法）；
+  - `import "rich:*"` —— 入口 + 全部公开模块；
+  - `import "rich:table"` / `import "rich:table,markdown"` —— 指定模块；
+  - `import "rich::1.1.1:*"` / `import "rich::1.1.1:table"` —— 指定版本；
+  - `import "rich@1.1.1:table"` —— 旧式版本写法。
+- 通配 `*` 跳过 `main.cin`、`test/`、`demo/`、`internal/` 等非公开模块；
+  显式选择私有模块时先展开入口，避免 `rich` 的 `internal/table.cin`
+  依赖 `style.cin` 符号而编译失败。
+- 包版本解析支持全局存储 `$PIC_HOME/packages/<name>/<current>` 与显式
+  `::<版本>`；版本未安装时给出 `pic install <name>@<version>` 的可执行提示。
+- 新增 `pic modules <name>`：列出已安装/远程包内可导入模块，并给出
+  `import "<name>:*"`、`import "<name>:<module>"` 示例。
+
+#### pic 安装与搜索
+
+- **默认安装最新版本**：`pic install <name>` 不写版本时按中央注册表的
+  `latest` 指针（无指针时取最高未撤回版本）解析，即使本地已安装旧版本
+  也会升级；`--project` 安装同样适用。`name@^1.2` / `name@1.2.3` 保持
+  “满足约束即可”的旧语义。
+- `pic install` 支持 `name:*` / `name::<版本>:*` 规格；选择器只影响安装后
+  推荐的 `import` 写法，安装始终复制整个包。
+- `pic search` 大幅增强：
+  - 搜索范围扩展为包名 / 仓库 / 描述 / 关键词；
+  - 相关度排序（精确 > 前缀 > 包含 > 关键词 > 描述 > 仓库）；
+  - `--sort name|latest|updated|downloads|versions`、`--order asc|desc`、
+    `--limit` / `--offset` 分页、`--keyword` 过滤、`--json`；
+  - 输出 latest、版本数、下载量与描述。
+- 新增 `pic versions <name>`（latest / yanked / installed 标记）、
+  `pic info <name>`（仓库、描述、关键词、许可证、入口、模块、下载量、
+  版本列表）。搜索、`versions`、`info`、`registry list` 改为公开只读，
+  无需登录。
+
+#### pic 版本管理与后台
+
+- 中央注册服务器新增：
+  - `latest` 指针与 `POST /api/v1/packages/{name}/{version}/latest`；
+  - 版本/整包删除 `DELETE /api/v1/packages/{name}[/{version}]`；
+  - 统计 `GET /api/v1/stats`、当前用户 `GET /api/v1/me`；
+  - 制品下载计数与包级/版本级 `downloads`；
+  - 发布时保存描述、关键词、许可证、入口、模块列表。
+- 搜索 API 支持 `q` / `keyword` / `sort` / `order` / `limit` / `offset`，
+  返回 `total` / `count` / `offset` / `limit`，并包含描述、关键词、
+  下载量、已撤回版本数。
+- 新增 `/admin` 浏览器后台管理页（零外部前端依赖）：
+  - 统计卡片、包搜索/排序、包详情与版本表；
+  - 撤回/恢复版本、设置 latest、删除版本、删除整个包；
+  - 令牌保存在浏览器 `localStorage`，支持 URL fragment 传入；
+  - 管理员由 `PIC_ADMIN_EMAILS` / `PIC_ADMIN_IDS` 配置，未配置时发布者
+    仍可管理自己发布的包。
+- 新增 `pic yank` / `pic unyank` / `pic latest` / `pic use` / `pic admin`
+  （`--no-browser` / `--print-token`）命令。
+- latest 指向的版本被撤回时，解析自动回退到最高未撤回版本；
+  设置 latest 时拒绝已撤回版本。
+
+### 变更 (Changed)
+
+- 版本号提升至 **6.4.0**（`codecin/__init__.py` 单一真源，
+  `codecin/native/engine/version_gen.go` 同步；registry 服务端版本同步）。
+- `pic install <name>` 不再优先复用本地任意已安装版本；默认 latest 会
+  升级到服务端最新版本。需要固定旧版本时显式写 `name@<版本>`。
+- CIN `import "name"` / `import "name:*"` 默认选择**最高已安装版本**，
+  不再受 `$PIC_HOME/index.json` 的 `current` 指针影响（`current` 仍供
+  `pic show` / `pic use` 等本地命令使用）；显式 `name::<版本>` 不变。
+- 包记录新增可选字段 `latest` / `latest_pointer` / `description` /
+  `keywords` / `license` / `homepage` / `entry` / `modules` / `downloads`；
+  旧记录缺少这些字段时按默认值读取，向后兼容。
+- `DELETE /api/v1/packages/{name}` 由 405 改为可删除（发布者或管理员）；
+  删除不可恢复，后台页会二次确认。
+- 服务端搜索默认按相关度/名称排序，`pic search` 输出列由 `REPO` 改为
+  `VERSIONS` / `DOWNLOADS` / `DESCRIPTION`。
+
+### 修复 (Fixed)
+
+- 修复 `pic install <name>` 在本地已安装旧版本时不会升级的问题。
+- 修复 `pic search` 只能匹配包名/仓库、无法按描述/关键词搜索的问题。
+- 修复 `pic` 缺少版本列表、latest、撤回恢复与后台管理入口的问题。
+- 修复 `rich` 等包含私有模块的包在分块导入时缺少入口符号导致的
+  `Unknown function` 编译错误。
+- 修复服务端统计中已撤回版本仍可能被当作 latest 的问题。
+
+### 兼容性
+
+- 既有 `import "./x.cin"`、`import "math.cin"`、`import "hello"`、
+  `import "hello/util.cin"` 写法全部保持；不带冒号的包名仍先查内置标准库。
+- `pic install name@version`、`git+URL`、本地路径、`.cinpkg`、`mkn`
+  依赖解析行为不变；`mkn` 的空版本依赖同样默认最新。
+- 服务端旧包记录可直接读取；`pic.lock` 格式不变。
+
 ## [6.3.1] - 2026-10-25
 
 一次以「终端缓存与实时输出」为主题的小版本：新增终端缓存技术，启动/编译期间
