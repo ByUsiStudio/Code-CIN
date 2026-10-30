@@ -31,7 +31,7 @@ func keyEnablePlatform() bool {
 	if ttyIoctl(ttySetAttr, &raw) != nil {
 		return false
 	}
-	
+
 	return true
 }
 

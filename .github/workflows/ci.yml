@@ -161,9 +161,13 @@ jobs:
         run: |
           python -m venv /tmp/venv
           /tmp/venv/bin/pip install --quiet dist/*.whl
+          # wheel 按设计不携带预编译原生库; 先用 wheel 内的 Go 源码现场构建,
+          # 再验证内置标准库 + 原生执行路径。
+          site="$(/tmp/venv/bin/python -c 'import codecin, os; print(os.path.dirname(codecin.__file__))')"
+          (cd "$site/native" && sh build.sh)
           cd /tmp
           printf 'import "str.cin"\nfunction main() -> int { println(strlen(s_repeat("ab", 3))) return 0 }\n' > libsmoke.cin
-          /tmp/venv/bin/codecin libsmoke.cin --no-native
+          /tmp/venv/bin/codecin libsmoke.cin
 
   lint:
     name: ruff

@@ -113,9 +113,9 @@ def clone(url: str, dest: str, ref: Optional[str] = None,
         local = _local_repo_path(url)
         if local is not None:
             shutil.copytree(local, work)
+            # reset 已同时更新 HEAD / 索引 / 工作区; 不要再 checkout 同一个
+            # ref, 否则在部分 Git/文件系统组合上会偶发 pathspec 错误。
             _run(['reset', '--hard', '--quiet', ref or 'HEAD'], cwd=work)
-            if ref:
-                _run(['checkout', '--quiet', ref], cwd=work)
             _run(['clean', '-fdxq'], cwd=work)
             if os.path.exists(dest):
                 shutil.rmtree(dest)
