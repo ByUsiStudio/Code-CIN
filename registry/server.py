@@ -9,6 +9,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import signal
 import stat
 import sys
@@ -45,6 +46,7 @@ from version import __version__
 
 MAX_METADATA_BYTES = 1 << 20
 MAX_ARTIFACT_BYTES = 256 << 20
+MAX_PAGE_SIZE = 200
 
 _PUBLISH_FIELDS = {
     "name",
@@ -56,8 +58,16 @@ _PUBLISH_FIELDS = {
     "manifest_sha256",
     "archive_sha256",
     "archive_size",
+    "description",
+    "keywords",
+    "license",
+    "homepage",
+    "entry",
+    "modules",
 }
 _YANK_FIELDS = {"yanked"}
+_LATEST_FIELDS = {"latest"}
+
 
 
 class ApiError(Exception):
@@ -84,6 +94,13 @@ class ArtifactResponse:
     sha256: str
     name: str
     version: str
+
+
+@dataclass
+class HtmlResponse:
+    status: int
+    body: str
+    content_type: str = "text/html; charset=utf-8"
 
 
 class Request:
@@ -179,12 +196,20 @@ class App:
         authenticator: Authenticator,
         public_url: str,
         logger: logging.Logger,
+        admin_emails: Any = None,
+        admin_ids: Any = None,
     ):
         self.store = store
         self.auth = authenticator
         self.public_url = (public_url or "").rstrip("/")
         self.logger = logger
         self.started = time.monotonic()
+        self.admin_emails = _identity_set(
+            admin_emails if admin_emails is not None
+            else os.environ.get("PIC_ADMIN_EMAILS", ""))
+        self.admin_ids = _identity_set(
+            admin_ids if admin_ids is not None
+            else os.environ.get("PIC_ADMIN_IDS", ""))
 
     def handle_health(self, request: Request) -> JsonResponse:
         return JsonResponse(
@@ -201,28 +226,25 @@ class App:
         )
 
     def handle_list(self, request: Request) -> JsonResponse:
-        query = request.query_value("q").strip().lower()
+        query = request.query_value("q").strip()
+        keyword = request.query_value("keyword").strip()
+        sort = request.query_value("sort").strip().lower()
+        order = request.query_value("order").strip().lower()
+        offset = _int_query(request, "offset", 0, minimum=0)
+        limit = _int_query(request, "limit", 0, minimum=0)
+        if limit:
+            limit = min(limit, MAX_PAGE_SIZE)
         try:
-            packages = self.store.list_packages()
+            summaries, total = self.store.search(
+                query,
+                limit=limit,
+                offset=offset,
+                sort=sort,
+                order=order,
+                keyword=keyword,
+            )
         except StoreError as exc:
             raise ApiError(500, "store_error", str(exc)) from exc
-        summaries: list[PackageSummary] = []
-        for pkg in packages:
-            if (
-                query
-                and query not in pkg.name.lower()
-                and query not in pkg.repo.lower()
-            ):
-                continue
-            summaries.append(
-                PackageSummary(
-                    name=pkg.name,
-                    repo=pkg.repo,
-                    latest=latest(pkg.versions),
-                    versions=len(pkg.versions),
-                    updated_at=pkg.updated_at,
-                )
-            )
         return JsonResponse(
             200,
             {
@@ -230,6 +252,36 @@ class App:
                 "data": {
                     "packages": [summary.to_json() for summary in summaries],
                     "count": len(summaries),
+                    "total": total,
+                    "offset": offset,
+                    "limit": limit,
+                },
+            },
+        )
+
+    def handle_stats(self, request: Request) -> JsonResponse:
+        try:
+            data = self.store.stats()
+        except StoreError as exc:
+            raise ApiError(500, "store_error", str(exc)) from exc
+        data["admin_configured"] = bool(self.admin_emails or self.admin_ids)
+        return JsonResponse(200, {"ok": True, "data": data})
+
+    def handle_admin_page(self, request: Request) -> HtmlResponse:
+        return HtmlResponse(200, _ADMIN_HTML)
+
+    def handle_me(self, request: Request) -> JsonResponse:
+        user = self._require_user(request)
+        return JsonResponse(
+            200,
+            {
+                "ok": True,
+                "data": {
+                    "sub": user.sub,
+                    "name": user.name,
+                    "email": user.email,
+                    "nickname": user.nickname,
+                    "admin": self._is_admin(user),
                 },
             },
         )
@@ -294,9 +346,17 @@ class App:
             archive_size=_int_field(body, "archive_size"),
             publisher=user.publisher(),
         )
+        details = {
+            "description": _string_field(body, "description"),
+            "license": _string_field(body, "license"),
+            "homepage": _string_field(body, "homepage"),
+            "entry": _string_field(body, "entry"),
+            "keywords": _string_list_field(body, "keywords"),
+            "modules": _string_list_field(body, "modules"),
+        }
         try:
             created = self.store.put_version(
-                name, _string_field(body, "repo").strip(), entry
+                name, _string_field(body, "repo").strip(), entry, details
             )
         except VersionExists as exc:
             raise ApiError(
@@ -450,6 +510,7 @@ class App:
         path = self.store.artifact_path(name, version)
         if not os.path.isfile(path):
             raise ApiError(404, "artifact_not_found", "artifact not uploaded")
+        self.store.record_download(name, version)
         return ArtifactResponse(
             path=path, sha256=entry.archive_sha256, name=name, version=version
         )
@@ -470,7 +531,9 @@ class App:
             )
 
         try:
-            updated = self.store.yank(name, version, yanked, user.sub)
+            updated = self.store.yank(
+                name, version, yanked, user.sub, force=self._is_admin(user)
+            )
         except Forbidden as exc:
             raise ApiError(
                 403, "forbidden", "only the publisher can yank this version"
@@ -486,6 +549,111 @@ class App:
                 "ok": True,
                 "data": {"name": name, "version": version, "yanked": updated.yanked},
             },
+        )
+
+    def handle_set_latest(
+        self, request: Request, name: str, version: str
+    ) -> JsonResponse:
+        user = self._require_user(request)
+        body = _decode_object(request, MAX_METADATA_BYTES, _LATEST_FIELDS)
+        value = body.get("latest")
+        if value is not None and not isinstance(value, bool):
+            raise ApiError(
+                400,
+                "invalid_json",
+                "json: cannot unmarshal value into Go struct field .latest of type bool",
+            )
+        try:
+            if value is False:
+                self.store.clear_latest(name)
+                return JsonResponse(
+                    200,
+                    {
+                        "ok": True,
+                        "data": {
+                            "name": name,
+                            "latest": self.store.get(name).effective_latest(),
+                        },
+                    },
+                )
+            pkg = self.store.set_latest(
+                name, version, user.sub, force=self._is_admin(user)
+            )
+        except Forbidden as exc:
+            raise ApiError(
+                403, "forbidden", "only the publisher or an admin can set latest"
+            ) from exc
+        except NotFound as exc:
+            raise ApiError(404, "not_found", "package/version not found") from exc
+        except StoreError as exc:
+            raise ApiError(400, "latest_failed", str(exc)) from exc
+        return JsonResponse(
+            200,
+            {
+                "ok": True,
+                "data": {
+                    "name": name,
+                    "version": version,
+                    "latest": pkg.effective_latest(),
+                },
+            },
+        )
+
+    def handle_delete_version(
+        self, request: Request, name: str, version: str
+    ) -> JsonResponse:
+        user = self._require_user(request)
+        try:
+            removed_package = self.store.delete_version(
+                name, version, user.sub, force=self._is_admin(user)
+            )
+        except Forbidden as exc:
+            raise ApiError(
+                403, "forbidden", "only the publisher or an admin can delete"
+            ) from exc
+        except NotFound as exc:
+            raise ApiError(404, "not_found", "package/version not found") from exc
+        except StoreError as exc:
+            raise ApiError(400, "delete_failed", str(exc)) from exc
+        return JsonResponse(
+            200,
+            {
+                "ok": True,
+                "data": {
+                    "name": name,
+                    "version": version,
+                    "deleted": True,
+                    "package_removed": removed_package,
+                },
+            },
+        )
+
+    def handle_delete_package(
+        self, request: Request, name: str
+    ) -> JsonResponse:
+        user = self._require_user(request)
+        try:
+            self.store.delete_package(name, user.sub, force=self._is_admin(user))
+        except Forbidden as exc:
+            raise ApiError(
+                403, "forbidden", "only the publisher or an admin can delete"
+            ) from exc
+        except NotFound as exc:
+            raise ApiError(404, "not_found", "package not found") from exc
+        except StoreError as exc:
+            raise ApiError(400, "delete_failed", str(exc)) from exc
+        return JsonResponse(
+            200,
+            {"ok": True, "data": {"name": name, "deleted": True}},
+        )
+
+    def _is_admin(self, user: User) -> bool:
+        if not self.admin_emails and not self.admin_ids:
+            return False
+        email = (user.email or "").strip().lower()
+        return bool(
+            (email and email in self.admin_emails)
+            or (user.sub and user.sub in self.admin_ids)
         )
 
     def _require_user(self, request: Request) -> User:
@@ -528,21 +696,38 @@ def _resolve(
 ) -> tuple[str | None, dict[str, str], tuple[str, ...]]:
     lookup = "GET" if method == "HEAD" else method
     parts = _segments(path)
+    if parts in ([], ["admin"]):
+        return _pick(lookup, "handle_admin_page", ("GET",))
     if len(parts) >= 3 and parts[0] == "api" and parts[1] == "v1":
         tail = parts[2:]
         if tail == ["health"]:
             return _pick(lookup, "handle_health", ("GET",))
+        if tail == ["stats"]:
+            return _pick(lookup, "handle_stats", ("GET",))
+        if tail == ["admin", "stats"]:
+            return _pick(lookup, "handle_stats", ("GET",))
+        if tail == ["me"]:
+            return _pick(lookup, "handle_me", ("GET",))
         if tail == ["packages"]:
             return _pick(lookup, "handle_list", ("GET",))
         if len(tail) == 2 and tail[0] == "packages":
-            return _pick(lookup, "handle_get_package", ("GET",), name=tail[1])
+            name = tail[1]
+            if lookup == "DELETE":
+                return "handle_delete_package", {"name": name}, ()
+            return _pick(lookup, "handle_get_package", ("GET",), name=name)
         if len(tail) == 3 and tail[0] == "packages":
             name, version = tail[1], tail[2]
             if lookup == "GET":
                 return "handle_get_version", {"name": name, "version": version}, ()
             if lookup == "PUT":
                 return "handle_publish", {"name": name, "version": version}, ()
-            return None, {}, ("GET", "PUT")
+            if lookup == "DELETE":
+                return (
+                    "handle_delete_version",
+                    {"name": name, "version": version},
+                    (),
+                )
+            return None, {}, ("GET", "PUT", "DELETE")
         if len(tail) == 4 and tail[0] == "packages":
             action = tail[3]
             params = {"name": tail[1], "version": tail[2]}
@@ -555,6 +740,10 @@ def _resolve(
             if action == "yank":
                 if lookup == "POST":
                     return "handle_yank", params, ()
+                return None, {}, ("POST",)
+            if action == "latest":
+                if lookup == "POST":
+                    return "handle_set_latest", params, ()
                 return None, {}, ("POST",)
     return None, {}, ()
 
@@ -606,6 +795,57 @@ def _int_field(body: dict[str, Any], field: str) -> int:
             f"json: cannot unmarshal value into Go struct field .{field} of type int64",
         )
     return value
+
+
+def _string_list_field(body: dict[str, Any], field: str) -> list[str]:
+    value = body.get(field)
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [value] if value.strip() else []
+    if not isinstance(value, list):
+        raise ApiError(
+            400,
+            "invalid_json",
+            f"json: cannot unmarshal value into Go struct field .{field} of type []string",
+        )
+    out: list[str] = []
+    for item in value:
+        if not isinstance(item, str):
+            raise ApiError(
+                400,
+                "invalid_json",
+                f"json: cannot unmarshal value into Go struct field .{field} of type []string",
+            )
+        if item.strip():
+            out.append(item.strip())
+    return out
+
+
+def _int_query(request: Request, name: str, default: int,
+               *, minimum: int = 0) -> int:
+    raw = request.query_value(name).strip()
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+    except ValueError as exc:
+        raise ApiError(400, "invalid_query", f"{name} must be an integer") from exc
+    if value < minimum:
+        raise ApiError(
+            400, "invalid_query", f"{name} must be >= {minimum}"
+        )
+    return value
+
+
+def _identity_set(value: Any) -> set[str]:
+    if value is None:
+        return set()
+    if isinstance(value, str):
+        items = re.split(r"[\s,;]+", value)
+    else:
+        items = [str(item) for item in value]
+    return {item.strip() for item in items if item.strip()}
 
 
 def _error_payload(code: str, message: str) -> dict[str, Any]:
@@ -771,7 +1011,28 @@ class RegistryHandler(BaseHTTPRequestHandler):
             return self._write_json(result.status, result.payload, None)
         if isinstance(result, ArtifactResponse):
             return self._write_artifact(result)
+        if isinstance(result, HtmlResponse):
+            return self._write_html(result)
         raise ApiError(500, "internal", "invalid handler response")
+
+    def _write_html(self, result: HtmlResponse) -> int:
+        raw = result.body.encode("utf-8")
+        self.send_response(result.status)
+        self.send_header("Content-Type", result.content_type)
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("Referrer-Policy", "no-referrer")
+        self.send_header(
+            "Content-Security-Policy",
+            "default-src 'self'; style-src 'unsafe-inline'; "
+            "script-src 'unsafe-inline'; img-src 'self' data:; "
+            "connect-src 'self'; frame-ancestors 'none'",
+        )
+        self.send_header("Content-Length", str(len(raw)))
+        self.end_headers()
+        if self.command != "HEAD":
+            self.wfile.write(raw)
+        return result.status
 
     def _write_json(
         self, status: int, payload: dict[str, Any], extra: dict[str, str] | None
@@ -868,6 +1129,228 @@ def _env(key: str, fallback: str) -> str:
     return value or fallback
 
 
+_ADMIN_HTML = """<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark light">
+<title>pic registry 后台管理</title>
+<style>
+:root{--bg:#0f1419;--panel:#171e26;--panel2:#1e2732;--line:#2b3644;--text:#e6edf3;--muted:#8b98a8;--cyan:#38bdf8;--green:#34d399;--yellow:#fbbf24;--red:#f87171;--radius:12px}
+*{box-sizing:border-box}body{margin:0;background:radial-gradient(1200px 600px at 20% -10%,#1b2a3a 0,var(--bg) 55%);color:var(--text);font:14px/1.55 ui-sans-serif,system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif;min-height:100vh}
+a{color:var(--cyan);text-decoration:none}a:hover{text-decoration:underline}
+header{display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between;padding:18px 22px;border-bottom:1px solid var(--line);background:rgba(15,20,25,.72);backdrop-filter:blur(8px);position:sticky;top:0;z-index:5}
+.brand{display:flex;align-items:center;gap:10px;font-weight:700;font-size:17px;letter-spacing:.2px}
+.brand .dot{width:10px;height:10px;border-radius:50%;background:var(--cyan);box-shadow:0 0 12px var(--cyan)}
+.brand small{font-weight:400;color:var(--muted);font-size:12px}
+main{max-width:1180px;margin:0 auto;padding:20px 18px 64px}
+.card{background:linear-gradient(180deg,var(--panel),var(--panel2));border:1px solid var(--line);border-radius:var(--radius);padding:16px}
+.grid{display:grid;gap:12px}.stats{grid-template-columns:repeat(auto-fit,minmax(150px,1fr));margin-bottom:16px}
+.stat .k{color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.6px}.stat .v{font-size:26px;font-weight:700;margin-top:4px}.stat .v small{font-size:12px;color:var(--muted);font-weight:400}
+.toolbar{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:14px}
+input,select,button{font:inherit;color:var(--text);background:#0d1218;border:1px solid var(--line);border-radius:9px;padding:8px 10px;outline:none}
+input:focus,select:focus{border-color:var(--cyan);box-shadow:0 0 0 3px rgba(56,189,248,.14)}
+button{cursor:pointer;background:#223042;border-color:#33465b}button:hover{filter:brightness(1.12)}button:disabled{opacity:.45;cursor:not-allowed}
+button.primary{background:linear-gradient(135deg,#0ea5e9,#22d3ee);border-color:transparent;color:#04121b;font-weight:700}
+button.danger{background:#3a1e24;border-color:#6b2a35;color:#fecaca}button.ghost{background:transparent}
+.grow{flex:1;min-width:180px}.muted{color:var(--muted)}.small{font-size:12px}
+table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:9px 8px;border-bottom:1px solid var(--line);vertical-align:top}
+th{color:var(--muted);font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.5px}
+tbody tr:hover{background:rgba(56,189,248,.06)}tr.clickable{cursor:pointer}
+.pill{display:inline-block;padding:1px 8px;border-radius:999px;font-size:11px;border:1px solid var(--line);background:#0d1218;color:var(--muted)}
+.pill.ok{color:var(--green);border-color:#1f5f46;background:#10231c}.pill.warn{color:var(--yellow);border-color:#5c4a13;background:#241f0d}.pill.bad{color:var(--red);border-color:#632a2a;background:#251515}
+.stack{display:grid;gap:14px}.row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.kv{display:grid;grid-template-columns:120px 1fr;gap:6px 12px}.kv dt{color:var(--muted)}.kv dd{margin:0;word-break:break-all}
+.hidden{display:none!important}.toast{position:fixed;right:18px;bottom:18px;max-width:min(420px,calc(100vw - 36px));padding:11px 14px;border-radius:10px;background:#16212c;border:1px solid var(--line);box-shadow:0 12px 36px rgba(0,0,0,.45);opacity:0;transform:translateY(8px);transition:.18s;z-index:20}
+.toast.show{opacity:1;transform:none}.toast.err{border-color:#7f1d1d;background:#2a1414}.toast.ok{border-color:#14532d;background:#0f2318}
+.login{display:flex;flex-wrap:wrap;gap:8px;align-items:center}.login input{min-width:240px;flex:1}
+.split{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,.85fr);gap:16px}@media(max-width:900px){.split{grid-template-columns:1fr}}
+.badge{font-size:11px;padding:2px 8px;border-radius:999px;background:#0d1218;border:1px solid var(--line);color:var(--muted)}
+.hl{color:var(--cyan)}.nowrap{white-space:nowrap}
+footer{color:var(--muted);text-align:center;font-size:12px;padding:24px 0 8px}
+</style>
+</head>
+<body>
+<header>
+  <div class="brand"><span class="dot"></span><span>pic registry <small>后台管理</small></span></div>
+  <div class="row">
+    <span id="who" class="badge">未登录</span>
+    <button class="ghost" id="refresh">刷新</button>
+  </div>
+</header>
+<main>
+  <section class="card" style="margin-bottom:16px">
+    <div class="login">
+      <input id="token" type="password" autocomplete="off" placeholder="Cdifit AccessToken（pic admin 可自动填入）">
+      <button class="primary" id="save-token">保存令牌</button>
+      <button class="ghost" id="clear-token">清除</button>
+      <span class="muted small">令牌只保存在本机浏览器；读取/搜索公开，撤回、删除与设置 latest 需要发布者或管理员。</span>
+    </div>
+  </section>
+
+  <section class="grid stats" id="stats"></section>
+
+  <div class="split">
+    <section class="card">
+      <div class="toolbar">
+        <input id="q" class="grow" placeholder="搜索包名 / 仓库 / 描述 / 关键词">
+        <select id="sort">
+          <option value="">相关度</option>
+          <option value="name">名称</option>
+          <option value="latest">最新版本</option>
+          <option value="updated">更新时间</option>
+          <option value="downloads">下载量</option>
+          <option value="versions">版本数</option>
+        </select>
+        <select id="order"><option value="desc">降序</option><option value="asc">升序</option></select>
+        <button class="primary" id="search">搜索</button>
+      </div>
+      <div id="package-count" class="muted small" style="margin-bottom:8px"></div>
+      <table>
+        <thead><tr><th>包</th><th>最新</th><th>版本</th><th>下载</th><th>更新时间</th></tr></thead>
+        <tbody id="packages"><tr><td colspan="5" class="muted">加载中…</td></tr></tbody>
+      </table>
+    </section>
+
+    <section class="card" id="detail">
+      <h3 style="margin:2px 0 10px">选择左侧的包</h3>
+      <p class="muted small">点击包名查看版本、发布者、摘要与制品信息，并进行版本管理。</p>
+    </section>
+  </div>
+  <footer>package.codecin.org.cn · /api/v1 · <a href="/api/v1/health">health</a></footer>
+</main>
+<div id="toast" class="toast"></div>
+<script>
+const TOKEN_KEY = 'pic_admin_token';
+let token = localStorage.getItem(TOKEN_KEY) || '';
+let packages = [];
+let current = null;
+
+const $ = (id) => document.getElementById(id);
+function esc(v){return String(v == null ? '' : v).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+function bytes(n){n=Number(n||0);const u=['B','KiB','MiB','GiB'];let i=0;let v=n;while(v>=1024&&i<u.length-1){v/=1024;i++;}return (i? v.toFixed(1):String(v))+' '+u[i];}
+function date(v){if(!v||String(v).startsWith('0001'))return '-';const d=new Date(v);return isNaN(d)?String(v):d.toLocaleString('zh-CN',{hour12:false});}
+function toast(msg, ok=true){const el=$('toast');el.textContent=msg;el.className='toast show '+(ok?'ok':'err');clearTimeout(toast._t);toast._t=setTimeout(()=>el.className='toast',3200);}
+
+function loadToken(){token=localStorage.getItem(TOKEN_KEY)||'';$('token').value=token;updateWho();}
+async function api(path, options={}){
+  const headers=Object.assign({'Accept':'application/json'},options.headers||{});
+  if(token)headers['Authorization']='Bearer '+token;
+  if(options.body && !headers['Content-Type'])headers['Content-Type']='application/json';
+  const resp=await fetch('/api/v1'+path,Object.assign({},options,{headers}));
+  let data={};try{data=await resp.json();}catch(e){}
+  if(!resp.ok || data.ok===false){const err=(data.error&&data.error.message)||('HTTP '+resp.status);throw new Error(err);}
+  return data.data;
+}
+async function updateWho(){
+  if(!token){$('who').textContent='未登录（只读）';$('who').className='badge';return;}
+  try{const me=await api('/me');$('who').textContent=(me.nickname||me.name||me.email||me.sub)+(me.admin?' · 管理员':'');$('who').className='badge';}
+  catch(e){$('who').textContent='令牌无效或已过期';$('who').className='badge';}
+}
+async function loadStats(){
+  try{const s=await api('/stats');
+    $('stats').innerHTML=[
+      ['包',s.packages],['版本',s.versions],['制品',s.artifacts],
+      ['已撤回',s.yanked],['下载',s.downloads],['存储',bytes(s.storage_bytes)]
+    ].map(([k,v])=>'<div class="card stat"><div class="k">'+esc(k)+'</div><div class="v">'+esc(v)+'</div></div>').join('');
+  }catch(e){$('stats').innerHTML='<div class="card muted">统计加载失败：'+esc(e.message)+'</div>';}
+}
+async function loadPackages(){
+  const q=$('q').value.trim(), sort=$('sort').value, order=$('order').value;
+  const params=new URLSearchParams();if(q)params.set('q',q);if(sort)params.set('sort',sort);if(sort)params.set('order',order);params.set('limit','100');
+  $('packages').innerHTML='<tr><td colspan="5" class="muted">搜索中…</td></tr>';
+  try{const data=await api('/packages?'+params.toString());packages=data.packages||[];
+    $('package-count').textContent='共 '+data.total+' 个包'+(data.total>packages.length?'（显示前 '+packages.length+' 个）':'');
+    if(!packages.length){$('packages').innerHTML='<tr><td colspan="5" class="muted">没有匹配的包</td></tr>';return;}
+    $('packages').innerHTML=packages.map(p=>{
+      const active=p.latest?'<span class="pill ok">'+esc(p.latest)+'</span>':'<span class="pill warn">无可用版本</span>';
+      return '<tr class="clickable" data-name="'+esc(p.name)+'"><td><b>'+esc(p.name)+'</b>'+(p.description?'<div class="muted small">'+esc(p.description)+'</div>':'')+'</td><td>'+active+'</td><td>'+esc(p.versions)+'</td><td>'+esc(p.downloads||0)+'</td><td class="nowrap">'+esc(date(p.updated_at))+'</td></tr>';
+    }).join('');
+    document.querySelectorAll('#packages tr.clickable').forEach(tr=>tr.addEventListener('click',()=>loadDetail(tr.dataset.name)));
+  }catch(e){$('packages').innerHTML='<tr><td colspan="5" class="muted">加载失败：'+esc(e.message)+'</td></tr>';}
+}
+async function loadDetail(name){
+  $('detail').innerHTML='<h3 style="margin:2px 0 10px">'+esc(name)+'</h3><p class="muted small">加载中…</p>';
+  try{const pkg=await api('/packages/'+encodeURIComponent(name));current=pkg;renderDetail(pkg);}
+  catch(e){$('detail').innerHTML='<h3 style="margin:2px 0 10px">'+esc(name)+'</h3><p class="muted">加载失败：'+esc(e.message)+'</p>';}
+}
+function renderDetail(p){
+  const versions=Object.keys(p.versions||{}).sort().reverse();
+  const rows=versions.map(v=>{
+    const e=p.versions[v];const yanked=!!e.yanked;const isLatest=p.latest===v;
+    return '<tr><td><b>'+esc(v)+'</b> '+(isLatest?'<span class="pill ok">latest</span> ':'')+(yanked?'<span class="pill bad">已撤回</span>':'')+'</td>'
+      +'<td class="small">'+esc(e.tag||'-')+'<div class="muted">'+esc((e.rev||'').slice(0,12)||'-')+'</div></td>'
+      +'<td class="small">'+esc(bytes(e.archive_size))+'<div class="muted">'+esc((e.archive_sha256||'').slice(0,12)||'无制品')+'</div></td>'
+      +'<td class="small">'+esc(e.downloads||0)+'</td>'
+      +'<td class="small">'+esc(date(e.published_at))+'<div class="muted">'+esc((e.publisher&&(e.publisher.email||e.publisher.nickname))||'-')+'</div></td>'
+      +'<td class="nowrap"><button data-act="yank" data-v="'+esc(v)+'" data-y="'+(yanked?'0':'1')+'">'+(yanked?'恢复':'撤回')+'</button> '
+      +'<button data-act="latest" data-v="'+esc(v)+'" '+(isLatest?'disabled':'')+'>设为 latest</button> '
+      +'<button class="danger" data-act="delver" data-v="'+esc(v)+'">删除</button></td></tr>';
+  }).join('');
+  $('detail').innerHTML='<div class="row" style="justify-content:space-between;align-items:flex-start"><h3 style="margin:2px 0 10px">'+esc(p.name)+'</h3><button class="danger" id="delpkg">删除整个包</button></div>'
+    +'<dl class="kv"><dt>最新</dt><dd>'+(p.latest?'<span class="pill ok">'+esc(p.latest)+'</span>':'<span class="pill warn">无</span>')+'</dd>'
+    +'<dt>Git 仓库</dt><dd>'+(p.repo?'<a href="'+esc(p.repo)+'" target="_blank" rel="noreferrer">'+esc(p.repo)+'</a>':'-')+'</dd>'
+    +'<dt>描述</dt><dd>'+esc(p.description||'-')+'</dd>'
+    +'<dt>关键词</dt><dd>'+esc((p.keywords||[]).join(', ')||'-')+'</dd>'
+    +'<dt>入口</dt><dd>'+esc(p.entry||'-')+'</dd>'
+    +'<dt>模块</dt><dd>'+esc((p.modules||[]).join(', ')||'-')+'</dd>'
+    +'<dt>下载 / 版本</dt><dd>'+esc(p.downloads||0)+' / '+esc(versions.length)+'</dd>'
+    +'<dt>更新时间</dt><dd>'+esc(date(p.updated_at))+'</dd></dl>'
+    +'<h4 style="margin:18px 0 8px">版本</h4>'
+    +'<table><thead><tr><th>版本</th><th>标签 / 提交</th><th>制品</th><th>下载</th><th>发布</th><th>操作</th></tr></thead><tbody>'+rows+'</tbody></table>';
+  document.querySelectorAll('#detail button[data-act]').forEach(btn=>btn.addEventListener('click',()=>versionAction(btn.dataset.act,btn.dataset.v,btn.dataset.y==='1')));
+  $('delpkg').addEventListener('click',deletePackage);
+}
+async function versionAction(act,version,yanked){
+  if(!token){toast('先保存 Cdifit AccessToken',false);return;}
+  const name=current.name;
+  try{
+    if(act==='yank'){
+      if(!confirm((yanked?'撤回':'恢复')+' '+name+'@'+version+' ?'))return;
+      await api('/packages/'+encodeURIComponent(name)+'/'+encodeURIComponent(version)+'/yank',{method:'POST',body:JSON.stringify({yanked:yanked})});
+      toast((yanked?'已撤回 ':'已恢复 ')+version);
+    }else if(act==='latest'){
+      await api('/packages/'+encodeURIComponent(name)+'/'+encodeURIComponent(version)+'/latest',{method:'POST',body:JSON.stringify({latest:true})});
+      toast('latest 已指向 '+version);
+    }else if(act==='delver'){
+      if(!confirm('删除 '+name+'@'+version+' 及其制品？此操作不可恢复。'))return;
+      await api('/packages/'+encodeURIComponent(name)+'/'+encodeURIComponent(version),{method:'DELETE'});
+      toast('已删除 '+version);
+    }
+    await Promise.all([loadDetail(name),loadPackages(),loadStats()]);
+  }catch(e){toast(e.message,false);}
+}
+async function deletePackage(){
+  if(!token){toast('先保存 Cdifit AccessToken',false);return;}
+  const name=current.name;
+  if(!confirm('删除整个包 '+name+'（全部版本与制品）？此操作不可恢复。'))return;
+  try{await api('/packages/'+encodeURIComponent(name),{method:'DELETE'});toast('已删除 '+name);current=null;$('detail').innerHTML='<h3 style="margin:2px 0 10px">选择左侧的包</h3><p class="muted small">包已删除。</p>';await Promise.all([loadPackages(),loadStats()]);}
+  catch(e){toast(e.message,false);}
+}
+$('save-token').addEventListener('click',()=>{token=$('token').value.trim();if(token)localStorage.setItem(TOKEN_KEY,token);else localStorage.removeItem(TOKEN_KEY);updateWho();toast('令牌已保存');});
+$('clear-token').addEventListener('click',()=>{token='';$('token').value='';localStorage.removeItem(TOKEN_KEY);updateWho();toast('令牌已清除');});
+$('search').addEventListener('click',loadPackages);
+$('q').addEventListener('keydown',e=>{if(e.key==='Enter')loadPackages();});
+$('sort').addEventListener('change',loadPackages);
+$('order').addEventListener('change',loadPackages);
+$('refresh').addEventListener('click',()=>Promise.all([loadStats(),loadPackages(),current?loadDetail(current.name):Promise.resolve()]));
+(function init(){
+  const raw=location.hash.slice(1);const params=new URLSearchParams(raw);const ht=params.get('token');
+  if(ht){token=ht;localStorage.setItem(TOKEN_KEY,ht);history.replaceState(null,'',location.pathname);}
+  $('token').value=token;updateWho();loadStats();loadPackages();
+})();
+</script>
+</body>
+</html>
+"""
+
+
+def _env(key: str, fallback: str) -> str:
+    value = os.environ.get(key, "").strip()
+    return value or fallback
+
+
 def _parse_addr(value: str) -> tuple[str, int]:
     value = value.strip()
     if value.startswith("["):
@@ -940,6 +1423,17 @@ def main() -> int:
         return 1
 
     app = App(registry_store, Authenticator(cdifit_base), public_url, logger)
+    if app.admin_emails or app.admin_ids:
+        logger.info(
+            "admin: %d email(s), %d id(s)",
+            len(app.admin_emails),
+            len(app.admin_ids),
+        )
+    else:
+        logger.info(
+            "admin: 未配置 PIC_ADMIN_EMAILS / PIC_ADMIN_IDS; 只能管理自己发布的包"
+        )
+
     try:
         host, port = _parse_addr(addr)
         server = RegistryServer((host, port), app)
