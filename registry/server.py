@@ -202,9 +202,12 @@ class App:
         self.public_url = (public_url or "").rstrip("/")
         self.logger = logger
         self.started = time.monotonic()
-        self.admin_emails = _identity_set(
-            admin_emails if admin_emails is not None
-            else os.environ.get("PIC_ADMIN_EMAILS", ""))
+        self.admin_emails = {
+            email.lower()
+            for email in _identity_set(
+                admin_emails if admin_emails is not None
+                else os.environ.get("PIC_ADMIN_EMAILS", ""))
+        }
         self.admin_ids = _identity_set(
             admin_ids if admin_ids is not None
             else os.environ.get("PIC_ADMIN_IDS", ""))
@@ -563,6 +566,13 @@ class App:
             )
         try:
             if value is False:
+                pkg = self.store.get(name)
+                if not self._is_admin(user):
+                    publishers = {entry.publisher.id
+                                  for entry in pkg.versions.values()
+                                  if entry.publisher.id}
+                    if publishers and user.sub not in publishers:
+                        raise Forbidden("forbidden")
                 self.store.clear_latest(name)
                 return JsonResponse(
                     200,
@@ -1225,6 +1235,7 @@ let current = null;
 
 const $ = (id) => document.getElementById(id);
 function esc(v){return String(v == null ? '' : v).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+function safeUrl(u){try{const x=new URL(String(u||''),location.href);return (x.protocol==='http:'||x.protocol==='https:')?x.href:'';}catch(e){return '';}}
 function bytes(n){n=Number(n||0);const u=['B','KiB','MiB','GiB'];let i=0;let v=n;while(v>=1024&&i<u.length-1){v/=1024;i++;}return (i? v.toFixed(1):String(v))+' '+u[i];}
 function date(v){if(!v||String(v).startsWith('0001'))return '-';const d=new Date(v);return isNaN(d)?String(v):d.toLocaleString('zh-CN',{hour12:false});}
 function toast(msg, ok=true){const el=$('toast');el.textContent=msg;el.className='toast show '+(ok?'ok':'err');clearTimeout(toast._t);toast._t=setTimeout(()=>el.className='toast',3200);}
@@ -1234,7 +1245,7 @@ async function api(path, options={}){
   const headers=Object.assign({'Accept':'application/json'},options.headers||{});
   if(token)headers['Authorization']='Bearer '+token;
   if(options.body && !headers['Content-Type'])headers['Content-Type']='application/json';
-  const resp=await fetch('/api/v1'+path,Object.assign({},options,{headers}));
+  const resp=await fetch('/api/v1'+path,Object.assign({},options,{headers,cache:'no-store'}));
   let data={};try{data=await resp.json();}catch(e){}
   if(!resp.ok || data.ok===false){const err=(data.error&&data.error.message)||('HTTP '+resp.status);throw new Error(err);}
   return data.data;
@@ -1273,6 +1284,7 @@ async function loadDetail(name){
 }
 function renderDetail(p){
   const versions=Object.keys(p.versions||{}).sort().reverse();
+  const repoUrl=safeUrl(p.repo);
   const rows=versions.map(v=>{
     const e=p.versions[v];const yanked=!!e.yanked;const isLatest=p.latest===v;
     return '<tr><td><b>'+esc(v)+'</b> '+(isLatest?'<span class="pill ok">latest</span> ':'')+(yanked?'<span class="pill bad">已撤回</span>':'')+'</td>'
@@ -1286,9 +1298,11 @@ function renderDetail(p){
   }).join('');
   $('detail').innerHTML='<div class="row" style="justify-content:space-between;align-items:flex-start"><h3 style="margin:2px 0 10px">'+esc(p.name)+'</h3><button class="danger" id="delpkg">删除整个包</button></div>'
     +'<dl class="kv"><dt>最新</dt><dd>'+(p.latest?'<span class="pill ok">'+esc(p.latest)+'</span>':'<span class="pill warn">无</span>')+'</dd>'
-    +'<dt>Git 仓库</dt><dd>'+(p.repo?'<a href="'+esc(p.repo)+'" target="_blank" rel="noreferrer">'+esc(p.repo)+'</a>':'-')+'</dd>'
+    +'<dt>Git 仓库</dt><dd>'+(repoUrl?'<a href="'+esc(repoUrl)+'" target="_blank" rel="noreferrer">'+esc(p.repo)+'</a>':'-')+'</dd>'
     +'<dt>描述</dt><dd>'+esc(p.description||'-')+'</dd>'
     +'<dt>关键词</dt><dd>'+esc((p.keywords||[]).join(', ')||'-')+'</dd>'
+    +'<dt>许可证</dt><dd>'+esc(p.license||'-')+'</dd>'
+    +'<dt>主页</dt><dd>'+(safeUrl(p.homepage)?'<a href="'+esc(safeUrl(p.homepage))+'" target="_blank" rel="noreferrer">'+esc(p.homepage)+'</a>':esc(p.homepage||'-'))+'</dd>'
     +'<dt>入口</dt><dd>'+esc(p.entry||'-')+'</dd>'
     +'<dt>模块</dt><dd>'+esc((p.modules||[]).join(', ')||'-')+'</dd>'
     +'<dt>下载 / 版本</dt><dd>'+esc(p.downloads||0)+' / '+esc(versions.length)+'</dd>'

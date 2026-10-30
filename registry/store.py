@@ -626,9 +626,9 @@ class Store:
         packages = self.list_packages()
         scored: list[tuple[int, Package]] = []
         for pkg in packages:
-            if keyword_text and keyword_text not in {
-                item.lower() for item in pkg.keywords
-            }:
+            if keyword_text and not any(
+                keyword_text in item.lower() for item in pkg.keywords
+            ):
                 continue
             score = _match_score(pkg, text)
             if score < 0:
