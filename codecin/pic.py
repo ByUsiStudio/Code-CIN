@@ -10,6 +10,10 @@
   中央制品, 否则按标签/提交拉取 Git 并校验摘要;
 * **安装即可直接 import**: 包安装到 ``$PIC_HOME/packages/<name>/<version>``
   或项目 ``pic_modules/<name>``; CIN 的 ``import "name"`` 会自动解析;
+  v6.4.0 起支持分块导入 ``import "name:module"`` / ``import "name::<版本>:*"``,
+  不写版本时**默认使用最高已安装版本**;
+* **默认安装最新版本**: ``pic install <name>`` 按中央注册表的 ``latest``
+  指针解析, 不写版本时即使本地已装旧版本也会升级;
 * **依赖递归安装** / **可编辑安装** 与旧版一致;
 * ``PIC_OFFLINE=1`` 时退化为纯本地注册表 (离线开发/测试)。
 
@@ -40,12 +44,7 @@ from .packaging.model import (
     validate_name,
     validate_version,
 )
-from .packaging.spec import (
-    PackageSpec,
-    SpecError,
-    parse_package_spec,
-    split_selectors,
-)
+from .packaging.spec import SpecError, parse_package_spec
 from .packaging.store import (
     InstalledPackage,
     PackageStore,
@@ -506,6 +505,9 @@ def install_named(name: str, constraint: str, store: PackageStore, *,
                 if satisfies(version, constraint):
                     pkg = store.get(name, version)
                     if pkg is not None:
+                        # 显式指定版本时同时切换 current, 让 `import "name"`
+                        # 与 `pic install name@version` 的期望一致。
+                        store.set_current(name, version)
                         return pkg
 
     # 2) 中央注册表 (在线)
@@ -592,12 +594,7 @@ def install_named(name: str, constraint: str, store: PackageStore, *,
         candidates = sorted(
             (v for v in versions if satisfies(v, constraint or '*')),
             key=_version_key, reverse=True)
-        if latest_only and candidates:
-            chosen = candidates[0]
-        elif candidates:
-            chosen = candidates[0]
-        else:
-            chosen = ''
+        chosen = candidates[0] if candidates else ''
         if chosen:
             tag = str((versions.get(chosen) or {}).get('tag') or '') \
                 or f'v{chosen}'
@@ -636,6 +633,11 @@ def install_named(name: str, constraint: str, store: PackageStore, *,
         if pkg is not None:
             store.set_current(name, pkg.version)
             return pkg
+    if target_root:
+        existing = _project_existing(target_root, name)
+        if existing is not None:
+            return InstalledPackage(name=name, version=existing.version,
+                                    path=os.path.join(target_root, name))
 
     raise PicError(
         f'未找到包 {name!r} 的仓库。\n'
@@ -967,7 +969,7 @@ def cmd_publish(args) -> int:
     _detail('标签', tag + (' (pushed)' if pushed else ''))
     _detail('校验和', archive_sha)
     _detail('安装', f'pic install {meta.name}@{meta.version}')
-    _detail('导入', f'import "{meta.name}"')
+    _detail('导入', f'import "{meta.name}:*"  (或 import "{meta.name}")')
 
     if args.index:
         index_dir = os.path.abspath(args.index)
@@ -1065,7 +1067,11 @@ def _import_hint_for_spec(spec: str, name: str) -> str:
     except SpecError:
         return f'import "{name}"'
     if parsed.has_selector:
-        return f'import "{parsed.display}"'
+        text = name
+        if parsed.version and not parsed.is_latest:
+            text += '::' + parsed.version
+        text += ':' + parsed.selector
+        return f'import "{text}"'
     return f'import "{name}"'
 
 
@@ -1365,7 +1371,8 @@ def cmd_info(args) -> int:
         data['offline'] = True
         entry = default_store().lookup(name) or {}
         data.update({'repo': entry.get('repo', ''),
-                     'versions': sorted(entry.get('versions') or {})})
+                     'versions': [{'version': version} for version in sorted(
+                         entry.get('versions') or {})]})
     else:
         registry = get_registry(interactive=True, auth=False)
         record = registry.get_package(name)
@@ -1377,6 +1384,7 @@ def cmd_info(args) -> int:
             'description': record.get('description', ''),
             'keywords': record.get('keywords', []),
             'license': record.get('license', ''),
+            'homepage': record.get('homepage', ''),
             'entry': record.get('entry', ''),
             'modules': record.get('modules', []),
             'downloads': record.get('downloads', 0),
@@ -1392,6 +1400,7 @@ def cmd_info(args) -> int:
     _detail('描述', data.get('description') or '-')
     _detail('关键词', ', '.join(data.get('keywords') or []) or '-')
     _detail('许可证', data.get('license') or '-')
+    _detail('主页', data.get('homepage') or '-')
     _detail('入口', data.get('entry') or '-')
     _detail('模块', ', '.join(data.get('modules') or []) or '-')
     _detail('下载', data.get('downloads') or 0)
@@ -1425,6 +1434,25 @@ def cmd_latest(args) -> int:
     print(f'latest -> {name}@{version}')
     if result.get('latest'):
         _detail('最新', result['latest'])
+    return 0
+
+
+def cmd_use(args) -> int:
+    """切换本地 ``current`` 版本 (不影响 CIN import 的“默认最新”规则)。"""
+    store = default_store()
+    text = str(args.name or '').strip()
+    name, inline = _split_name_version(text)
+    validate_name(name)
+    version = (args.version or inline or '').strip().lstrip('vV')
+    if not version:
+        installed = sorted(store.versions(name), key=_version_key,
+                           reverse=True)
+        if not installed:
+            raise PicError(f'未安装: {name}')
+        version = installed[0]
+    validate_version(version)
+    store.set_current(name, version)
+    print(f'{name} -> {version}')
     return 0
 
 
@@ -1466,6 +1494,8 @@ def cmd_modules(args) -> int:
             raise PicError(f'未安装且中央注册服务器未找到包: {name}')
         modules = [str(item) for item in record.get('modules') or []]
         source = 'central registry'
+    if path is None and load_config().offline:
+        raise PicError(f'未安装: {name} (PIC_OFFLINE=1 时无法查询远程模块列表)')
     if args.json:
         print(json.dumps({'name': name, 'source': source,
                           'modules': modules}, ensure_ascii=False, indent=2))
@@ -1475,15 +1505,32 @@ def cmd_modules(args) -> int:
     if not modules:
         print('  (no importable modules)')
         return 0
-    for module in modules:
+    public = [module for module in modules
+              if not _is_private_module(module)]
+    private = [module for module in modules if _is_private_module(module)]
+    for module in public:
         print(f'  {module}')
+    if private:
+        print('  -- 私有模块 (需显式选择, 可能连带入口) --')
+        for module in private:
+            print(f'  {module}')
     print()
-    print(f'  导入全部: import "{name}:*"')
-    for module in modules[:5]:
-        print(f'  导入单个: import "{name}:{module}"')
-    if len(modules) > 5:
+    print(f'  导入全部公开模块: import "{name}:*"')
+    suggestions = [module for module in (public or modules) if module != name]
+    if not suggestions:
+        print(f'  导入入口: import "{name}"')
+        return 0
+    for module in suggestions[:5]:
+        print(f'  导入单个模块: import "{name}:{module}"')
+    if len(suggestions) > 5:
         print(f'  其余模块同理: import "{name}:<模块名>"')
     return 0
+
+
+def _is_private_module(module: str) -> bool:
+    first = module.replace('\\', '/').split('/')[0]
+    return first in ('internal', 'private', 'test', 'tests', 'demo',
+                     'demos', 'example', 'examples')
 
 
 def cmd_admin(args) -> int:
@@ -1679,8 +1726,8 @@ def cmd_doctor(args) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog='pic',
-        description='Code CIN 包管理器 (Cdifit 中央注册表 + Git 内容源, '
-                    '安装后可直接 import)')
+        description='Code CIN 包管理器 (中央注册表 + Cdifit 登录 + Git 内容源, '
+                    '安装后可直接 import; 支持分块导入/搜索/版本管理)')
     parser.add_argument('--version', action='version',
                         version=f'pic {__version__}')
     parser.add_argument('--offline', action='store_true',
@@ -1812,6 +1859,11 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument('version', nargs='?')
     p.set_defaults(func=cmd_latest)
 
+    p = sub.add_parser('use', help='切换本地 current 版本 (import 默认最新)')
+    p.add_argument('name', help='包名或 name@version')
+    p.add_argument('version', nargs='?')
+    p.set_defaults(func=cmd_use)
+
     p = sub.add_parser('modules', help='列出包内可 import 的模块 (分块导入)')
     p.add_argument('name')
     p.add_argument('--version')
@@ -1855,7 +1907,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 'modules', 'registry') and AuthStore().load() is None:
             get_client(interactive=True)
         return int(args.func(args) or 0)
-    except (PicError, ManifestError, archive.ArchiveError,
+    except (PicError, SpecError, ManifestError, archive.ArchiveError,
             vcs.VcsError, ApiError, AuthError, RegistryError, OSError) as e:
         sys.stderr.write(f'pic: error: {e}\n')
         return 1

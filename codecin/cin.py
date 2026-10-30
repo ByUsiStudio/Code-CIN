@@ -657,7 +657,7 @@ def _package_roots(source_dir: str) -> List[str]:
         os.path.expanduser('~'), '.pic')
     packages = os.path.join(home, 'packages')
     if os.path.isdir(packages):
-        # 全局存储是 <name>/<version>/; 具体版本由解析器按 current 选择
+        # 全局存储是 <name>/<version>/; 默认选择最高已安装版本
         roots.append(packages)
     return roots
 
@@ -715,8 +715,27 @@ def _entry_from_package(pkg_dir: str, pkg: str,
     return None
 
 
-def _version_dirs(pkg_dir: str, root: str) -> List[str]:
-    """全局存储 ``<name>/<version>`` 下的版本目录 (current 优先)。"""
+def _semver_key(version: str) -> Tuple[int, int, int, int, str]:
+    """版本排序键: 稳定版高于同号预发布版。"""
+    base = version.split('+', 1)[0]
+    core, _, pre = base.partition('-')
+    parts = core.split('.')
+    out: List[int] = []
+    for index in range(3):
+        try:
+            out.append(int(parts[index]))
+        except (IndexError, ValueError):
+            out.append(0)
+    return out[0], out[1], out[2], 0 if pre else 1, pre
+
+
+def _version_dirs(pkg_dir: str) -> List[str]:
+    """全局存储 ``<name>/<version>`` 下的版本目录。
+
+    v6.4.x 起 **最高版本优先**：CIN 的 ``import "pkg"`` 默认使用最新
+    已安装版本，而不是 ``index.json`` 里的 ``current`` 指针（``current``
+    仍供 ``pic show`` / ``pic use`` 等本地命令使用）。
+    """
     try:
         versions = [
             v for v in os.listdir(pkg_dir)
@@ -725,22 +744,7 @@ def _version_dirs(pkg_dir: str, root: str) -> List[str]:
         ]
     except OSError:
         return []
-    current = None
-    if os.path.basename(root) == 'packages':
-        index_path = os.path.join(os.path.dirname(root), 'index.json')
-        try:
-            import json
-            with open(index_path, encoding='utf-8') as f:
-                index = json.load(f)
-            record = (index.get('packages') or {}).get(
-                os.path.basename(pkg_dir)) or {}
-            current = record.get('current')
-        except (OSError, ValueError, TypeError):
-            current = None
-    versions.sort(reverse=True)
-    if current in versions:
-        versions.remove(current)
-        versions.insert(0, current)
+    versions.sort(key=lambda value: (_semver_key(value), value), reverse=True)
     return [os.path.join(pkg_dir, v) for v in versions]
 
 
@@ -767,12 +771,12 @@ def _package_version(base: str) -> Optional[str]:
     return None
 
 
-def _package_bases(pkg_dir: str, root: str) -> List[str]:
+def _package_bases(pkg_dir: str) -> List[str]:
     """一个包名目录下可用的包根 (项目目录本身 / 全局版本目录)。"""
     bases: List[str] = []
     if _package_version(pkg_dir) is not None:
         bases.append(pkg_dir)
-    for version_dir in _version_dirs(pkg_dir, root):
+    for version_dir in _version_dirs(pkg_dir):
         if version_dir not in bases and _package_version(version_dir) is not None:
             bases.append(version_dir)
     return bases
@@ -837,8 +841,10 @@ def _match_module(base: str, selector: str) -> List[str]:
         matches = []
         for rel, path in files:
             stem = rel[:-4] if rel.endswith('.cin') else rel
+            display = _module_display(rel)
             if fnmatch.fnmatch(rel, want) or fnmatch.fnmatch(stem, selector) \
-                    or fnmatch.fnmatch(_module_display(rel), selector):
+                    or fnmatch.fnmatch(display, selector) \
+                    or fnmatch.fnmatch(os.path.basename(stem), selector):
                 matches.append((_module_is_internal(rel), len(rel), rel, path))
         matches.sort()
         return [path for _internal, _size, _rel, path in matches]
@@ -871,6 +877,11 @@ class _PackageModuleNotFound(CompilerError):
         super().__init__(
             f"Import module not found: {selector!r} in {base}; "
             f"可用模块: {available}")
+
+
+def _path_is_internal(base: str, path: str) -> bool:
+    rel = os.path.relpath(path, base).replace(os.sep, '/')
+    return _module_is_internal(rel)
 
 
 def _package_chunks(base: str, pkg: str,
@@ -908,14 +919,25 @@ def _package_chunks(base: str, pkg: str,
 
     targets = []
     seen = set()
+    needs_entry = False
     for module in spec.modules:
-        for path in _match_module(base, module):
+        matches = _match_module(base, module)
+        if not matches:
+            raise _PackageModuleNotFound(base, module)
+        if any(_path_is_internal(base, path) for path in matches):
+            # 私有模块可能依赖入口统一导入的内部符号 (如 rich 的
+            # internal/table.cin 使用 style.cin 的 rich_markup); 先展开
+            # 入口保证符号完整, 再由 loaded 去重。
+            needs_entry = True
+        for path in matches:
             real = os.path.realpath(path)
             if real not in seen:
                 seen.add(real)
                 targets.append(path)
-        if not targets:
-            raise _PackageModuleNotFound(base, module)
+    if needs_entry and entry:
+        real = os.path.realpath(entry)
+        if real not in seen:
+            targets.insert(0, entry)
     return targets
 
 
@@ -928,7 +950,7 @@ def _resolve_package_chunks(spec, source_dir: str) -> Optional[List[str]]:
         pkg_dir = os.path.join(root, spec.name)
         if not os.path.isdir(pkg_dir):
             continue
-        bases = _package_bases(pkg_dir, root)
+        bases = _package_bases(pkg_dir)
         if not bases:
             continue
         found = True
@@ -952,7 +974,7 @@ def _resolve_package_chunks(spec, source_dir: str) -> Optional[List[str]]:
     if not found:
         return None
     if version_mismatch and not module_errors:
-        detail = '; '.join(version_mismatch)
+        detail = '; '.join(dict.fromkeys(version_mismatch))
         raise CompilerError(
             f"Import file not found: {spec.display!r} (已安装版本不匹配: "
             f"{detail})。可运行 `pic install {spec.name}@{spec.version}` 安装该版本。")
@@ -988,7 +1010,7 @@ def _resolve_package_import(name: str,
         pkg_dir = os.path.join(root, pkg)
         if not os.path.isdir(pkg_dir):
             continue
-        version_dirs = _version_dirs(pkg_dir, root)
+        version_dirs = _version_dirs(pkg_dir)
         if sub:
             for base in [pkg_dir, os.path.join(pkg_dir, 'src'),
                          *(os.path.join(v, 'src') for v in version_dirs),

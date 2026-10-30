@@ -19,6 +19,11 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 from .packaging.model import PackageMeta, satisfies, validate_name
 from .packaging.toml import dumps as toml_dumps
 
+try:  # 尽量避免为了版本号在独立部署场景引入整个包
+    from . import __version__ as _PIC_VERSION
+except Exception:  # pragma: no cover
+    _PIC_VERSION = '0'
+
 __all__ = [
     'DEFAULT_REGISTRY_URL', 'DIGEST_ALGORITHM', 'RegistryClient',
     'RegistryError', 'iter_package_files', 'manifest_digest',
@@ -96,13 +101,16 @@ def package_modules(root: str) -> List[str]:
     for rel, _path in iter_package_files(root):
         if not rel.endswith('.cin'):
             continue
-        if rel.startswith(('test/', 'tests/', 'demo/', 'demos/',
-                           'example/', 'examples/')):
-            continue
         name = rel[:-4].replace(os.sep, '/')
         if name.startswith('src/'):
             name = name[len('src/'):]
-        if name in ('main', 'test'):
+        parts = name.split('/')
+        if any(part in ('test', 'tests', '__tests__', 'demo', 'demos',
+                        'example', 'examples') for part in parts[:-1]):
+            continue
+        base = parts[-1]
+        if base in ('main', 'test', 'demo') or base.endswith(
+                ('_demo', '_test', '_main')):
             continue
         modules.append(name)
     return sorted(set(modules))
@@ -132,7 +140,7 @@ class RegistryClient:
 
     def __init__(self, base_url: str = DEFAULT_REGISTRY_URL,
                  token: Optional[str] = None, timeout: int = 30,
-                 user_agent: str = 'pic/6.2.0'):
+                 user_agent: str = f'pic/{_PIC_VERSION}'):
         self.base_url = (base_url or DEFAULT_REGISTRY_URL).rstrip('/')
         self.token = token
         self.timeout = timeout
