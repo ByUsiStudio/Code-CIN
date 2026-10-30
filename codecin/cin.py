@@ -19,6 +19,7 @@
   - 定长数组就地存放 (数据段/栈帧); int[][] 为指向行指针数组的指针。
 """
 
+import fnmatch
 import os
 import re
 import struct
@@ -743,9 +744,231 @@ def _version_dirs(pkg_dir: str, root: str) -> List[str]:
     return [os.path.join(pkg_dir, v) for v in versions]
 
 
+#: 分块导入 ``pkg:*`` 时跳过的目录: 测试/示例/私有模块不参与通配
+_PACKAGE_WILDCARD_SKIP_DIRS = frozenset({
+    'internal', 'private', 'test', 'tests', '__tests__', 'demo', 'demos',
+    'example', 'examples', 'dist', 'build', 'target', 'node_modules',
+    '__pycache__', '.git', '.hg', '.svn', 'pic_modules', '.pic', '.mkn',
+})
+
+
+def _package_version(base: str) -> Optional[str]:
+    """读取包目录 ``pic.toml`` / ``mkn.toml`` 的版本; 非包目录返回 None。"""
+    if not os.path.isdir(base):
+        return None
+    try:
+        from .packaging.model import load_mkn_manifest, load_package_manifest
+        if os.path.isfile(os.path.join(base, 'pic.toml')):
+            return load_package_manifest(base, require_entry=False).version
+        if os.path.isfile(os.path.join(base, 'mkn.toml')):
+            return load_mkn_manifest(base).version
+    except Exception:  # noqa: BLE001 - 清单损坏时按"不是包"处理
+        return None
+    return None
+
+
+def _package_bases(pkg_dir: str, root: str) -> List[str]:
+    """一个包名目录下可用的包根 (项目目录本身 / 全局版本目录)。"""
+    bases: List[str] = []
+    if _package_version(pkg_dir) is not None:
+        bases.append(pkg_dir)
+    for version_dir in _version_dirs(pkg_dir, root):
+        if version_dir not in bases and _package_version(version_dir) is not None:
+            bases.append(version_dir)
+    return bases
+
+
+def _iter_package_cin_files(base: str) -> List[Tuple[str, str]]:
+    """返回包内全部 ``.cin`` (相对路径, 绝对路径), 按路径排序。"""
+    out: List[Tuple[str, str]] = []
+    for dirpath, dirnames, filenames in os.walk(base):
+        dirnames[:] = sorted(
+            d for d in dirnames
+            if d not in _PACKAGE_WILDCARD_SKIP_DIRS
+            and not d.startswith('.'))
+        for filename in sorted(filenames):
+            if not filename.endswith('.cin'):
+                continue
+            path = os.path.join(dirpath, filename)
+            rel = os.path.relpath(path, base).replace(os.sep, '/')
+            out.append((rel, path))
+    out.sort(key=lambda item: item[0])
+    return out
+
+
+def _module_defines_main(path: str) -> bool:
+    try:
+        with open(path, encoding='utf-8-sig', errors='replace') as f:
+            text = f.read(1 << 20)
+    except OSError:
+        return False
+    return re.search(r'\bfunction\s+main\s*\(', text) is not None
+
+
+def _module_is_internal(rel: str) -> bool:
+    lower = rel.lower()
+    return any(part in ('internal', 'private', 'test', 'tests', 'demo',
+                        'demos', 'example', 'examples')
+               for part in lower.split('/')[:-1])
+
+
+def _module_display(rel: str) -> str:
+    text = rel[:-4] if rel.endswith('.cin') else rel
+    return text[4:] if text.startswith('src/') else text
+
+
+def _available_modules(base: str) -> List[str]:
+    return [_module_display(rel) for rel, _path in _iter_package_cin_files(base)
+            if os.path.basename(rel) not in ('main.cin', 'test.cin')]
+
+
+def _match_module(base: str, selector: str) -> List[str]:
+    """把 ``table`` / ``internal/table.cin`` / ``table*`` 解析为包内文件。"""
+    files = _iter_package_cin_files(base)
+    if not files:
+        return []
+    selector = selector.strip().replace('\\', '/')
+    if not selector:
+        return []
+    want = selector if selector.endswith('.cin') else selector + '.cin'
+    has_glob = any(ch in selector for ch in '*?[')
+
+    if has_glob:
+        matches = []
+        for rel, path in files:
+            stem = rel[:-4] if rel.endswith('.cin') else rel
+            if fnmatch.fnmatch(rel, want) or fnmatch.fnmatch(stem, selector) \
+                    or fnmatch.fnmatch(_module_display(rel), selector):
+                matches.append((_module_is_internal(rel), len(rel), rel, path))
+        matches.sort()
+        return [path for _internal, _size, _rel, path in matches]
+
+    # 快路径: 常见位置直接命中
+    for rel in (want, 'src/' + want, 'src/internal/' + want,
+                'internal/' + want, 'lib/' + want):
+        path = os.path.normpath(os.path.join(base, rel))
+        if os.path.isfile(path):
+            return [path]
+
+    fuzzy = []
+    for rel, path in files:
+        stem = rel[:-4] if rel.endswith('.cin') else rel
+        display = _module_display(rel)
+        if rel == want or rel.endswith('/' + want) or stem == selector \
+                or display == selector or display.endswith('/' + selector) \
+                or (('/' not in selector)
+                    and os.path.basename(stem) == selector):
+            fuzzy.append((_module_is_internal(rel), len(rel), rel, path))
+    fuzzy.sort()
+    return [path for _internal, _size, _rel, path in fuzzy]
+
+
+class _PackageModuleNotFound(CompilerError):
+    def __init__(self, base: str, selector: str):
+        self.base = base
+        self.selector = selector
+        available = ', '.join(_available_modules(base)) or '(无)'
+        super().__init__(
+            f"Import module not found: {selector!r} in {base}; "
+            f"可用模块: {available}")
+
+
+def _package_chunks(base: str, pkg: str,
+                    spec) -> List[str]:
+    """按规格收集包内文件; ``*`` 返回入口 + 全部公开模块。"""
+    entry = _entry_from_package(base, pkg)
+    if not spec.has_selector:
+        if entry is None:
+            raise _PackageModuleNotFound(base, '(entry)')
+        return [entry]
+
+    if spec.is_all:
+        targets: List[str] = []
+        seen: Set[str] = set()
+
+        def add(path: str) -> None:
+            real = os.path.realpath(path)
+            if real not in seen:
+                seen.add(real)
+                targets.append(path)
+
+        if entry:
+            add(entry)
+        for rel, path in _iter_package_cin_files(base):
+            if _module_is_internal(rel):
+                continue
+            if os.path.basename(rel) in ('main.cin', 'test.cin'):
+                continue
+            if _module_defines_main(path):
+                continue
+            add(path)
+        if not targets and entry is None:
+            raise _PackageModuleNotFound(base, '*')
+        return targets
+
+    targets = []
+    seen = set()
+    for module in spec.modules:
+        for path in _match_module(base, module):
+            real = os.path.realpath(path)
+            if real not in seen:
+                seen.add(real)
+                targets.append(path)
+        if not targets:
+            raise _PackageModuleNotFound(base, module)
+    return targets
+
+
+def _resolve_package_chunks(spec, source_dir: str) -> Optional[List[str]]:
+    """按包规格解析 import; 没有同名包时返回 None。"""
+    found = False
+    version_mismatch: List[str] = []
+    module_errors: List[_PackageModuleNotFound] = []
+    for root in _package_roots(source_dir):
+        pkg_dir = os.path.join(root, spec.name)
+        if not os.path.isdir(pkg_dir):
+            continue
+        bases = _package_bases(pkg_dir, root)
+        if not bases:
+            continue
+        found = True
+        if spec.version:
+            matching = [base for base in bases
+                        if _package_version(base) == spec.version]
+            if not matching:
+                versions = sorted(
+                    (v for v in (_package_version(b) for b in bases) if v),
+                    reverse=True)
+                version_mismatch.append(
+                    f'{spec.name}: 已安装 {", ".join(versions) or "(未知)"}')
+                continue
+            bases = matching
+        for base in bases:
+            try:
+                return _package_chunks(base, spec.name, spec)
+            except _PackageModuleNotFound as e:
+                module_errors.append(e)
+
+    if not found:
+        return None
+    if version_mismatch and not module_errors:
+        detail = '; '.join(version_mismatch)
+        raise CompilerError(
+            f"Import file not found: {spec.display!r} (已安装版本不匹配: "
+            f"{detail})。可运行 `pic install {spec.name}@{spec.version}` 安装该版本。")
+    if module_errors:
+        error = module_errors[0]
+        raise CompilerError(
+            f"Import file not found: {spec.display!r} ({error}); "
+            f"先运行 `pic install {spec.name}`，再用 `pic modules {spec.name}` "
+            f"查看可导入的模块。")
+    raise CompilerError(
+        f"Import file not found: {spec.display!r} (包目录存在但无法读取入口文件)")
+
+
 def _resolve_package_import(name: str,
                             source_dir: str) -> Optional[str]:
-    """按包名解析 import; 找不到返回 None。"""
+    """按包名/相对包内路径解析 import (旧写法); 找不到返回 None。"""
     normalized = name.replace('\\', '/')
     parts = [p for p in normalized.split('/') if p]
     if not parts:
@@ -785,11 +1008,13 @@ def _resolve_package_import(name: str,
     return None
 
 
-def _resolve_import(name: str, source_dir: str) -> str:
-    """解析 import 目标路径。
+def _resolve_import(name: str, source_dir: str) -> List[str]:
+    """解析 import 目标 (可能多个文件, 用于分块导入)。
 
-    规则 (B3 + v6.2.0 包导入):
+    规则 (B3 + v6.2.x 包导入):
       * ``import "./x.cin"`` / ``import "../x.cin"`` —— 相对**当前 .cin 文件**所在目录;
+      * 包规格 ``rich`` / ``rich:*`` / ``rich:table`` / ``rich::1.1.1:*``
+        按模块分块解析 (见 :mod:`codecin.packaging.spec`);
       * 其余形式先查 **codecin 内置标准库** ``codecin/lib/`` (``lib/`` 前缀保留
         为兼容写法), 保持 "裸名字不会命中兄弟文件" 的既有语义;
       * 再查项目依赖目录 (``pic_modules`` / ``.mkn/deps`` / ``.pic/packages``)、
@@ -799,20 +1024,35 @@ def _resolve_import(name: str, source_dir: str) -> str:
     if _is_relative_import(name):
         cand = os.path.normpath(os.path.join(source_dir, name))
         if os.path.isfile(cand):
-            return cand
+            return [cand]
         raise CompilerError(
             f"Import file not found: {name!r} (相对引用, 已查找 {cand})")
+
+    if ':' in name:
+        from .packaging.spec import SpecError, parse_package_spec
+        try:
+            spec = parse_package_spec(name)
+        except SpecError:
+            spec = None
+        if spec is not None:
+            targets = _resolve_package_chunks(spec, source_dir)
+            if targets:
+                return targets
+            raise CompilerError(
+                f"Import file not found: {name!r} (未找到包 {spec.name!r})。"
+                f"先运行 `pic install {spec.name}`；指定版本用 "
+                f"`import \"{spec.name}::<版本>:*\"`。")
 
     candidates = [os.path.join(_LIB_DIR, name)]
     if name.startswith('lib/'):
         candidates.append(os.path.join(_LIB_DIR, name[len('lib/'):]))
     for cand in candidates:
         if os.path.isfile(cand):
-            return cand
+            return [cand]
 
     package = _resolve_package_import(name, source_dir)
     if package:
-        return package
+        return [package]
 
     raise CompilerError(
         f"Import file not found: {name!r} (内置标准库已查找 "
@@ -840,8 +1080,9 @@ def _collect_module_lines(path: str, loaded: set, active: set,
     for line in lines:
         m = _IMPORT_RE.match(line)
         if m:
-            target = _resolve_import(m.group(1), os.path.dirname(real))
-            _collect_module_lines(target, loaded, active, out)
+            targets = _resolve_import(m.group(1), os.path.dirname(real))
+            for target in targets:
+                _collect_module_lines(target, loaded, active, out)
             continue
         out.append((real, line))
     active.discard(real)
