@@ -237,7 +237,127 @@ def test_list_validation_and_auth(registry) -> None:
     assert json.loads(body)["error"]["code"] == "artifact_not_found"
 
     status, _, _ = call(httpd, "DELETE", "/api/v1/packages/hello")
-    assert status == 405
+    assert status == 200
 
     status, _, _ = call(httpd, "GET", "/api/v1/packages/missing")
+    assert status == 404
+
+
+def test_search_metadata_pagination_and_downloads(registry) -> None:
+    _, httpd = registry
+    archive = b"abc"
+    archive_sha = hashlib.sha256(archive).hexdigest()
+    meta = {
+        "repo": "https://github.com/u/rich",
+        "description": "终端富文本库",
+        "keywords": ["terminal", "markdown"],
+        "license": "MIT",
+        "entry": "src/rich.cin",
+        "modules": ["table", "markdown"],
+        "source_sha256": "a" * 64,
+        "manifest_sha256": "b" * 64,
+        "archive_sha256": archive_sha,
+        "archive_size": len(archive),
+    }
+    status, _, body = publish(httpd, "rich", "1.0.0", meta)
+    assert status == 201, body
+    status, _, body = publish(httpd, "rich-table", "0.2.0", dict(
+        meta, repo="https://github.com/u/rich-table", description="表格",
+        keywords=[]))
+    assert status == 201, body
+
+    status, _, body = call(
+        httpd, "GET", "/api/v1/packages?q=" + urllib.parse.quote("终端"))
+    assert status == 200, body
+    listing = json.loads(body)["data"]
+    assert listing["total"] == 1
+    assert listing["packages"][0]["name"] == "rich"
+    assert listing["packages"][0]["description"] == "终端富文本库"
+    assert listing["packages"][0]["keywords"] == ["terminal", "markdown"]
+
+    status, _, body = call(
+        httpd, "GET", "/api/v1/packages?keyword=markdown")
+    assert status == 200, body
+    assert json.loads(body)["data"]["total"] == 1
+
+    status, _, body = call(
+        httpd, "GET", "/api/v1/packages?sort=name&order=asc&limit=1")
+    assert status == 200, body
+    data = json.loads(body)["data"]
+    assert data["count"] == 1 and data["total"] == 2
+    assert data["packages"][0]["name"] == "rich"
+
+    status, _, body = call(
+        httpd, "GET", "/api/v1/packages?limit=abc")
+    assert status == 400
+
+    # 下载制品后计数递增
+    status, _, _ = call(
+        httpd,
+        "POST",
+        "/api/v1/packages/rich/1.0.0/artifact?sha256=" + archive_sha,
+        archive,
+        content_type="application/octet-stream",
+    )
+    assert status == 200
+    call(httpd, "GET", "/api/v1/packages/rich/1.0.0/artifact")
+    status, _, body = call(httpd, "GET", "/api/v1/packages/rich")
+    assert json.loads(body)["data"]["versions"]["1.0.0"]["downloads"] == 1
+
+
+def test_latest_pointer_yank_and_stats(registry) -> None:
+    _, httpd = registry
+    meta = {
+        "repo": "https://github.com/u/hello",
+        "source_sha256": "a" * 64,
+        "manifest_sha256": "b" * 64,
+        "archive_sha256": "c" * 64,
+        "archive_size": 3,
+    }
+    publish(httpd, "hello", "1.0.0", meta)
+    publish(httpd, "hello", "2.0.0", dict(meta, archive_sha256="d" * 64))
+
+    status, _, body = call(httpd, "GET", "/api/v1/packages/hello")
+    assert json.loads(body)["data"]["latest"] == "2.0.0"
+
+    status, _, body = call(
+        httpd, "POST", "/api/v1/packages/hello/1.0.0/latest", b'{"latest":true}',
+        content_type="application/json")
+    assert status == 200, body
+    status, _, body = call(httpd, "GET", "/api/v1/packages/hello")
+    assert json.loads(body)["data"]["latest"] == "1.0.0"
+
+    status, _, body = call(
+        httpd, "POST", "/api/v1/packages/hello/1.0.0/yank",
+        b'{"yanked":true}', content_type="application/json")
+    assert status == 200, body
+    status, _, body = call(httpd, "GET", "/api/v1/packages/hello")
+    assert json.loads(body)["data"]["latest"] == "2.0.0"
+
+    status, _, body = call(httpd, "GET", "/api/v1/stats")
+    assert status == 200, body
+    stats = json.loads(body)["data"]
+    assert stats["packages"] == 1
+    assert stats["versions"] == 2
+    assert stats["yanked"] == 1
+
+
+def test_admin_page_and_delete_version(registry) -> None:
+    _, httpd = registry
+    status, _, body = call(httpd, "GET", "/admin", token=None)
+    assert status == 200
+    assert b"pic registry" in body
+
+    meta = {
+        "repo": "https://github.com/u/hello",
+        "source_sha256": "a" * 64,
+        "manifest_sha256": "b" * 64,
+        "archive_sha256": "c" * 64,
+        "archive_size": 3,
+    }
+    publish(httpd, "hello", "1.0.0", meta)
+    status, _, body = call(httpd, "DELETE", "/api/v1/packages/hello/1.0.0")
+    assert status == 200, body
+    assert json.loads(body)["data"]["package_removed"] is True
+    status, _, _ = call(httpd, "GET", "/api/v1/packages/hello")
     assert status == 404
