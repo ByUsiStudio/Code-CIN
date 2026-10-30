@@ -16,14 +16,14 @@ Code CIN 是一门简洁的类 C 高级语言及其跨平台运行时（VM）。
 
 模块化包结构（`codecin/`，Go 侧 `codecin/native/`），全线日志与错误输出基于 **rich**（彩色表格、面板、traceback），`--debug` / `--log-level DEBUG` 提供超详细诊断。
 
-## v6.2.0 工具链：mkn / pic / cvm
+## v6.2.0+ 工具链：mkn / pic / cvm
 
 v6.2.0 在 `codecin` 之外提供三个独立命令，覆盖**构建 → 分发 → 运行**：
 
 | 命令 | 类比 | 作用 |
 |------|------|------|
 | `mkn` | Maven | 项目清单、标准目录、生命周期、依赖解析、打包与本地仓库 |
-| `pic` | pip | `package.codecin.org.cn` 中央注册/分发 + Cdifit 登录：发布登记标识名/Git 地址/版本列表/安全摘要并上传 `.cinpkg`，安装后可直接 `import` |
+| `pic` | pip | `package.codecin.org.cn` 中央注册/分发 + Cdifit 登录：发布登记标识名/Git 地址/版本列表/安全摘要并上传 `.cinpkg`，安装后可直接 `import`；支持搜索、版本管理与 `/admin` 后台 |
 | `cvm` | JVM | Code CIN 虚拟机：构建/校验/运行 `.cvm` 模块，支持模块路径；`CPU` 仅作为内部执行核 |
 
 ```bash
@@ -38,8 +38,14 @@ mkn package                     # target/demo-0.1.0.mkn
 pic login
 pic init hello
 pic publish --repo https://github.com/you/cin-hello --name hello
+pic install hello               # 不写版本 -> 最新版本
 pic install hello@^1.0          # 或 git+https://...、本地路径、.cinpkg
 pic install hello --project     # 安装到项目 pic_modules/，可直接 import
+pic search hello --json         # 搜索 (名称/描述/关键词, 分页/排序)
+pic versions hello              # 版本列表 (latest/yanked/installed)
+pic info hello                  # 包详情
+pic use hello 1.0.0             # 切换本地 current 版本
+pic admin                       # 后台管理页 (版本/撤回/删除/latest)
 pic whoami
 pic logout
 
@@ -55,11 +61,15 @@ cvm env
 登录和 Token 校验**。服务端实现见 [registry/README.md](registry/README.md)，
 客户端可用 `PIC_REGISTRY_URL` 覆盖服务器地址。
 
-安装后的包无需修改源码即可导入：
+安装后的包无需修改源码即可导入，并支持按模块/版本分块导入
+（不写版本时默认使用最高已安装版本）：
 
 ```cin
 import "hello"
 import "hello/util.cin"
+import "hello:*"               // 全部公开模块
+import "hello:util"            // 只导入 util 模块
+import "hello::1.0.0:*"        // 指定版本的全部公开模块
 ```
 
 ## 文档
