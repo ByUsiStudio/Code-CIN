@@ -21,7 +21,8 @@ from .packaging.toml import dumps as toml_dumps
 
 __all__ = [
     'DEFAULT_REGISTRY_URL', 'DIGEST_ALGORITHM', 'RegistryClient',
-    'RegistryError', 'iter_package_files', 'manifest_digest', 'source_digest',
+    'RegistryError', 'iter_package_files', 'manifest_digest',
+    'package_modules', 'source_digest',
 ]
 
 DEFAULT_REGISTRY_URL = 'https://package.codecin.org.cn'
@@ -87,6 +88,24 @@ def manifest_digest(meta: PackageMeta) -> str:
         package.pop('tag', None)
     text = toml_dumps(data)
     return hashlib.sha256(text.encode('utf-8')).hexdigest()
+
+
+def package_modules(root: str) -> List[str]:
+    """列出包内可导入的模块名 (供搜索/后台/``pic modules`` 使用)。"""
+    modules: List[str] = []
+    for rel, _path in iter_package_files(root):
+        if not rel.endswith('.cin'):
+            continue
+        if rel.startswith(('test/', 'tests/', 'demo/', 'demos/',
+                           'example/', 'examples/')):
+            continue
+        name = rel[:-4].replace(os.sep, '/')
+        if name.startswith('src/'):
+            name = name[len('src/'):]
+        if name in ('main', 'test'):
+            continue
+        modules.append(name)
+    return sorted(set(modules))
 
 
 def _file_sha256(path: str) -> str:
@@ -188,11 +207,46 @@ class RegistryClient:
     def health(self) -> Dict[str, Any]:
         return self._request('GET', '/health')
 
-    def list_packages(self, query: str = '') -> List[Dict[str, Any]]:
-        path = '/packages'
+    def list_packages(self, query: str = '', **params: Any
+                      ) -> List[Dict[str, Any]]:
+        """搜索/列表; 额外参数直接作为查询串传给服务端。"""
+        query_params: Dict[str, Any] = {}
         if query:
-            path += '?' + urllib.parse.urlencode({'q': query})
+            query_params['q'] = query
+        for key, value in params.items():
+            if value is None or value == '' or value is False:
+                continue
+            query_params[key] = 'true' if value is True else value
+        path = '/packages'
+        if query_params:
+            path += '?' + urllib.parse.urlencode(query_params)
         data = self._request('GET', path)
+        return self._package_list(data)
+
+    def search(self, query: str = '', **params: Any) -> Dict[str, Any]:
+        """返回包含 ``packages`` / ``total`` / ``count`` 的完整结果。"""
+        query_params: Dict[str, Any] = {}
+        if query:
+            query_params['q'] = query
+        for key, value in params.items():
+            if value is None or value == '' or value is False:
+                continue
+            query_params[key] = 'true' if value is True else value
+        path = '/packages'
+        if query_params:
+            path += '?' + urllib.parse.urlencode(query_params)
+        data = self._request('GET', path)
+        if not isinstance(data, dict):
+            return {'packages': [], 'total': 0, 'count': 0}
+        data = dict(data)
+        packages = data.get('packages')
+        data['packages'] = packages if isinstance(packages, list) else []
+        data.setdefault('total', len(data['packages']))
+        data.setdefault('count', len(data['packages']))
+        return data
+
+    @staticmethod
+    def _package_list(data: Any) -> List[Dict[str, Any]]:
         packages = data.get('packages') if isinstance(data, dict) else None
         return packages if isinstance(packages, list) else []
 
@@ -225,6 +279,18 @@ class RegistryClient:
         if record is None:
             raise RegistryError(f'中央注册服务器未找到包: {name}')
         versions = record.get('versions') or {}
+        pointer = str(record.get('latest') or '')
+        latest_only = not str(constraint or '').strip() \
+            or str(constraint).strip() in ('*', 'latest', 'any')
+        # `pic install <name>` 默认最新: 优先使用服务端的 latest 指针,
+        # 否则在满足约束的未撤回版本中取最高版本。
+        if latest_only and pointer:
+            entry = versions.get(pointer)
+            if isinstance(entry, dict) and not entry.get('yanked'):
+                repo = str(record.get('repo') or entry.get('repo') or '')
+                if not repo:
+                    raise RegistryError(f'包 {name} 的记录缺少 Git 仓库地址')
+                return repo, pointer, entry
         candidates = []
         for version, entry in versions.items():
             if not isinstance(entry, dict) or entry.get('yanked'):
@@ -258,6 +324,9 @@ class RegistryClient:
         manifest = manifest_digest(meta)
         archive_sha = _file_sha256(archive_path)
         size = os.path.getsize(archive_path)
+        package_table = (meta.raw or {}).get('package')
+        if not isinstance(package_table, dict):
+            package_table = {}
         metadata = {
             'name': meta.name,
             'version': meta.version,
@@ -268,6 +337,13 @@ class RegistryClient:
             'manifest_sha256': manifest,
             'archive_sha256': archive_sha,
             'archive_size': size,
+            'description': meta.description,
+            'keywords': list(meta.keywords),
+            'license': meta.license,
+            'homepage': str(package_table.get('homepage')
+                            or package_table.get('website') or ''),
+            'entry': meta.entry_rel,
+            'modules': package_modules(meta.root),
         }
         published = self._request(
             'PUT', f'/packages/{meta.name}/{meta.version}', metadata,
@@ -350,6 +426,51 @@ class RegistryClient:
         data = self._request('POST', f'/packages/{name}/{version}/yank',
                              {'yanked': yanked}, auth=True)
         return data if isinstance(data, dict) else {}
+
+    def set_latest(self, name: str, version: str) -> Dict[str, Any]:
+        data = self._request('POST', f'/packages/{name}/{version}/latest',
+                             {'latest': True}, auth=True)
+        return data if isinstance(data, dict) else {}
+
+    def delete_version(self, name: str, version: str) -> Dict[str, Any]:
+        data = self._request('DELETE', f'/packages/{name}/{version}',
+                             auth=True)
+        return data if isinstance(data, dict) else {}
+
+    def delete_package(self, name: str) -> Dict[str, Any]:
+        data = self._request('DELETE', f'/packages/{name}', auth=True)
+        return data if isinstance(data, dict) else {}
+
+    def stats(self) -> Dict[str, Any]:
+        data = self._request('GET', '/stats')
+        return data if isinstance(data, dict) else {}
+
+    def me(self) -> Dict[str, Any]:
+        data = self._request('GET', '/me', auth=True)
+        return data if isinstance(data, dict) else {}
+
+    def version_list(self, name: str) -> List[Dict[str, Any]]:
+        record = self.get_package(name)
+        if record is None:
+            return []
+        rows = self.version_rows(record)
+        versions = record.get('versions') or {}
+        latest = str(record.get('latest') or '')
+        out = []
+        for version, tag, yanked in rows:
+            entry = versions.get(version) or {}
+            out.append({
+                'version': version,
+                'tag': tag,
+                'yanked': yanked == 'yanked',
+                'latest': version == latest,
+                'published_at': entry.get('published_at') or '',
+                'publisher': entry.get('publisher') or {},
+                'archive_size': entry.get('archive_size') or 0,
+                'archive_sha256': entry.get('archive_sha256') or '',
+                'downloads': entry.get('downloads') or 0,
+            })
+        return out
 
     # ---------------- 校验 ----------------
 

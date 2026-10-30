@@ -23,7 +23,9 @@ import os
 import re
 import shutil
 import sys
+import urllib.parse
 import uuid
+import webbrowser
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
@@ -37,6 +39,12 @@ from .packaging.model import (
     satisfies,
     validate_name,
     validate_version,
+)
+from .packaging.spec import (
+    PackageSpec,
+    SpecError,
+    parse_package_spec,
+    split_selectors,
 )
 from .packaging.store import (
     InstalledPackage,
@@ -63,6 +71,7 @@ from .pic_registry import (
     RegistryError,
     iter_package_files,
     manifest_digest,
+    package_modules,
     source_digest,
 )
 
@@ -194,12 +203,20 @@ def get_client(*, interactive: bool = True,
 
 
 def get_registry(*, interactive: bool = True,
-                 open_browser: bool = True) -> Optional[RegistryClient]:
+                 open_browser: bool = True,
+                 auth: bool = True) -> Optional[RegistryClient]:
+    """返回注册表客户端; ``auth=False`` 用于搜索等公开只读接口。"""
     config = load_config()
     if config.offline:
         return None
-    client = get_client(interactive=interactive, open_browser=open_browser)
-    token = client.auth.access_token if client.auth else ''
+    if auth:
+        client = get_client(interactive=interactive, open_browser=open_browser)
+        token = client.auth.access_token if client.auth else ''
+    else:
+        state = AuthStore().load()
+        token = ''
+        if state is not None and state.api_base.rstrip('/') == config.api_base:
+            token = state.access_token
     return RegistryClient(config.registry_url, token=token)
 
 
@@ -463,38 +480,67 @@ def install_named(name: str, constraint: str, store: PackageStore, *,
                   target_root: Optional[str] = None, editable: bool = False,
                   force: bool = False, no_deps: bool = False,
                   _seen: Optional[set] = None) -> InstalledPackage:
-    """按名称 + 版本约束安装 (注册表 -> Git 仓库)。"""
-    validate_name(name)
-    # 1) 已安装且满足约束: 直接复用
-    if target_root:
-        existing = _project_existing(target_root, name)
-        if existing is not None and satisfies(existing.version, constraint) \
-                and not force:
-            return InstalledPackage(name=name, version=existing.version,
-                                    path=os.path.join(target_root, name))
-    else:
-        for version in store.versions(name):
-            if satisfies(version, constraint):
-                pkg = store.get(name, version)
-                if pkg is not None:
-                    return pkg
+    """按名称安装 (注册表 -> Git 仓库)。
 
-    # 2) 中央注册表 (在线) / 本地注册表 (PIC_OFFLINE)
+    不写版本 (``pic install rich``) 时默认安装**最新版本**: 在线时按中央
+    注册表的 ``latest`` 指针/最高未撤回版本解析, 即使本地已安装旧版本也会
+    升级; 指定 ``rich@^1.1`` / ``rich@1.1.1`` 时保持"满足约束即可"的旧语义。
+    """
+    validate_name(name)
+    constraint = str(constraint or '').strip()
+    if constraint.lower() in ('latest', 'any'):
+        constraint = ''
+    latest_only = not constraint
+
+    # 1) 明确版本约束: 已安装且满足约束时直接复用 (不强制联网)
+    if not latest_only:
+        if target_root:
+            existing = _project_existing(target_root, name)
+            if existing is not None and satisfies(existing.version, constraint) \
+                    and not force:
+                return InstalledPackage(name=name, version=existing.version,
+                                        path=os.path.join(target_root, name))
+        else:
+            for version in sorted(store.versions(name), key=_version_key,
+                                  reverse=True):
+                if satisfies(version, constraint):
+                    pkg = store.get(name, version)
+                    if pkg is not None:
+                        return pkg
+
+    # 2) 中央注册表 (在线)
     config = load_config()
     registry = None if config.offline else get_registry(interactive=True)
     if registry is not None:
         installed = None
         try:
-            repo, version, registered = registry.resolve(name, constraint)
+            repo, version, registered = registry.resolve(
+                name, '' if latest_only else constraint)
             artifact_sha = str(registered.get('archive_sha256') or '')
             use_artifact = bool(artifact_sha and registered.get('artifact_url'))
             _detail('中央注册表', registry.base_url)
             _detail('解析', f'{name}@{version}'
-                    + (f' (约束 {constraint})' if constraint else ''))
+                    + (f' (约束 {constraint})' if constraint else ' (最新)'))
             _detail('获取地址', repo)
             _detail('分发方式', '中央制品' if use_artifact else 'Git 仓库')
             if use_artifact:
                 _detail('制品 SHA-256', artifact_sha)
+
+            # 已安装同一个版本: 复用 (但仍把 current 指向它)
+            if not force:
+                if target_root:
+                    existing = _project_existing(target_root, name)
+                    if existing is not None and existing.version == version:
+                        return InstalledPackage(
+                            name=name, version=version,
+                            path=os.path.join(target_root, name), repo=repo,
+                            rev=str(registered.get('rev') or ''))
+                else:
+                    existing = store.get(name, version)
+                    if existing is not None:
+                        store.set_current(name, version)
+                        return existing
+
             if use_artifact:
                 cache = store.cache_path('artifacts')
                 dest = os.path.join(cache, f'{name}-{version}.cinpkg')
@@ -515,7 +561,7 @@ def install_named(name: str, constraint: str, store: PackageStore, *,
                 installed = install_git(
                     repo, store, ref=ref, target_root=target_root,
                     editable=editable, force=force, no_deps=no_deps,
-                    expected_name=name, _seen=_seen)
+                    expected_name=name, expected_version=version, _seen=_seen)
                 if installed.version != version:
                     raise RegistryError(
                         f'安装版本不匹配: 注册表为 {version}, 实际为 '
@@ -526,6 +572,8 @@ def install_named(name: str, constraint: str, store: PackageStore, *,
                         f'安装后无法读取包清单: {installed.path}')
                 RegistryClient.verify_install(meta, registered,
                                               rev=installed.rev)
+            if not target_root:
+                store.set_current(name, installed.version)
             return installed
         except RegistryError as e:
             if installed is not None:
@@ -536,29 +584,65 @@ def install_named(name: str, constraint: str, store: PackageStore, *,
                     store.remove(name, installed.version)
             raise PicError(str(e)) from e
 
+    # 3) 离线/本地注册表: 按登记的版本选择, 无版本则取最高
     entry = store.lookup(name)
-    if not entry or not entry.get('repo'):
-        raise PicError(
-            f'未找到包 {name!r} 的仓库。\n'
-            f'  在线: 请确认包已通过 `pic publish` 登记到中央注册服务器;\n'
-            f'  离线: 可用 `pic install git+<url>` 直接安装, 或在 pic.toml 中声明 '
-            f'`[dependencies.{name}] git = "..."`;\n'
-            f'  也可用 `pic registry add <url> --name {name}` 登记本地名称。')
-    repo = str(entry['repo'])
-    ref = _choose_tag(repo, constraint) if constraint else None
-    installed = install_git(repo, store, ref=ref, target_root=target_root,
-                            editable=editable, force=force,
-                            no_deps=no_deps, expected_name=name,
-                            _seen=_seen)
-    if constraint and not satisfies(installed.version, constraint):
-        if target_root:
-            shutil.rmtree(os.path.join(target_root, name), ignore_errors=True)
+    if entry and entry.get('repo'):
+        repo = str(entry['repo'])
+        versions = entry.get('versions') or {}
+        candidates = sorted(
+            (v for v in versions if satisfies(v, constraint or '*')),
+            key=_version_key, reverse=True)
+        if latest_only and candidates:
+            chosen = candidates[0]
+        elif candidates:
+            chosen = candidates[0]
         else:
-            store.remove(name, installed.version)
-        raise PicError(
-            f'{name} 的最新可选版本 {installed.version} 不满足约束 '
-            f'{constraint!r}; 请检查仓库标签或放宽版本范围')
-    return installed
+            chosen = ''
+        if chosen:
+            tag = str((versions.get(chosen) or {}).get('tag') or '') \
+                or f'v{chosen}'
+            installed = install_git(
+                repo, store, ref=tag, target_root=target_root,
+                editable=editable, force=force, no_deps=no_deps,
+                expected_name=name, expected_version=chosen, _seen=_seen)
+            if not target_root:
+                store.set_current(name, installed.version)
+            return installed
+        if versions:
+            available = ', '.join(sorted(versions))
+            raise PicError(
+                f'{name} 没有满足约束 {constraint or "*"} 的版本; '
+                f'本地登记: {available}')
+        ref = _choose_tag(repo, constraint) if constraint else None
+        installed = install_git(repo, store, ref=ref, target_root=target_root,
+                                editable=editable, force=force,
+                                no_deps=no_deps, expected_name=name,
+                                _seen=_seen)
+        if constraint and not satisfies(installed.version, constraint):
+            if target_root:
+                shutil.rmtree(os.path.join(target_root, name), ignore_errors=True)
+            else:
+                store.remove(name, installed.version)
+            raise PicError(
+                f'{name} 的最新可选版本 {installed.version} 不满足约束 '
+                f'{constraint!r}; 请检查仓库标签或放宽版本范围')
+        return installed
+
+    # 4) 离线且未登记仓库: 已安装包按最高版本复用
+    installed_versions = sorted(store.versions(name), key=_version_key,
+                                reverse=True)
+    if installed_versions:
+        pkg = store.get(name, installed_versions[0])
+        if pkg is not None:
+            store.set_current(name, pkg.version)
+            return pkg
+
+    raise PicError(
+        f'未找到包 {name!r} 的仓库。\n'
+        f'  在线: 请确认包已通过 `pic publish` 登记到中央注册服务器;\n'
+        f'  离线: 可用 `pic install git+<url>` 直接安装, 或在 pic.toml 中声明 '
+        f'`[dependencies.{name}] git = "..."`;\n'
+        f'  也可用 `pic registry add <url> --name {name}` 登记本地名称。')
 
 
 def _install_dependency(dep: Dependency, store: PackageStore, *,
@@ -593,7 +677,11 @@ def install_spec(spec: str, store: PackageStore, *,
                  name: Optional[str] = None, version: Optional[str] = None,
                  ref: Optional[str] = None,
                  _seen: Optional[set] = None) -> InstalledPackage:
-    """安装任意规格: 本地路径 / .cinpkg / git+URL / name@version。"""
+    """安装任意规格: 本地路径 / .cinpkg / git+URL / name[:module][::version]。
+
+    ``name:*`` / ``name::<版本>:*`` 里的模块选择器只影响 import 写法,
+    安装时始终安装整个包; 未写版本时默认安装最新版本。
+    """
     seen = _seen if _seen is not None else set()
     text = str(spec or '').strip()
     if not text:
@@ -613,6 +701,19 @@ def install_spec(spec: str, store: PackageStore, *,
                            editable=editable, force=force, no_deps=no_deps,
                            expected_name=name, expected_version=version,
                            _seen=seen)
+
+    try:
+        package = parse_package_spec(text)
+    except SpecError:
+        package = None
+    if package is not None:
+        pkg_name = name or package.name
+        pkg_version = version or (
+            '' if package.is_latest else package.version)
+        return install_named(pkg_name, pkg_version, store,
+                             target_root=target_root, editable=editable,
+                             force=force, no_deps=no_deps, _seen=seen)
+
     pkg_name, pkg_version = _split_name_version(text)
     if name:
         pkg_name = name
@@ -907,10 +1008,12 @@ def cmd_install(args) -> int:
     store = default_store()
     target_root = _target_root(args, store)
     installed: List[InstalledPackage] = []
+    imports: List[str] = []
     print('pic install ' + (' '.join(args.specs) if args.specs else '(pic.toml)'))
     _step(1, 3, '解析安装规格')
     _detail('目标', target_root or store.root)
     _detail('模式', '可编辑' if args.editable else '复制安装')
+    _detail('版本策略', '未指定版本时安装最新版本')
 
     specs = list(args.specs)
     if not specs:
@@ -923,12 +1026,15 @@ def cmd_install(args) -> int:
             installed.append(_install_dependency(
                 dep, store, target_root=target_root, force=args.force,
                 seen=seen))
+            imports.append(f'import "{dep.name}"')
     else:
         for spec in specs:
-            installed.append(install_spec(
+            pkg = install_spec(
                 spec, store, target_root=target_root, editable=args.editable,
                 force=args.force, no_deps=args.no_deps, name=args.name,
-                version=args.version, ref=args.ref))
+                version=args.version, ref=args.ref)
+            installed.append(pkg)
+            imports.append(_import_hint_for_spec(spec, pkg.name))
 
     _step(2, 3, '写入锁定信息')
     if target_root:
@@ -939,7 +1045,7 @@ def cmd_install(args) -> int:
         _detail('pic.lock', '(全局安装)')
 
     _step(3, 3, '安装完成')
-    for pkg in installed:
+    for index, pkg in enumerate(installed):
         meta = _read_installed_manifest(pkg.real_path)
         _detail('包', f'{pkg.name}@{pkg.version}')
         _detail('路径', pkg.real_path)
@@ -947,8 +1053,21 @@ def cmd_install(args) -> int:
         _detail('提交', pkg.rev or '-')
         if meta is not None:
             _detail('入口', meta.entry_rel)
-        _detail('导入', f'import "{pkg.name}"')
+        hint = imports[index] if index < len(imports) else f'import "{pkg.name}"'
+        _detail('导入', hint)
     return 0
+
+
+def _import_hint_for_spec(spec: str, name: str) -> str:
+    """把安装规格转成推荐的 import 写法。"""
+    try:
+        parsed = parse_package_spec(spec)
+    except SpecError:
+        return f'import "{name}"'
+    if parsed.has_selector:
+        return f'import "{parsed.display}"'
+    return f'import "{name}"'
+
 
 
 def cmd_uninstall(args) -> int:
@@ -1062,34 +1181,333 @@ def cmd_freeze(args) -> int:
 
 def cmd_search(args) -> int:
     config = load_config()
-    query = (args.query or '').lower()
-    rows = []
-    if not config.offline:
-        registry = get_registry(interactive=True)
-        for record in registry.list_packages(args.query or ''):
-            name = str(record.get('name') or '')
-            repo = str(record.get('repo') or '')
-            latest = str(record.get('latest') or '-')
-            rows.append((name, repo, latest))
-    else:
-        data = default_store().load_registry().get('packages', {})
-        for name, entry in sorted(data.items()):
-            if query and query not in name.lower() and query not in str(
-                    entry.get('repo', '')).lower():
-                continue
-            versions = list((entry.get('versions') or {}).keys())
-            rows.append((name, entry.get('repo', ''),
-                         versions[-1] if versions else '-'))
-    if not rows:
-        print('No matching packages in registry.')
+    query = str(args.query or '').strip()
+    params: Dict[str, Any] = {
+        'limit': getattr(args, 'limit', 0) or 0,
+        'offset': getattr(args, 'offset', 0) or 0,
+        'sort': getattr(args, 'sort', '') or '',
+        'order': getattr(args, 'order', '') or '',
+        'keyword': getattr(args, 'keyword', '') or '',
+    }
+    if config.offline:
+        records, total = _offline_search(query, params)
+        if args.json:
+            print(json.dumps({'packages': records, 'total': total,
+                              'count': len(records), 'offline': True},
+                             ensure_ascii=False, indent=2))
+            return 0
+        _print_search_header(query, config, len(records), total, offline=True)
+        _print_package_table(records)
         return 0
-    print(f'pic search {args.query or "*"}')
-    print(f'  registry: {config.registry_url if not config.offline else "local"}')
-    print(f'  results : {len(rows)}')
-    print('NAME                 LATEST      REPO')
-    for name, repo, latest in sorted(rows):
-        print(f'{name:<20} {latest:<11} {repo}')
+
+    registry = get_registry(interactive=True, auth=False)
+    result = registry.search(query, **params)
+    records = result.get('packages') or []
+    total = int(result.get('total') or len(records))
+    if args.json:
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0
+    _print_search_header(query, config, len(records), total, offline=False)
+    _print_package_table(records)
     return 0
+
+
+def _print_search_header(query: str, config: PicConfig, count: int,
+                         total: int, *, offline: bool) -> None:
+    print(f'pic search {query or "*"}')
+    print(f'  registry: {config.registry_url if not offline else "local"}')
+    if total != count:
+        print(f'  results : {count} / {total}')
+    else:
+        print(f'  results : {count}')
+
+
+def _print_package_table(records: Sequence[Dict[str, Any]]) -> None:
+    if not records:
+        print('No matching packages in registry.')
+        return
+    print(f'{"NAME":<20} {"LATEST":<11} {"VERSIONS":>8} {"DOWNLOADS":>9}  '
+          f'DESCRIPTION')
+    for record in records:
+        name = str(record.get('name') or '')
+        latest = str(record.get('latest') or '-')
+        versions = int(record.get('versions') or 0)
+        downloads = int(record.get('downloads') or 0)
+        description = str(record.get('description')
+                          or record.get('repo') or '').replace('\n', ' ')
+        if len(description) > 52:
+            description = description[:51] + '…'
+        print(f'{name:<20} {latest:<11} {versions:>8} {downloads:>9}  '
+              f'{description}')
+
+
+def _offline_search(query: str,
+                    params: Dict[str, Any]) -> Tuple[List[Dict[str, Any]], int]:
+    store = default_store()
+    text = query.lower()
+    rows: Dict[str, Dict[str, Any]] = {}
+    data = store.load_registry().get('packages', {})
+    for name, entry in data.items():
+        repo = str(entry.get('repo') or '')
+        versions = sorted((entry.get('versions') or {}).keys(),
+                          key=_version_key, reverse=True)
+        if text and text not in name.lower() and text not in repo.lower():
+            continue
+        rows[name] = {
+            'name': name, 'repo': repo,
+            'latest': versions[0] if versions else '-',
+            'versions': len(versions), 'downloads': 0,
+            'description': '',
+        }
+    for pkg in store.all():
+        if text and text not in pkg.name.lower():
+            continue
+        row = rows.setdefault(pkg.name, {
+            'name': pkg.name, 'repo': pkg.repo, 'latest': pkg.version,
+            'versions': len(store.versions(pkg.name)), 'downloads': 0,
+            'description': '(installed)',
+        })
+        row['latest'] = store.versions(pkg.name)[-1] if store.versions(
+            pkg.name) else row['latest']
+    keyword = str(params.get('keyword') or '').lower()
+    items = [row for row in rows.values()
+             if not keyword or keyword in str(row.get('description', '')).lower()]
+    sort = params.get('sort') or 'name'
+    reverse = (params.get('order') or '').lower() != 'asc'
+    if sort == 'name':
+        items.sort(key=lambda item: item['name'].lower(),
+                   reverse=(params.get('order') or '').lower() == 'desc')
+    elif sort == 'downloads':
+        items.sort(key=lambda item: item['downloads'], reverse=reverse)
+    elif sort == 'versions':
+        items.sort(key=lambda item: item['versions'], reverse=reverse)
+    elif sort == 'latest':
+        items.sort(key=lambda item: _version_key(item['latest']), reverse=reverse)
+    offset = int(params.get('offset') or 0)
+    limit = int(params.get('limit') or 0)
+    total = len(items)
+    page = items[offset:offset + limit] if limit > 0 else items[offset:]
+    return page, total
+
+
+def cmd_versions(args) -> int:
+    name = args.name.strip()
+    validate_name(name)
+    config = load_config()
+    installed = default_store().versions(name)
+    if config.offline:
+        rows = _local_version_rows(name, installed)
+        source = 'local'
+    else:
+        registry = get_registry(interactive=True, auth=False)
+        rows = registry.version_list(name)
+        source = config.registry_url
+    if args.json:
+        print(json.dumps({'name': name, 'registry': source,
+                          'installed': installed, 'versions': rows},
+                         ensure_ascii=False, indent=2))
+        return 0
+    print(f'pic versions {name}')
+    print(f'  registry : {source}')
+    print(f'  installed: {", ".join(installed) if installed else "-"}')
+    if not rows:
+        print('  (no versions)')
+        return 0
+    print(f'{"VERSION":<14} {"TAG":<16} {"STATUS":<10} {"SIZE":>10}  '
+          f'PUBLISHED')
+    for row in rows:
+        version = str(row.get('version') or '')
+        tag = str(row.get('tag') or '-')
+        flags = []
+        if row.get('latest'):
+            flags.append('latest')
+        if row.get('yanked'):
+            flags.append('yanked')
+        if version in installed:
+            flags.append('installed')
+        size = _fmt_size(int(row.get('archive_size') or 0))
+        published = str(row.get('published_at') or '')[:19].replace('T', ' ')
+        print(f'{version:<14} {tag:<16} {" ".join(flags) or "-":<10} '
+              f'{size:>10}  {published}')
+    return 0
+
+
+def _local_version_rows(name: str,
+                        installed: Sequence[str]) -> List[Dict[str, Any]]:
+    store = default_store()
+    entry = store.lookup(name) or {}
+    rows = []
+    for version, info in sorted((entry.get('versions') or {}).items(),
+                                key=lambda item: _version_key(item[0]),
+                                reverse=True):
+        rows.append({
+            'version': version,
+            'tag': (info or {}).get('tag') or '-',
+            'yanked': False,
+            'latest': version == (installed[-1] if installed else ''),
+            'archive_size': 0,
+            'published_at': '',
+        })
+    for version in sorted(installed, key=_version_key, reverse=True):
+        if all(row['version'] != version for row in rows):
+            rows.append({'version': version, 'tag': '-',
+                         'yanked': False, 'latest': version == installed[-1],
+                         'archive_size': 0, 'published_at': ''})
+    return rows
+
+
+def cmd_info(args) -> int:
+    name = args.name.strip()
+    validate_name(name)
+    config = load_config()
+    data: Dict[str, Any] = {'name': name}
+    if config.offline:
+        data['offline'] = True
+        entry = default_store().lookup(name) or {}
+        data.update({'repo': entry.get('repo', ''),
+                     'versions': sorted(entry.get('versions') or {})})
+    else:
+        registry = get_registry(interactive=True, auth=False)
+        record = registry.get_package(name)
+        if record is None:
+            raise PicError(f'中央注册服务器未找到包: {name}')
+        data.update({
+            'repo': record.get('repo', ''),
+            'latest': record.get('latest', ''),
+            'description': record.get('description', ''),
+            'keywords': record.get('keywords', []),
+            'license': record.get('license', ''),
+            'entry': record.get('entry', ''),
+            'modules': record.get('modules', []),
+            'downloads': record.get('downloads', 0),
+            'versions': registry.version_list(name),
+        })
+    data['installed'] = default_store().versions(name)
+    if args.json:
+        print(json.dumps(data, ensure_ascii=False, indent=2))
+        return 0
+    print(f'pic info {name}')
+    _detail('仓库', data.get('repo') or '-')
+    _detail('最新', data.get('latest') or '-')
+    _detail('描述', data.get('description') or '-')
+    _detail('关键词', ', '.join(data.get('keywords') or []) or '-')
+    _detail('许可证', data.get('license') or '-')
+    _detail('入口', data.get('entry') or '-')
+    _detail('模块', ', '.join(data.get('modules') or []) or '-')
+    _detail('下载', data.get('downloads') or 0)
+    _detail('已安装', ', '.join(data.get('installed') or []) or '-')
+    versions = data.get('versions') or []
+    if isinstance(versions, list):
+        _detail('版本', ', '.join(str(row.get('version'))
+                                  for row in versions) or '-')
+    return 0
+
+
+def cmd_yank(args) -> int:
+    name, version = _name_version_pair(args.name, args.version)
+    config = load_config()
+    if config.offline:
+        raise PicError('yank 需要连接中央注册服务器 (PIC_OFFLINE=1 已禁用)')
+    registry = get_registry(interactive=True)
+    registry.yank(name, version, yanked=not args.undo)
+    action = '恢复' if args.undo else '撤回'
+    print(f'{action} {name}@{version}')
+    return 0
+
+
+def cmd_latest(args) -> int:
+    name, version = _name_version_pair(args.name, args.version)
+    config = load_config()
+    if config.offline:
+        raise PicError('latest 需要连接中央注册服务器 (PIC_OFFLINE=1 已禁用)')
+    registry = get_registry(interactive=True)
+    result = registry.set_latest(name, version)
+    print(f'latest -> {name}@{version}')
+    if result.get('latest'):
+        _detail('最新', result['latest'])
+    return 0
+
+
+def _name_version_pair(name_spec: str,
+                       version: Optional[str]) -> Tuple[str, str]:
+    text = str(name_spec or '').strip()
+    name, inline = _split_name_version(text)
+    resolved = (version or inline or '').strip().lstrip('vV')
+    if not resolved:
+        raise PicError('需要指定版本: pic <命令> <包名> <版本> 或 <包名>@<版本>')
+    validate_name(name)
+    validate_version(resolved)
+    return name, resolved
+
+
+def cmd_modules(args) -> int:
+    name = args.name.strip()
+    validate_name(name)
+    store = default_store()
+    version = args.version
+    path: Optional[str] = None
+    if args.project:
+        candidate = os.path.join(project_modules_dir(_project_root()), name)
+        if os.path.isdir(candidate):
+            path = candidate
+    if path is None and store.versions(name):
+        pkg = store.get(name, version)
+        if pkg is not None:
+            path = pkg.real_path
+    modules: List[str] = []
+    source = ''
+    if path is not None:
+        modules = package_modules(path)
+        source = path
+    elif not load_config().offline:
+        registry = get_registry(interactive=True, auth=False)
+        record = registry.get_package(name)
+        if record is None:
+            raise PicError(f'未安装且中央注册服务器未找到包: {name}')
+        modules = [str(item) for item in record.get('modules') or []]
+        source = 'central registry'
+    if args.json:
+        print(json.dumps({'name': name, 'source': source,
+                          'modules': modules}, ensure_ascii=False, indent=2))
+        return 0
+    print(f'pic modules {name}')
+    print(f'  source: {source or "(unknown)"}')
+    if not modules:
+        print('  (no importable modules)')
+        return 0
+    for module in modules:
+        print(f'  {module}')
+    print()
+    print(f'  导入全部: import "{name}:*"')
+    for module in modules[:5]:
+        print(f'  导入单个: import "{name}:{module}"')
+    if len(modules) > 5:
+        print(f'  其余模块同理: import "{name}:<模块名>"')
+    return 0
+
+
+def cmd_admin(args) -> int:
+    config = load_config()
+    if config.offline:
+        raise PicError('后台管理需要连接中央注册服务器 (PIC_OFFLINE=1 已禁用)')
+    client = get_client(interactive=True)
+    token = client.auth.access_token if client.auth else ''
+    if args.print_token:
+        print(token)
+        return 0
+    url = config.registry_url.rstrip('/') + '/admin'
+    if token:
+        url += '#token=' + urllib.parse.quote(token, safe='')
+    print('pic admin')
+    _detail('后台', config.registry_url.rstrip('/') + '/admin')
+    _detail('说明', '令牌放在 URL fragment, 不会发送给服务器; 可随时清除')
+    if not args.no_browser:
+        opened = webbrowser.open(url)
+        _detail('浏览器', '已打开' if opened else '未能自动打开')
+    if args.print_url:
+        print(url)
+    return 0
+
 
 
 def cmd_registry(args) -> int:
@@ -1119,7 +1537,7 @@ def cmd_registry(args) -> int:
 
     config = load_config()
     if not config.offline:
-        registry = get_registry(interactive=True)
+        registry = get_registry(interactive=True, auth=False)
         records = registry.list_packages()
         if not records:
             print('Central registry is empty.')
@@ -1318,15 +1736,16 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument('-o', '--output', help='包归档输出路径')
     p.set_defaults(func=cmd_publish)
 
-    p = sub.add_parser('install', help='安装包')
+    p = sub.add_parser('install', help='安装包 (未指定版本时安装最新版本)')
     p.add_argument('specs', nargs='*',
-                   help='包规格: name / name@version / path / git+URL / .cinpkg')
+                   help='包规格: name / name@version / name:* / '
+                        'name::<版本>:* / path / git+URL / .cinpkg')
     p.add_argument('-e', '--editable', action='store_true',
                    help='可编辑安装 (仅本地路径)')
     p.add_argument('--project', action='store_true',
                    help='安装到当前项目 pic_modules/ (可直接 import)')
     p.add_argument('--name', help='覆盖期望包名')
-    p.add_argument('--version', help='覆盖期望版本')
+    p.add_argument('--version', help='覆盖期望版本 (不写则安装最新版本)')
     p.add_argument('--ref', help='Git 引用 (标签/分支/提交)')
     p.add_argument('--force', action='store_true')
     p.add_argument('--no-deps', action='store_true', help='不安装依赖')
@@ -1357,7 +1776,56 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = sub.add_parser('search', help='搜索中央注册表 (离线时搜索本地)')
     p.add_argument('query', nargs='?')
+    p.add_argument('--json', action='store_true', help='输出 JSON')
+    p.add_argument('--limit', type=int, default=0, help='最多返回条数 (0=全部)')
+    p.add_argument('--offset', type=int, default=0, help='跳过条数')
+    p.add_argument('--sort', choices=['name', 'latest', 'updated',
+                                      'downloads', 'versions'],
+                   default='', help='排序字段')
+    p.add_argument('--order', choices=['asc', 'desc'], default='',
+                   help='排序方向')
+    p.add_argument('--keyword', default='', help='按关键词过滤')
     p.set_defaults(func=cmd_search)
+
+    p = sub.add_parser('versions', help='列出一个包的全部版本')
+    p.add_argument('name')
+    p.add_argument('--json', action='store_true')
+    p.set_defaults(func=cmd_versions)
+
+    p = sub.add_parser('info', help='查看包的远程详情 (版本/模块/下载量)')
+    p.add_argument('name')
+    p.add_argument('--json', action='store_true')
+    p.set_defaults(func=cmd_info)
+
+    p = sub.add_parser('yank', help='撤回一个版本 (发布者/管理员)')
+    p.add_argument('name', help='包名或 name@version')
+    p.add_argument('version', nargs='?')
+    p.set_defaults(func=cmd_yank, undo=False)
+
+    p = sub.add_parser('unyank', help='恢复一个被撤回的版本')
+    p.add_argument('name', help='包名或 name@version')
+    p.add_argument('version', nargs='?')
+    p.set_defaults(func=cmd_yank, undo=True)
+
+    p = sub.add_parser('latest', help='把 latest 指针指向指定版本')
+    p.add_argument('name', help='包名或 name@version')
+    p.add_argument('version', nargs='?')
+    p.set_defaults(func=cmd_latest)
+
+    p = sub.add_parser('modules', help='列出包内可 import 的模块 (分块导入)')
+    p.add_argument('name')
+    p.add_argument('--version')
+    p.add_argument('--project', action='store_true')
+    p.add_argument('--json', action='store_true')
+    p.set_defaults(func=cmd_modules)
+
+    p = sub.add_parser('admin', help='打开 pic registry 后台管理页')
+    p.add_argument('--no-browser', action='store_true')
+    p.add_argument('--print-token', action='store_true',
+                   help='只打印 AccessToken (用于后台登录框)')
+    p.add_argument('--print-url', action='store_true',
+                   help='同时打印带令牌的 URL (注意终端历史记录)')
+    p.set_defaults(func=cmd_admin)
 
     p = sub.add_parser('registry', help='本地回退注册表 / 中央列表')
     p.add_argument('action', choices=['add', 'remove', 'list'])
@@ -1383,7 +1851,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         # 登录。PIC_OFFLINE=1 或 config.toml 的 offline=true 可绕过 (离线开发)。
         config = load_config()
         if not config.offline and args.command not in (
-                'login', 'logout', 'doctor') and AuthStore().load() is None:
+                'login', 'logout', 'doctor', 'search', 'versions', 'info',
+                'modules', 'registry') and AuthStore().load() is None:
             get_client(interactive=True)
         return int(args.func(args) or 0)
     except (PicError, ManifestError, archive.ArchiveError,
