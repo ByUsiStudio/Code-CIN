@@ -4,6 +4,7 @@
 回环 (Python 侧起临时 echo/HTTP 服务), 不访问外网。
 """
 
+import contextlib
 import http.server
 import os
 import socket
@@ -308,10 +309,8 @@ def test_udp_send_str_hostname():
     got = {'data': b''}
 
     def exchange():
-        try:
+        with contextlib.suppress(OSError):
             got['data'], _ = peer.recvfrom(1024)
-        except OSError:
-            pass
 
     t = threading.Thread(target=exchange, daemon=True)
     t.start()

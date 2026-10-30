@@ -89,30 +89,23 @@ jobs:
           CODECIN_AOT_TESTS: "1"
 
   registry:
-    name: pic registry (Go)
+    name: pic registry (Python)
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6
-      - uses: actions/setup-go@v7
+      - uses: actions/setup-python@v7
         with:
-          go-version-file: registry/go.mod
-          cache: true
-          cache-dependency-path: registry/go.mod
-      - name: go test
-        run: go test ./... -race -count=1
-        working-directory: registry
-      - name: go vet
-        run: go vet ./...
-        working-directory: registry
-      - name: gofmt
+          python-version: "3.11"
+      - name: Install dependencies
         run: |
-          out="$(gofmt -l .)"
-          if [ -n "$out" ]; then
-            echo "以下文件未格式化:" >&2
-            echo "$out" >&2
-            exit 1
-          fi
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-dev.txt
+      - name: pytest
+        run: python -m pytest -q
+        working-directory: registry
+      - name: ruff
+        run: python -m ruff check .
         working-directory: registry
 
   dist:
@@ -183,7 +176,7 @@ jobs:
         with:
           python-version: "3.11"
       - run: python -m pip install ruff
-      - run: ruff check codecin cpu.py script tests
+      - run: ruff check codecin cpu.py script tests registry
 
   native:
     name: Go native (build check)

@@ -75,7 +75,7 @@ def library_report() -> List[Dict[str, str]]:
             continue
 
         used = [b for b in sorted(HOST_BUILTINS)
-                if re.search(r'\b%s\s*\(' % re.escape(b), text)]
+                if re.search(rf'\b{re.escape(b)}\s*\(', text)]
         if name in COMPAT_LIBS:
             category = CAT_COMPAT
             note = ('go_os_args_* 依赖原生'

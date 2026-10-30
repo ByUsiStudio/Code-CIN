@@ -9,6 +9,7 @@ v5.9.0 起纯 Python 解释器与 JIT 已删除, 全部程序由 Go 原生引擎
 动态库缺失时抛 CPUSimulatorError, 提示重建原生库 (不再有解释器回退)。
 """
 
+import contextlib
 import os
 import sys
 from typing import Any, Dict, List, Optional, Tuple
@@ -195,10 +196,8 @@ class CPU:
         # 真实终端 + 非捕获模式: 请求原生引擎边执行边输出 (输出缓存仍会回传)。
         stream = (not self._capture_output) and _stdout_is_tty()
         if stream:
-            try:
+            with contextlib.suppress(OSError, ValueError):
                 sys.stdout.flush()  # 先落盘 Python 侧日志, 保证输出顺序
-            except (OSError, ValueError):
-                pass
         t0 = _time.perf_counter()
         result = engine.run_v2(
             bytecode=bytecode,
