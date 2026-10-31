@@ -271,6 +271,21 @@ class App:
     def handle_admin_page(self, request: Request) -> HtmlResponse:
         return HtmlResponse(200, _load_admin_html())
 
+    def handle_admin_asset(self, request: Request, asset: str) -> HtmlResponse:
+        if not _ADMIN_ASSET_RE.match(asset):
+            raise ApiError(404, "not_found", "asset not found")
+        target = os.path.join(_ADMIN_DIR, *asset.split("/"))
+        try:
+            with open(target, encoding="utf-8") as fh:
+                body = fh.read()
+        except (OSError, UnicodeDecodeError) as exc:
+            raise ApiError(404, "not_found", "asset not found") from exc
+        ext = os.path.splitext(asset)[1].lower()
+        content_type = _ADMIN_CONTENT_TYPES.get(
+            ext, "text/plain; charset=utf-8"
+        )
+        return HtmlResponse(200, body, content_type)
+
     def handle_me(self, request: Request) -> JsonResponse:
         user = self._require_user(request)
         return JsonResponse(
@@ -704,7 +719,14 @@ def _resolve(
 ) -> tuple[str | None, dict[str, str], tuple[str, ...]]:
     lookup = "GET" if method == "HEAD" else method
     parts = _segments(path)
-    if parts in ([], ["admin"]):
+    if not parts:
+        return _pick(lookup, "handle_admin_page", ("GET",))
+    if parts[0] == "admin":
+        if len(parts) >= 2:
+            return _pick(
+                lookup, "handle_admin_asset", ("GET",),
+                asset="/".join(parts[1:]),
+            )
         return _pick(lookup, "handle_admin_page", ("GET",))
     if len(parts) >= 3 and parts[0] == "api" and parts[1] == "v1":
         tail = parts[2:]
@@ -1030,8 +1052,8 @@ class RegistryHandler(BaseHTTPRequestHandler):
         self.send_header("Referrer-Policy", "no-referrer")
         self.send_header(
             "Content-Security-Policy",
-            "default-src 'self'; style-src 'unsafe-inline'; "
-            "script-src 'unsafe-inline'; img-src 'self' data:; "
+            "default-src 'self'; style-src 'self' 'unsafe-inline'; "
+            "script-src 'self'; img-src 'self' data:; "
             "connect-src 'self'; frame-ancestors 'none'",
         )
         self.send_header("Content-Length", str(len(raw)))
@@ -1130,9 +1152,21 @@ class RegistryServer(ThreadingHTTPServer):
         super().__init__(address, RegistryHandler)
 
 
-_ADMIN_HTML_PATH = os.path.join(
-    os.path.dirname(os.path.abspath(__file__)), "admin.html"
+_ADMIN_DIR = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "admin-ui"
 )
+
+_ADMIN_ASSET_RE = re.compile(
+    r"^(?:css/(?:[A-Za-z0-9_-]+/)*[A-Za-z0-9_.-]+\.css"
+    r"|js/(?:[A-Za-z0-9_-]+/)*[A-Za-z0-9_.-]+\.js"
+    r"|config\.json)$"
+)
+
+_ADMIN_CONTENT_TYPES = {
+    ".css": "text/css; charset=utf-8",
+    ".js": "text/javascript; charset=utf-8",
+    ".json": "application/json; charset=utf-8",
+}
 
 _ADMIN_HTML_FALLBACK = """<!DOCTYPE html>
 <html lang="zh-CN">
@@ -1143,19 +1177,20 @@ _ADMIN_HTML_FALLBACK = """<!DOCTYPE html>
 </head>
 <body style="font-family:system-ui,sans-serif;padding:2rem;background:#0b1016;color:#e8eef6">
 <h1>后台页文件缺失</h1>
-<p>请把 <code>admin.html</code> 放到服务端同一目录，然后重启服务。</p>
+<p>请把 <code>admin-ui/</code> 目录放到服务端同一目录，然后重启服务。</p>
 </body>
 </html>
 """
 
 
 def _load_admin_html() -> str:
-    """读取同目录下的 admin.html；缺失时返回提示页。"""
+    """读取 admin-ui/index.html，并注入 /admin/ 作为相对资源基准。"""
     try:
-        with open(_ADMIN_HTML_PATH, encoding="utf-8") as fh:
-            return fh.read()
+        with open(os.path.join(_ADMIN_DIR, "index.html"), encoding="utf-8") as fh:
+            html = fh.read()
     except OSError:
         return _ADMIN_HTML_FALLBACK
+    return html.replace("<head>", '<head>\n<base href="/admin/">', 1)
 
 
 def _env(key: str, fallback: str) -> str:

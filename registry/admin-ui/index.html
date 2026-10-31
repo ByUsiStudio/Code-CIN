@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#0b1016">
+<meta name="robots" content="noindex,nofollow">
+<title>pic registry 后台管理</title>
+<link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <span class="dot"></span>
+    <span>pic registry<small>后台管理</small></span>
+  </div>
+  <div class="top-actions">
+    <span id="who" class="chip">未登录 · 只读</span>
+    <button type="button" class="ghost" id="refresh">刷新</button>
+  </div>
+</header>
+
+<main class="shell">
+  <details class="card auth" id="auth">
+    <summary>
+      <span class="title">访问令牌</span>
+      <span class="row">
+        <span id="token-state" class="chip">未保存</span>
+        <span class="chev">▾</span>
+      </span>
+    </summary>
+    <form class="auth-body" id="auth-form">
+      <div class="auth-row">
+        <input id="token" type="password" autocomplete="off" spellcheck="false" placeholder="Cdifit AccessToken（pic admin 可自动填入）">
+        <button type="submit" class="primary">保存</button>
+        <button type="button" class="ghost" id="clear-token">清除</button>
+      </div>
+      <p class="hint">令牌只保存在本机浏览器；搜索与读取公开，撤回、删除、设置 latest 需要发布者或管理员。</p>
+    </form>
+  </details>
+
+  <section class="stats" id="stats" aria-live="polite">
+    <div class="stat"><div class="k">状态</div><div class="v">加载中…</div></div>
+  </section>
+
+  <div class="board">
+    <section class="card list-panel" aria-label="包列表">
+      <div class="list-head">
+        <div class="search-row">
+          <input id="q" type="search" autocomplete="off" placeholder="搜索包名 / 仓库 / 描述 / 关键词">
+          <button type="button" class="primary" id="search">搜索</button>
+        </div>
+        <div class="filter-row">
+          <select id="sort" aria-label="排序">
+            <option value="">相关度</option>
+            <option value="name">名称</option>
+            <option value="latest">最新版本</option>
+            <option value="updated">更新时间</option>
+            <option value="downloads">下载量</option>
+            <option value="versions">版本数</option>
+          </select>
+          <select id="order" aria-label="顺序">
+            <option value="desc">降序</option>
+            <option value="asc">升序</option>
+          </select>
+          <span class="count" id="package-count"></span>
+        </div>
+      </div>
+      <div class="pkg-list" id="packages">
+        <div class="state"><span class="big">加载中…</span></div>
+      </div>
+    </section>
+
+    <aside class="card detail-panel" id="detail" aria-label="包详情">
+      <div class="state">
+        <span class="big">选择一个包</span>
+        <span>点击列表中的包名，查看版本、发布者与制品信息</span>
+      </div>
+    </aside>
+  </div>
+
+  <footer>
+    package.codecin.org.cn
+    <span class="sep">·</span>/api/v1
+    <span class="sep">·</span><a href="/api/v1/health">health</a>
+  </footer>
+</main>
+
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+<script type="module" src="js/app.js"></script>
+</body>
+</html>

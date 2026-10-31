@@ -1,0 +1,5 @@
+{
+  "apiBase": "/api/v1",
+  "apiServer": "https://package.codecin.org.cn",
+  "devPort": 5173
+}

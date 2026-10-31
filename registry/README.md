@@ -93,8 +93,8 @@ Base: `/api/v1`
 ## 后台管理
 
 打开 `https://package.codecin.org.cn/admin`，或在客户端运行 `pic admin`
-（自动打开并填入令牌）。后台页面是同目录下的独立单文件 `admin.html`，
-服务端每次请求时按需读取，可单独修改而无需重启。后台支持：
+（自动打开并填入令牌）。后台界面是 `admin-ui/` 下的标准 Node.js 前端项目，
+HTML / CSS / JS 分离，`config.json` 在运行时动态加载。后台支持：
 
 - 统计概览（包/版本/制品/已撤回/下载/存储）；
 - 搜索结果按名称/最新版本/更新时间/下载量/版本数排序；
@@ -180,7 +180,7 @@ server {
 sudo useradd --system --home /var/lib/pic-registry --shell /usr/sbin/nologin pic
 sudo install -d -o pic -g pic /var/lib/pic-registry
 sudo install -d /opt/pic-registry
-sudo cp server.py store.py auth.py version.py admin.html requirements.txt /opt/pic-registry/
+sudo cp -r server.py store.py auth.py version.py requirements.txt admin-ui /opt/pic-registry/
 sudo python3 -m venv /opt/pic-registry/venv
 sudo /opt/pic-registry/venv/bin/pip install -r /opt/pic-registry/requirements.txt
 sudo install -m 0644 deploy/pic-registry.service /etc/systemd/system/

@@ -1,0 +1,14 @@
+{
+  "name": "pic-admin-ui",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "pic registry 后台管理界面（零依赖静态前端 + 本地开发服务器）",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
