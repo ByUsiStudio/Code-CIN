@@ -28,7 +28,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 LIB_DIR = ROOT / "codecin" / "lib"
 DIST_DIR = ROOT / "dist" / "stdlib-packages"
-REPO_URL = "https://www.codecin.org.cn"
+REPO_URL = "https://gitee.com/codecin/internal-libraries"
 
 sys.path.insert(0, str(ROOT))
 from codecin.packaging.toml import dumps as toml_dumps  # noqa: E402

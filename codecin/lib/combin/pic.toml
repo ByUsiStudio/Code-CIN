@@ -6,5 +6,5 @@ description = "Code CIN 官方标准库: 数论与组合数学"
 license = "MIT"
 authors = ["ByUsi Studio"]
 entry = "src/combin.cin"
-repo = "https://www.codecin.org.cn"
+repo = "https://gitee.com/codecin/internal-libraries"
 keywords = ["codecin", "stdlib", "combin"]

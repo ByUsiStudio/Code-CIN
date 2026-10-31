@@ -6,5 +6,5 @@ description = "Code CIN 官方标准库: 文本处理"
 license = "MIT"
 authors = ["ByUsi Studio"]
 entry = "src/text.cin"
-repo = "https://www.codecin.org.cn"
+repo = "https://gitee.com/codecin/internal-libraries"
 keywords = ["codecin", "stdlib", "text"]

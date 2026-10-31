@@ -40,7 +40,7 @@ pic install ./codecin/lib/math --project
 
 ## 发布
 
-41 个包的 `pic.toml` 统一声明 `repo = "https://gitee.com/codecin/internal-libraries.git"`，并已发布到
+41 个包的 `pic.toml` 统一声明 `repo = "https://gitee.com/codecin/internal-libraries"`，并已发布到
 `package.codecin.org.cn`（版本 6.4.2）。重新发布单个包：
 
 ```bash

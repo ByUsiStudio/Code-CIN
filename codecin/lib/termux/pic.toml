@@ -6,5 +6,5 @@ description = "Code CIN 官方标准库: Termux API 便捷封装"
 license = "MIT"
 authors = ["ByUsi Studio"]
 entry = "src/termux.cin"
-repo = "https://www.codecin.org.cn"
+repo = "https://gitee.com/codecin/internal-libraries"
 keywords = ["codecin", "stdlib", "termux"]
