@@ -6,5 +6,5 @@ description = "Code CIN 官方标准库: 极简 JSON 取值"
 license = "MIT"
 authors = ["ByUsi Studio"]
 entry = "src/json.cin"
-repo = "https://gitee.com/codecin/internal-librariesinternal-librariesinternal-libraries"
+repo = "https://www.codecin.org.cn"
 keywords = ["codecin", "stdlib", "json"]

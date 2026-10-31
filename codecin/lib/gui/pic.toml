@@ -6,5 +6,5 @@ description = "Code CIN 官方标准库: GUI 窗口 + 画布绘图助手"
 license = "MIT"
 authors = ["ByUsi Studio"]
 entry = "src/gui.cin"
-repo = "https://gitee.com/codecin/internal-librariesinternal-librariesinternal-librariesinternal-libraries"
+repo = "https://www.codecin.org.cn"
 keywords = ["codecin", "stdlib", "gui"]

@@ -6,5 +6,5 @@ description = "Code CIN 官方标准库: 排序与查找"
 license = "MIT"
 authors = ["ByUsi Studio"]
 entry = "src/sort.cin"
-repo = "https://gitee.com/codecin/internal-libraries"
+repo = "https://www.codecin.org.cn"
 keywords = ["codecin", "stdlib", "sort"]
