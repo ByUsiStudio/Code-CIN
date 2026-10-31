@@ -135,6 +135,8 @@ def check() -> int:
     sources = package_sources()
     if LIB_DIR.is_dir():
         for package in sorted(LIB_DIR.iterdir()):
+            if package.name.startswith("."):
+                continue
             if package.is_dir() and package.name not in sources:
                 problems.append(
                     f"codecin/lib/{package.name} 缺少 "
