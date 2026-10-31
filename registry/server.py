@@ -1183,6 +1183,10 @@ _ADMIN_HTML_FALLBACK = """<!DOCTYPE html>
 """
 
 
+def _admin_ui_available() -> bool:
+    return os.path.isfile(os.path.join(_ADMIN_DIR, "index.html"))
+
+
 def _load_admin_html() -> str:
     """读取 admin-ui/index.html，并注入 /admin/ 作为相对资源基准。"""
     try:
@@ -1231,6 +1235,7 @@ def _configure_logging(console: Console) -> logging.Logger:
 def _print_banner(
     console: Console,
     addr: str,
+    admin_url: str,
     data_dir: str,
     public_url: str,
     cdifit_base: str,
@@ -1238,6 +1243,7 @@ def _print_banner(
     table = Table(show_header=False, box=None, padding=(0, 1))
     table.add_row("version", __version__)
     table.add_row("addr", addr)
+    table.add_row("admin", admin_url)
     table.add_row("data", os.path.abspath(data_dir))
     table.add_row("public", public_url)
     table.add_row("cdifit", cdifit_base)
@@ -1288,7 +1294,15 @@ def main() -> int:
         logger.error(f"serve: {exc}")
         return 1
 
-    _print_banner(console, addr, data_dir, public_url, cdifit_base)
+    bound_host = server.server_address[0]
+    admin_host = "127.0.0.1" if bound_host in ("", "0.0.0.0", "::") else bound_host
+    admin_url = f"http://{admin_host}:{server.server_address[1]}/admin"
+    if _admin_ui_available():
+        logger.info(f"admin: 前端随服务启动，{admin_url}（与 API 共用同一端口）")
+    else:
+        logger.warning("admin: 未找到 admin-ui/index.html，/admin 将显示提示页")
+
+    _print_banner(console, addr, admin_url, data_dir, public_url, cdifit_base)
     signal.signal(signal.SIGTERM, _raise_interrupt)
     signal.signal(signal.SIGINT, _raise_interrupt)
     try:

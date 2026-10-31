@@ -344,9 +344,12 @@ def test_latest_pointer_yank_and_stats(registry) -> None:
 
 def test_admin_page_and_delete_version(registry) -> None:
     _, httpd = registry
-    status, _, body = call(httpd, "GET", "/admin", token=None)
-    assert status == 200
-    assert b"pic registry" in body
+    # 前端随服务启动，在根路径和 /admin 下都由同一端口提供。
+    for path in ("/", "/admin"):
+        status, _, body = call(httpd, "GET", path, token=None)
+        assert status == 200
+        assert b"pic registry" in body
+        assert b'<base href="/admin/">' in body
 
     meta = {
         "repo": "https://github.com/u/hello",

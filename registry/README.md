@@ -36,6 +36,10 @@ CDIFIT_API_BASE=https://www.cdifit.cn \
 .venv/bin/python server.py
 ```
 
+启动后前端随服务一起提供，无需单独启动前端进程：后台界面在
+`http://127.0.0.1:18080/`（或 `/admin`），API 在
+`http://127.0.0.1:18080/api/v1`，二者共用同一端口。
+
 | 环境变量 | 默认 | 说明 |
 |----------|------|------|
 | `PIC_SERVER_ADDR` | `:18080` | 监听地址 |
@@ -92,9 +96,11 @@ Base: `/api/v1`
 
 ## 后台管理
 
-打开 `https://package.codecin.org.cn/admin`，或在客户端运行 `pic admin`
+打开 `https://package.codecin.org.cn/` 或 `/admin`，或在客户端运行 `pic admin`
 （自动打开并填入令牌）。后台界面是 `admin-ui/` 下的标准 Node.js 前端项目，
-HTML / CSS / JS 分离，`config.json` 在运行时动态加载。后台支持：
+HTML / CSS / JS 分离，`config.json` 在运行时动态加载；`server.py` 启动时即把
+前端和 API 一起提供在同一端口（默认 18080），不需要额外运行前端服务。
+后台支持：
 
 - 统计概览（包/版本/制品/已撤回/下载/存储）；
 - 搜索结果按名称/最新版本/更新时间/下载量/版本数排序；

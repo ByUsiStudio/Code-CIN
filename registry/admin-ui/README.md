@@ -52,6 +52,8 @@ npm start          # 或 node server.js
 
 ## 生产部署
 
-由 `registry/server.py` 提供：`/admin` 返回 `index.html`（注入
+由 `registry/server.py` 提供：服务启动后前端自动可用，与 API 共用同一端口
+（默认 18080）——`/` 和 `/admin` 返回 `index.html`（注入
 `<base href="/admin/">`），`/admin/css/*`、`/admin/js/*`、`/admin/config.json`
-由服务端直接读取本目录下的文件；只需把整个 `admin-ui/` 目录随服务端一起部署。
+由服务端直接读取本目录下的文件。只需把整个 `admin-ui/` 目录随服务端一起部署，
+不需要额外启动 Node 进程。
