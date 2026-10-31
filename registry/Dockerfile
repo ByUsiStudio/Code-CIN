@@ -8,7 +8,7 @@ WORKDIR /app
 COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
-COPY server.py store.py auth.py version.py ./
+COPY server.py store.py auth.py version.py admin.html ./
 RUN groupadd --gid 10001 pic \
     && useradd --uid 10001 --gid 10001 --no-create-home \
        --shell /usr/sbin/nologin pic \

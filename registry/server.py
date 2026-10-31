@@ -269,7 +269,7 @@ class App:
         return JsonResponse(200, {"ok": True, "data": data})
 
     def handle_admin_page(self, request: Request) -> HtmlResponse:
-        return HtmlResponse(200, _ADMIN_HTML)
+        return HtmlResponse(200, _load_admin_html())
 
     def handle_me(self, request: Request) -> JsonResponse:
         user = self._require_user(request)
@@ -1130,230 +1130,32 @@ class RegistryServer(ThreadingHTTPServer):
         super().__init__(address, RegistryHandler)
 
 
-def _env(key: str, fallback: str) -> str:
-    value = os.environ.get(key, "").strip()
-    return value or fallback
+_ADMIN_HTML_PATH = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "admin.html"
+)
 
-
-_ADMIN_HTML = """<!DOCTYPE html>
+_ADMIN_HTML_FALLBACK = """<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="color-scheme" content="dark light">
 <title>pic registry 后台管理</title>
-<style>
-:root{--bg:#0f1419;--panel:#171e26;--panel2:#1e2732;--line:#2b3644;--text:#e6edf3;--muted:#8b98a8;--cyan:#38bdf8;--green:#34d399;--yellow:#fbbf24;--red:#f87171;--radius:12px}
-*{box-sizing:border-box}body{margin:0;background:radial-gradient(1200px 600px at 20% -10%,#1b2a3a 0,var(--bg) 55%);color:var(--text);font:14px/1.55 ui-sans-serif,system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif;min-height:100vh}
-a{color:var(--cyan);text-decoration:none}a:hover{text-decoration:underline}
-header{display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between;padding:18px 22px;border-bottom:1px solid var(--line);background:rgba(15,20,25,.72);backdrop-filter:blur(8px);position:sticky;top:0;z-index:5}
-.brand{display:flex;align-items:center;gap:10px;font-weight:700;font-size:17px;letter-spacing:.2px}
-.brand .dot{width:10px;height:10px;border-radius:50%;background:var(--cyan);box-shadow:0 0 12px var(--cyan)}
-.brand small{font-weight:400;color:var(--muted);font-size:12px}
-main{max-width:1180px;margin:0 auto;padding:20px 18px 64px}
-.card{background:linear-gradient(180deg,var(--panel),var(--panel2));border:1px solid var(--line);border-radius:var(--radius);padding:16px}
-.grid{display:grid;gap:12px}.stats{grid-template-columns:repeat(auto-fit,minmax(150px,1fr));margin-bottom:16px}
-.stat .k{color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.6px}.stat .v{font-size:26px;font-weight:700;margin-top:4px}.stat .v small{font-size:12px;color:var(--muted);font-weight:400}
-.toolbar{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:14px}
-input,select,button{font:inherit;color:var(--text);background:#0d1218;border:1px solid var(--line);border-radius:9px;padding:8px 10px;outline:none}
-input:focus,select:focus{border-color:var(--cyan);box-shadow:0 0 0 3px rgba(56,189,248,.14)}
-button{cursor:pointer;background:#223042;border-color:#33465b}button:hover{filter:brightness(1.12)}button:disabled{opacity:.45;cursor:not-allowed}
-button.primary{background:linear-gradient(135deg,#0ea5e9,#22d3ee);border-color:transparent;color:#04121b;font-weight:700}
-button.danger{background:#3a1e24;border-color:#6b2a35;color:#fecaca}button.ghost{background:transparent}
-.grow{flex:1;min-width:180px}.muted{color:var(--muted)}.small{font-size:12px}
-table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:9px 8px;border-bottom:1px solid var(--line);vertical-align:top}
-th{color:var(--muted);font-size:12px;font-weight:600;text-transform:uppercase;letter-spacing:.5px}
-tbody tr:hover{background:rgba(56,189,248,.06)}tr.clickable{cursor:pointer}
-.pill{display:inline-block;padding:1px 8px;border-radius:999px;font-size:11px;border:1px solid var(--line);background:#0d1218;color:var(--muted)}
-.pill.ok{color:var(--green);border-color:#1f5f46;background:#10231c}.pill.warn{color:var(--yellow);border-color:#5c4a13;background:#241f0d}.pill.bad{color:var(--red);border-color:#632a2a;background:#251515}
-.stack{display:grid;gap:14px}.row{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
-.kv{display:grid;grid-template-columns:120px 1fr;gap:6px 12px}.kv dt{color:var(--muted)}.kv dd{margin:0;word-break:break-all}
-.hidden{display:none!important}.toast{position:fixed;right:18px;bottom:18px;max-width:min(420px,calc(100vw - 36px));padding:11px 14px;border-radius:10px;background:#16212c;border:1px solid var(--line);box-shadow:0 12px 36px rgba(0,0,0,.45);opacity:0;transform:translateY(8px);transition:.18s;z-index:20}
-.toast.show{opacity:1;transform:none}.toast.err{border-color:#7f1d1d;background:#2a1414}.toast.ok{border-color:#14532d;background:#0f2318}
-.login{display:flex;flex-wrap:wrap;gap:8px;align-items:center}.login input{min-width:240px;flex:1}
-.split{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,.85fr);gap:16px}@media(max-width:900px){.split{grid-template-columns:1fr}}
-.badge{font-size:11px;padding:2px 8px;border-radius:999px;background:#0d1218;border:1px solid var(--line);color:var(--muted)}
-.hl{color:var(--cyan)}.nowrap{white-space:nowrap}
-footer{color:var(--muted);text-align:center;font-size:12px;padding:24px 0 8px}
-</style>
 </head>
-<body>
-<header>
-  <div class="brand"><span class="dot"></span><span>pic registry <small>后台管理</small></span></div>
-  <div class="row">
-    <span id="who" class="badge">未登录</span>
-    <button class="ghost" id="refresh">刷新</button>
-  </div>
-</header>
-<main>
-  <section class="card" style="margin-bottom:16px">
-    <div class="login">
-      <input id="token" type="password" autocomplete="off" placeholder="Cdifit AccessToken（pic admin 可自动填入）">
-      <button class="primary" id="save-token">保存令牌</button>
-      <button class="ghost" id="clear-token">清除</button>
-      <span class="muted small">令牌只保存在本机浏览器；读取/搜索公开，撤回、删除与设置 latest 需要发布者或管理员。</span>
-    </div>
-  </section>
-
-  <section class="grid stats" id="stats"></section>
-
-  <div class="split">
-    <section class="card">
-      <div class="toolbar">
-        <input id="q" class="grow" placeholder="搜索包名 / 仓库 / 描述 / 关键词">
-        <select id="sort">
-          <option value="">相关度</option>
-          <option value="name">名称</option>
-          <option value="latest">最新版本</option>
-          <option value="updated">更新时间</option>
-          <option value="downloads">下载量</option>
-          <option value="versions">版本数</option>
-        </select>
-        <select id="order"><option value="desc">降序</option><option value="asc">升序</option></select>
-        <button class="primary" id="search">搜索</button>
-      </div>
-      <div id="package-count" class="muted small" style="margin-bottom:8px"></div>
-      <table>
-        <thead><tr><th>包</th><th>最新</th><th>版本</th><th>下载</th><th>更新时间</th></tr></thead>
-        <tbody id="packages"><tr><td colspan="5" class="muted">加载中…</td></tr></tbody>
-      </table>
-    </section>
-
-    <section class="card" id="detail">
-      <h3 style="margin:2px 0 10px">选择左侧的包</h3>
-      <p class="muted small">点击包名查看版本、发布者、摘要与制品信息，并进行版本管理。</p>
-    </section>
-  </div>
-  <footer>package.codecin.org.cn · /api/v1 · <a href="/api/v1/health">health</a></footer>
-</main>
-<div id="toast" class="toast"></div>
-<script>
-const TOKEN_KEY = 'pic_admin_token';
-let token = localStorage.getItem(TOKEN_KEY) || '';
-let packages = [];
-let current = null;
-
-const $ = (id) => document.getElementById(id);
-function esc(v){return String(v == null ? '' : v).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
-function safeUrl(u){try{const x=new URL(String(u||''),location.href);return (x.protocol==='http:'||x.protocol==='https:')?x.href:'';}catch(e){return '';}}
-function bytes(n){n=Number(n||0);const u=['B','KiB','MiB','GiB'];let i=0;let v=n;while(v>=1024&&i<u.length-1){v/=1024;i++;}return (i? v.toFixed(1):String(v))+' '+u[i];}
-function date(v){if(!v||String(v).startsWith('0001'))return '-';const d=new Date(v);return isNaN(d)?String(v):d.toLocaleString('zh-CN',{hour12:false});}
-function toast(msg, ok=true){const el=$('toast');el.textContent=msg;el.className='toast show '+(ok?'ok':'err');clearTimeout(toast._t);toast._t=setTimeout(()=>el.className='toast',3200);}
-
-function loadToken(){token=localStorage.getItem(TOKEN_KEY)||'';$('token').value=token;updateWho();}
-async function api(path, options={}){
-  const headers=Object.assign({'Accept':'application/json'},options.headers||{});
-  if(token)headers['Authorization']='Bearer '+token;
-  if(options.body && !headers['Content-Type'])headers['Content-Type']='application/json';
-  const resp=await fetch('/api/v1'+path,Object.assign({},options,{headers,cache:'no-store'}));
-  let data={};try{data=await resp.json();}catch(e){}
-  if(!resp.ok || data.ok===false){const err=(data.error&&data.error.message)||('HTTP '+resp.status);throw new Error(err);}
-  return data.data;
-}
-async function updateWho(){
-  if(!token){$('who').textContent='未登录（只读）';$('who').className='badge';return;}
-  try{const me=await api('/me');$('who').textContent=(me.nickname||me.name||me.email||me.sub)+(me.admin?' · 管理员':'');$('who').className='badge';}
-  catch(e){$('who').textContent='令牌无效或已过期';$('who').className='badge';}
-}
-async function loadStats(){
-  try{const s=await api('/stats');
-    $('stats').innerHTML=[
-      ['包',s.packages],['版本',s.versions],['制品',s.artifacts],
-      ['已撤回',s.yanked],['下载',s.downloads],['存储',bytes(s.storage_bytes)]
-    ].map(([k,v])=>'<div class="card stat"><div class="k">'+esc(k)+'</div><div class="v">'+esc(v)+'</div></div>').join('');
-  }catch(e){$('stats').innerHTML='<div class="card muted">统计加载失败：'+esc(e.message)+'</div>';}
-}
-async function loadPackages(){
-  const q=$('q').value.trim(), sort=$('sort').value, order=$('order').value;
-  const params=new URLSearchParams();if(q)params.set('q',q);if(sort)params.set('sort',sort);if(sort)params.set('order',order);params.set('limit','100');
-  $('packages').innerHTML='<tr><td colspan="5" class="muted">搜索中…</td></tr>';
-  try{const data=await api('/packages?'+params.toString());packages=data.packages||[];
-    $('package-count').textContent='共 '+data.total+' 个包'+(data.total>packages.length?'（显示前 '+packages.length+' 个）':'');
-    if(!packages.length){$('packages').innerHTML='<tr><td colspan="5" class="muted">没有匹配的包</td></tr>';return;}
-    $('packages').innerHTML=packages.map(p=>{
-      const active=p.latest?'<span class="pill ok">'+esc(p.latest)+'</span>':'<span class="pill warn">无可用版本</span>';
-      return '<tr class="clickable" data-name="'+esc(p.name)+'"><td><b>'+esc(p.name)+'</b>'+(p.description?'<div class="muted small">'+esc(p.description)+'</div>':'')+'</td><td>'+active+'</td><td>'+esc(p.versions)+'</td><td>'+esc(p.downloads||0)+'</td><td class="nowrap">'+esc(date(p.updated_at))+'</td></tr>';
-    }).join('');
-    document.querySelectorAll('#packages tr.clickable').forEach(tr=>tr.addEventListener('click',()=>loadDetail(tr.dataset.name)));
-  }catch(e){$('packages').innerHTML='<tr><td colspan="5" class="muted">加载失败：'+esc(e.message)+'</td></tr>';}
-}
-async function loadDetail(name){
-  $('detail').innerHTML='<h3 style="margin:2px 0 10px">'+esc(name)+'</h3><p class="muted small">加载中…</p>';
-  try{const pkg=await api('/packages/'+encodeURIComponent(name));current=pkg;renderDetail(pkg);}
-  catch(e){$('detail').innerHTML='<h3 style="margin:2px 0 10px">'+esc(name)+'</h3><p class="muted">加载失败：'+esc(e.message)+'</p>';}
-}
-function renderDetail(p){
-  const versions=Object.keys(p.versions||{}).sort().reverse();
-  const repoUrl=safeUrl(p.repo);
-  const rows=versions.map(v=>{
-    const e=p.versions[v];const yanked=!!e.yanked;const isLatest=p.latest===v;
-    return '<tr><td><b>'+esc(v)+'</b> '+(isLatest?'<span class="pill ok">latest</span> ':'')+(yanked?'<span class="pill bad">已撤回</span>':'')+'</td>'
-      +'<td class="small">'+esc(e.tag||'-')+'<div class="muted">'+esc((e.rev||'').slice(0,12)||'-')+'</div></td>'
-      +'<td class="small">'+esc(bytes(e.archive_size))+'<div class="muted">'+esc((e.archive_sha256||'').slice(0,12)||'无制品')+'</div></td>'
-      +'<td class="small">'+esc(e.downloads||0)+'</td>'
-      +'<td class="small">'+esc(date(e.published_at))+'<div class="muted">'+esc((e.publisher&&(e.publisher.email||e.publisher.nickname))||'-')+'</div></td>'
-      +'<td class="nowrap"><button data-act="yank" data-v="'+esc(v)+'" data-y="'+(yanked?'0':'1')+'">'+(yanked?'恢复':'撤回')+'</button> '
-      +'<button data-act="latest" data-v="'+esc(v)+'" '+(isLatest?'disabled':'')+'>设为 latest</button> '
-      +'<button class="danger" data-act="delver" data-v="'+esc(v)+'">删除</button></td></tr>';
-  }).join('');
-  $('detail').innerHTML='<div class="row" style="justify-content:space-between;align-items:flex-start"><h3 style="margin:2px 0 10px">'+esc(p.name)+'</h3><button class="danger" id="delpkg">删除整个包</button></div>'
-    +'<dl class="kv"><dt>最新</dt><dd>'+(p.latest?'<span class="pill ok">'+esc(p.latest)+'</span>':'<span class="pill warn">无</span>')+'</dd>'
-    +'<dt>Git 仓库</dt><dd>'+(repoUrl?'<a href="'+esc(repoUrl)+'" target="_blank" rel="noreferrer">'+esc(p.repo)+'</a>':'-')+'</dd>'
-    +'<dt>描述</dt><dd>'+esc(p.description||'-')+'</dd>'
-    +'<dt>关键词</dt><dd>'+esc((p.keywords||[]).join(', ')||'-')+'</dd>'
-    +'<dt>许可证</dt><dd>'+esc(p.license||'-')+'</dd>'
-    +'<dt>主页</dt><dd>'+(safeUrl(p.homepage)?'<a href="'+esc(safeUrl(p.homepage))+'" target="_blank" rel="noreferrer">'+esc(p.homepage)+'</a>':esc(p.homepage||'-'))+'</dd>'
-    +'<dt>入口</dt><dd>'+esc(p.entry||'-')+'</dd>'
-    +'<dt>模块</dt><dd>'+esc((p.modules||[]).join(', ')||'-')+'</dd>'
-    +'<dt>下载 / 版本</dt><dd>'+esc(p.downloads||0)+' / '+esc(versions.length)+'</dd>'
-    +'<dt>更新时间</dt><dd>'+esc(date(p.updated_at))+'</dd></dl>'
-    +'<h4 style="margin:18px 0 8px">版本</h4>'
-    +'<table><thead><tr><th>版本</th><th>标签 / 提交</th><th>制品</th><th>下载</th><th>发布</th><th>操作</th></tr></thead><tbody>'+rows+'</tbody></table>';
-  document.querySelectorAll('#detail button[data-act]').forEach(btn=>btn.addEventListener('click',()=>versionAction(btn.dataset.act,btn.dataset.v,btn.dataset.y==='1')));
-  $('delpkg').addEventListener('click',deletePackage);
-}
-async function versionAction(act,version,yanked){
-  if(!token){toast('先保存 Cdifit AccessToken',false);return;}
-  const name=current.name;
-  try{
-    if(act==='yank'){
-      if(!confirm((yanked?'撤回':'恢复')+' '+name+'@'+version+' ?'))return;
-      await api('/packages/'+encodeURIComponent(name)+'/'+encodeURIComponent(version)+'/yank',{method:'POST',body:JSON.stringify({yanked:yanked})});
-      toast((yanked?'已撤回 ':'已恢复 ')+version);
-    }else if(act==='latest'){
-      await api('/packages/'+encodeURIComponent(name)+'/'+encodeURIComponent(version)+'/latest',{method:'POST',body:JSON.stringify({latest:true})});
-      toast('latest 已指向 '+version);
-    }else if(act==='delver'){
-      if(!confirm('删除 '+name+'@'+version+' 及其制品？此操作不可恢复。'))return;
-      await api('/packages/'+encodeURIComponent(name)+'/'+encodeURIComponent(version),{method:'DELETE'});
-      toast('已删除 '+version);
-    }
-    await Promise.all([loadDetail(name),loadPackages(),loadStats()]);
-  }catch(e){toast(e.message,false);}
-}
-async function deletePackage(){
-  if(!token){toast('先保存 Cdifit AccessToken',false);return;}
-  const name=current.name;
-  if(!confirm('删除整个包 '+name+'（全部版本与制品）？此操作不可恢复。'))return;
-  try{await api('/packages/'+encodeURIComponent(name),{method:'DELETE'});toast('已删除 '+name);current=null;$('detail').innerHTML='<h3 style="margin:2px 0 10px">选择左侧的包</h3><p class="muted small">包已删除。</p>';await Promise.all([loadPackages(),loadStats()]);}
-  catch(e){toast(e.message,false);}
-}
-$('save-token').addEventListener('click',()=>{token=$('token').value.trim();if(token)localStorage.setItem(TOKEN_KEY,token);else localStorage.removeItem(TOKEN_KEY);updateWho();toast('令牌已保存');});
-$('clear-token').addEventListener('click',()=>{token='';$('token').value='';localStorage.removeItem(TOKEN_KEY);updateWho();toast('令牌已清除');});
-$('search').addEventListener('click',loadPackages);
-$('q').addEventListener('keydown',e=>{if(e.key==='Enter')loadPackages();});
-$('sort').addEventListener('change',loadPackages);
-$('order').addEventListener('change',loadPackages);
-$('refresh').addEventListener('click',()=>Promise.all([loadStats(),loadPackages(),current?loadDetail(current.name):Promise.resolve()]));
-(function init(){
-  const raw=location.hash.slice(1);const params=new URLSearchParams(raw);const ht=params.get('token');
-  if(ht){token=ht;localStorage.setItem(TOKEN_KEY,ht);history.replaceState(null,'',location.pathname);}
-  $('token').value=token;updateWho();loadStats();loadPackages();
-})();
-</script>
+<body style="font-family:system-ui,sans-serif;padding:2rem;background:#0b1016;color:#e8eef6">
+<h1>后台页文件缺失</h1>
+<p>请把 <code>admin.html</code> 放到服务端同一目录，然后重启服务。</p>
 </body>
 </html>
 """
+
+
+def _load_admin_html() -> str:
+    """读取同目录下的 admin.html；缺失时返回提示页。"""
+    try:
+        with open(_ADMIN_HTML_PATH, encoding="utf-8") as fh:
+            return fh.read()
+    except OSError:
+        return _ADMIN_HTML_FALLBACK
 
 
 def _env(key: str, fallback: str) -> str:
