@@ -6,4 +6,5 @@ description = "Code CIN 纯 CIN 数学扩展"
 license = "MIT"
 authors = ["ByUsi Studio"]
 entry = "src/math.cin"
+repo = "https://www.codecin.org.cn"
 keywords = ["codecin", "stdlib", "math"]

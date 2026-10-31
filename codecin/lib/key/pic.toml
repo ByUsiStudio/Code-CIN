@@ -6,4 +6,5 @@ description = "Code CIN 官方标准库: 键盘输入监听便捷封装"
 license = "MIT"
 authors = ["ByUsi Studio"]
 entry = "src/key.cin"
+repo = "https://www.codecin.org.cn"
 keywords = ["codecin", "stdlib", "key"]

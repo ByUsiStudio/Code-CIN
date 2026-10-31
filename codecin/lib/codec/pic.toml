@@ -6,4 +6,5 @@ description = "Code CIN 官方标准库: 编解码与简单密码"
 license = "MIT"
 authors = ["ByUsi Studio"]
 entry = "src/codec.cin"
+repo = "https://www.codecin.org.cn"
 keywords = ["codecin", "stdlib", "codec"]

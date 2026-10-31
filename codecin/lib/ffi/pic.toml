@@ -6,4 +6,5 @@ description = "Code CIN 官方标准库: FFI 动态库调用便捷封装"
 license = "MIT"
 authors = ["ByUsi Studio"]
 entry = "src/ffi.cin"
+repo = "https://www.codecin.org.cn"
 keywords = ["codecin", "stdlib", "ffi"]

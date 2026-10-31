@@ -6,4 +6,5 @@ description = "Code CIN 官方标准库: 字符/字符串校验"
 license = "MIT"
 authors = ["ByUsi Studio"]
 entry = "src/validate.cin"
+repo = "https://www.codecin.org.cn"
 keywords = ["codecin", "stdlib", "validate"]

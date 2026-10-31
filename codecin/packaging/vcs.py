@@ -149,8 +149,17 @@ def clone(url: str, dest: str, ref: Optional[str] = None,
 
 
 def is_repo(path: str) -> bool:
-    return os.path.isdir(os.path.join(path, '.git')) or (
-        os.path.isfile(os.path.join(path, '.git')))
+    """目录是否位于 Git 工作区中 (支持 monorepo 子目录)。"""
+    if os.path.isdir(os.path.join(path, '.git')) or (
+        os.path.isfile(os.path.join(path, '.git'))):
+        return True
+    if not git_available():
+        return False
+    try:
+        proc = _run(['rev-parse', '--is-inside-work-tree'], cwd=path)
+    except VcsError:
+        return False
+    return proc.stdout.strip() == 'true'
 
 
 def git_init(path: str) -> None:

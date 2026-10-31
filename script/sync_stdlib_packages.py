@@ -28,6 +28,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 LIB_DIR = ROOT / "codecin" / "lib"
 DIST_DIR = ROOT / "dist" / "stdlib-packages"
+REPO_URL = "https://www.codecin.org.cn"
 
 sys.path.insert(0, str(ROOT))
 from codecin.packaging.toml import dumps as toml_dumps  # noqa: E402
@@ -83,6 +84,7 @@ def render_manifest(name: str, description: str, version: str) -> bytes:
         "license": "MIT",
         "authors": ["ByUsi Studio"],
         "entry": f"src/{name}.cin",
+        "repo": REPO_URL,
         "keywords": ["codecin", "stdlib", name],
     }
     return (HEADER + toml_dumps({"package": package})).encode("utf-8")

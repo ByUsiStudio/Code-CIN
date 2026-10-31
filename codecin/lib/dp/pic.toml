@@ -6,4 +6,5 @@ description = "Code CIN 官方标准库: 经典动态规划"
 license = "MIT"
 authors = ["ByUsi Studio"]
 entry = "src/dp.cin"
+repo = "https://www.codecin.org.cn"
 keywords = ["codecin", "stdlib", "dp"]
