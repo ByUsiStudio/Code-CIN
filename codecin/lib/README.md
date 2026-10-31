@@ -40,5 +40,11 @@ pic install ./codecin/lib/math --project
 
 ## 发布
 
-发布到中央注册表时还需要为包指定 Git 仓库（`pic publish --repo <git-url>`）。
-这些包目前没有各自的仓库，因此默认只用于本地构建与安装。
+41 个包的 `pic.toml` 统一声明 `repo = "https://gitee.com/codecin/internal-libraries.git"`，并已发布到
+`package.codecin.org.cn`（版本 6.4.2）。重新发布单个包：
+
+```bash
+python -m codecin.pic publish --manifest codecin/lib/<name> --no-tag
+```
+
+注册表会绑定包首次发布时的仓库地址；如果包已绑定到其它仓库，需要先删除再发布。

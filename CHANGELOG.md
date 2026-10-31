@@ -25,6 +25,8 @@
   `version_gen.go` 与 registry 服务端同步）。
 - registry README 补全发布字段、搜索参数、下载 ETag/Range、错误码、认证缓存、
   后台 UI 与 Docker/nginx/备份说明；Dockerfile 增加健康检查。
+- 41 个内置库已发布到中央注册表 `package.codecin.org.cn`（6.4.2），`repo` 统一为
+  `https://gitee.com/codecin/internal-libraries`。
 
 ---
 
