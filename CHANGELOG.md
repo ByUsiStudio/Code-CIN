@@ -5,6 +5,29 @@
 
 ---
 
+## [6.4.2] - 2026-10-31
+
+一次以「内置标准库 pic 包化 / 注册表文档补全」为主题的维护发布。
+
+### 新增 (Added)
+
+- `codecin/lib/<name>/`：41 个内置标准库改为 pic 包目录（`pic.toml` +
+  `src/<name>.cin`），可独立 `pic build` / `pic install`；新增
+  `script/sync_stdlib_packages.py` 负责生成、`--check` 校验与 `--build` 构建，
+  CI 校验包结构一致性。
+
+### 变更 (Changed)
+
+- 内置标准库改为 `codecin/lib/<name>/` 包目录，运行时直接解析
+  `codecin/lib/<name>/src/<name>.cin`；`import "math.cin"` / `import "lib/math.cin"`
+  写法不变，`import "math"` 也可用。
+- 版本号提升至 **6.4.2**（`codecin/__init__.py` 单一真源，Go 侧
+  `version_gen.go` 与 registry 服务端同步）。
+- registry README 补全发布字段、搜索参数、下载 ETag/Range、错误码、认证缓存、
+  后台 UI 与 Docker/nginx/备份说明；Dockerfile 增加健康检查。
+
+---
+
 ## [6.4.0] - 2026-10-30
 
 一次以「pic 搜索 / 版本管理 / 分块导入」为主题的发布：CIN 的 `import` 现在可以

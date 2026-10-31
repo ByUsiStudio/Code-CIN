@@ -37,6 +37,8 @@ jobs:
       # 这里只校验仓库内的生成物。
       - name: Native ISA 生成一致性检查
         run: python script/gen_native_isa.py --check
+      - name: 内置库 pic 包一致性检查
+        run: python script/sync_stdlib_packages.py --check
       - name: Run tests
         run: python -m pytest
       - name: 检测被 .gitignore 意外吞掉的源码

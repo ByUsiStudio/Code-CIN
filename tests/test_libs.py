@@ -1,4 +1,4 @@
-"""官方标准库 (codecin/lib/*.cin) 测试。"""
+"""官方标准库 (codecin/lib/<name>/src/<name>.cin) 测试。"""
 
 import os
 

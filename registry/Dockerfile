@@ -22,4 +22,6 @@ ENV PIC_SERVER_ADDR=:18080 \
     CDIFIT_API_BASE=https://www.cdifit.cn
 VOLUME ["/data"]
 EXPOSE 18080
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:18080/api/v1/health', timeout=3)"
 ENTRYPOINT ["python", "/app/server.py"]

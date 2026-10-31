@@ -88,10 +88,12 @@ def test_all_pure_libs_importable_together(workdir):
         pytest.fail(f'合并导入失败于第 {code} 项: {who}')
 
 def test_pure_lib_list_matches_directory():
-    """新库加入 codecin/lib 时必须同步进本用例, 否则这条护栏会悄悄失效。"""
+    """新库加入 codecin/lib/<name>/src 时必须同步进本用例, 否则这条护栏会悄悄失效。"""
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    actual = {n for n in os.listdir(os.path.join(root, 'codecin', 'lib'))
-              if n.endswith('.cin')}
+    lib_root = os.path.join(root, 'codecin', 'lib')
+    actual = {name + '.cin' for name in os.listdir(lib_root)
+              if os.path.isfile(os.path.join(lib_root, name, 'src',
+                                             name + '.cin'))}
     # 依赖宿主能力的库不在本用例里(它们另有 test_cin_host*.py /
     # test_ffi_net.py 覆盖)
     host_libs = {'io.cin', 'gui.cin', 'termux.cin', 'key.cin',

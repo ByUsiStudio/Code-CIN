@@ -4,7 +4,7 @@
 
 * PyPI 包**不携带预编译原生库** —— 库由用户安装时 `setup.py` 用本机 Go 工具链
   现场编译 (见 setup.py: BuildPyWithNative);
-* 内置标准库 `codecin/lib/*.cin` 必须随包分发;
+* 内置标准库 `codecin/lib/<name>/src/<name>.cin` 必须随包分发;
 * 发布脚本只上传 **sdist**: 如果同时发 wheel, pip 会优先装 wheel 从而跳过构建,
   用户就拿不到原生加速。
 """

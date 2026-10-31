@@ -26,6 +26,8 @@ __pycache__/
 # ==================== 构建产物 ====================
 /dist/
 /build/
+# 内置库包内单独构建的产物
+/codecin/lib/*/dist/
 # 注: Go 侧不提供 CLI, 不存在 codecin/codecin.exe 之类的命令行产物。
 # c-shared 原生库与生成的头文件 (由 build.ps1 / build.sh 生成, 不入库)
 /codecin/*.dll
