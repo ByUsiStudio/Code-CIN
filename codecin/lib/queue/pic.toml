@@ -1,0 +1,9 @@
+# 由 script/sync_stdlib_packages.py 生成，请勿手工编辑。
+[package]
+name = "queue"
+version = "6.4.2"
+description = "Code CIN 官方标准库: 队列与栈"
+license = "MIT"
+authors = ["ByUsi Studio"]
+entry = "src/queue.cin"
+keywords = ["codecin", "stdlib", "queue"]

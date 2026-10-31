@@ -1,0 +1,9 @@
+# 由 script/sync_stdlib_packages.py 生成，请勿手工编辑。
+[package]
+name = "bitset"
+version = "6.4.2"
+description = "Code CIN 官方标准库: 多字位集合"
+license = "MIT"
+authors = ["ByUsi Studio"]
+entry = "src/bitset.cin"
+keywords = ["codecin", "stdlib", "bitset"]

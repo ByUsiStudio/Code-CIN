@@ -1,0 +1,9 @@
+# 由 script/sync_stdlib_packages.py 生成，请勿手工编辑。
+[package]
+name = "key"
+version = "6.4.2"
+description = "Code CIN 官方标准库: 键盘输入监听便捷封装"
+license = "MIT"
+authors = ["ByUsi Studio"]
+entry = "src/key.cin"
+keywords = ["codecin", "stdlib", "key"]

@@ -1,0 +1,9 @@
+# 由 script/sync_stdlib_packages.py 生成，请勿手工编辑。
+[package]
+name = "validate"
+version = "6.4.2"
+description = "Code CIN 官方标准库: 字符/字符串校验"
+license = "MIT"
+authors = ["ByUsi Studio"]
+entry = "src/validate.cin"
+keywords = ["codecin", "stdlib", "validate"]
