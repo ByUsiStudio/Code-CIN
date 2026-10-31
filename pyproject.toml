@@ -46,7 +46,7 @@ version = { attr = "codecin.__version__" }
 
 [tool.setuptools.package-data]
 "codecin"        = ["py.typed", "lib/*.cin", "lib/**/*.cin"]
-"codecin.lib"    = ["*.cin"]
+"codecin.lib"    = ["*.cin", "*/src/*.cin", "*/pic.toml"]
 "codecin.native" = ["**/*"]
 
 [tool.setuptools.exclude-package-data]

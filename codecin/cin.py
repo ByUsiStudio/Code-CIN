@@ -603,7 +603,7 @@ _IMPORT_RE = re.compile(r'^import\s+["\']([^"\']+)["\']\s*;?\s*$')
 
 _CODECIN_ROOT = os.path.dirname(os.path.abspath(__file__))
 
-#: 内置标准库目录 (随包分发: codecin/lib/*.cin)
+#: 内置标准库目录 (随包分发: codecin/lib/<name>/src/<name>.cin)
 _LIB_DIR = os.path.join(_CODECIN_ROOT, 'lib')
 
 #: 相对引用的前缀: 必须以 "." 开头
@@ -1030,6 +1030,28 @@ def _resolve_package_import(name: str,
     return None
 
 
+def _bundled_library_candidates(name: str) -> List[str]:
+    """把 import 目标映射到内置库的 pic 包布局。
+
+    ``codecin/lib/<name>/src/<name>.cin`` 是每个内置库的入口；``lib/`` 前缀
+    仍作为兼容写法。例如 ``math.cin`` / ``lib/math.cin`` / ``math`` 都映射到
+    ``codecin/lib/math/src/math.cin``，``math/util.cin`` 映射到
+    ``codecin/lib/math/src/util.cin``。
+    """
+    rel = name.replace('\\', '/')
+    if rel.startswith('lib/'):
+        rel = rel[len('lib/'):]
+    parts = [part for part in rel.split('/') if part]
+    if not parts:
+        return []
+    head = parts[0]
+    package = head[:-4] if head.endswith('.cin') else head
+    if len(parts) == 1:
+        module = head if head.endswith('.cin') else head + '.cin'
+        return [os.path.join(_LIB_DIR, package, 'src', module)]
+    return [os.path.join(_LIB_DIR, package, 'src', *parts[1:])]
+
+
 def _resolve_import(name: str, source_dir: str) -> List[str]:
     """解析 import 目标 (可能多个文件, 用于分块导入)。
 
@@ -1037,8 +1059,8 @@ def _resolve_import(name: str, source_dir: str) -> List[str]:
       * ``import "./x.cin"`` / ``import "../x.cin"`` —— 相对**当前 .cin 文件**所在目录;
       * 包规格 ``rich`` / ``rich:*`` / ``rich:table`` / ``rich::1.1.1:*``
         按模块分块解析 (见 :mod:`codecin.packaging.spec`);
-      * 其余形式先查 **codecin 内置标准库** ``codecin/lib/`` (``lib/`` 前缀保留
-        为兼容写法), 保持 "裸名字不会命中兄弟文件" 的既有语义;
+      * 其余形式先查 **codecin 内置标准库** ``codecin/lib/<name>/src/``
+        (``lib/`` 前缀保留为兼容写法), 保持 "裸名字不会命中兄弟文件" 的既有语义;
       * 再查项目依赖目录 (``pic_modules`` / ``.mkn/deps`` / ``.pic/packages``)、
         ``CIN_PATH`` 与全局 pic 包存储; ``import "hello"`` 直接导入包入口,
         ``import "hello/util.cin"`` 导入包内文件。
@@ -1068,6 +1090,7 @@ def _resolve_import(name: str, source_dir: str) -> List[str]:
     candidates = [os.path.join(_LIB_DIR, name)]
     if name.startswith('lib/'):
         candidates.append(os.path.join(_LIB_DIR, name[len('lib/'):]))
+    candidates.extend(_bundled_library_candidates(name))
     for cand in candidates:
         if os.path.isfile(cand):
             return [cand]
@@ -1076,9 +1099,11 @@ def _resolve_import(name: str, source_dir: str) -> List[str]:
     if package:
         return [package]
 
+    bundled = _bundled_library_candidates(name)
+    bundled_hint = bundled[0] if bundled else os.path.join(_LIB_DIR, name)
     raise CompilerError(
         f"Import file not found: {name!r} (内置标准库已查找 "
-        f"{os.path.join(_LIB_DIR, name)}; 也未在项目 pic_modules/"
+        f"{bundled_hint}; 也未在项目 pic_modules/"
         f"CIN_PATH/已安装 pic 包中找到)。"
         f"如需导入第三方包, 先运行 `pic install <name>`。")
 

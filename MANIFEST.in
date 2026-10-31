@@ -3,7 +3,7 @@
 
 include README.md CHANGELOG.md LICENSE
 include pyproject.toml setup.py
-recursive-include codecin/lib *.cin
+recursive-include codecin/lib *.cin *.toml
 recursive-include codecin/native *.go *.txt go.mod go.sum build.sh build.ps1
 # 注: 不 include 预编译原生库 (*.dll/*.so/*.dylib) —— 它们在用户安装时由
 # setup.py 现场编译, 见 pyproject.toml 的 package-data 说明。

@@ -1,6 +1,6 @@
 """内置标准库清单 (stdlib manifest): 哪些库可用于哪些执行路径。
 
-``codecin/lib/`` 下的官方标准库按**执行路径要求**分三类:
+``codecin/lib/<name>/src/<name>.cin`` 下的官方标准库按**执行路径要求**分三类:
 
   * 纯 CIN          —— 只调用语言内建, 原生 / AOT 全部行为一致;
   * 兼容层 (C/C++/Go) —— 纯 CIN 实现的三语言标准库兼容层 (cstd/cppstd/gostd),
@@ -55,6 +55,22 @@ def _clean_desc(desc: str) -> str:
     return re.sub(r'\s*\(codecin/lib/[^)]*\)\s*$', '', desc, flags=re.I).strip()
 
 
+def _library_sources() -> Dict[str, str]:
+    """返回 ``{<name>.cin: 源文件路径}``；兼容旧平铺布局。"""
+    sources: Dict[str, str] = {}
+    if not os.path.isdir(LIB_DIR):
+        return sources
+    for entry in sorted(os.listdir(LIB_DIR)):
+        flat = os.path.join(LIB_DIR, entry)
+        if entry.endswith('.cin') and os.path.isfile(flat):
+            sources[entry] = flat
+            continue
+        source = os.path.join(LIB_DIR, entry, 'src', entry + '.cin')
+        if os.path.isfile(source):
+            sources[entry + '.cin'] = source
+    return sources
+
+
 def library_report() -> List[Dict[str, str]]:
     """扫描内置标准库目录, 返回按名称排序的清单。
 
@@ -64,10 +80,10 @@ def library_report() -> List[Dict[str, str]]:
     # 惰性导入: HOST_BUILTINS 来自编译器模块, 只在真正生成清单时才需要。
     from .cin import HOST_BUILTINS
 
-    names = sorted(n for n in os.listdir(LIB_DIR) if n.endswith('.cin'))
+    sources = _library_sources()
     report: List[Dict[str, str]] = []
-    for name in names:
-        path = os.path.join(LIB_DIR, name)
+    for name in sorted(sources):
+        path = sources[name]
         try:
             with open(path, encoding='utf-8') as f:
                 text = f.read()
