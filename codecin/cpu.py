@@ -130,7 +130,7 @@ class CPU:
             self.logger.info(f"CIN compiled: {len(self.instructions)} instructions")
             return
 
-        if from_bin or ext == '.bin':
+        if from_bin or ext in ('.bin', '.sdgcc'):
             from . import crom as crom_mod
             crom_mod.load_bin(self, filename)
             self.logger.info(f"Binary loaded: {len(self.instructions)} instructions")

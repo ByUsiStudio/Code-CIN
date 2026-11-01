@@ -25,8 +25,10 @@ def test_cvm_build_inspect_verify_run(workdir, monkeypatch):
 
     module = cvm.load_module(out)
     assert module.name == 'hello' and module.version == '1.2.0'
-    assert module.manifest['cvm']['format'] == 1
+    assert module.manifest['cvm']['format'] == cvm.CVM_FORMAT
     assert module.manifest['cvm']['engine'] == 'codecin-native'
+    assert module.manifest['cvm']['code_format'] == 'sdgcc'
+    assert module.manifest['build']['mode'] == 'single'
 
     assert cvm.main(['inspect', out]) == 0
     assert cvm.main(['verify', out]) == 0

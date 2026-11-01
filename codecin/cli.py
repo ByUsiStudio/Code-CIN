@@ -90,11 +90,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     # 编译 / CROM
     p.add_argument('--compile', action='store_true', dest='compile_to_bin',
-                   help='编译为 .bin 字节码后继续执行')
+                   help='编译为 .sdgcc 产物后继续执行')
     p.add_argument('--compile-only', action='store_true',
-                   help='仅编译为 .bin 不执行')
+                   help='仅编译为 .sdgcc 不执行')
     p.add_argument('-o', '--output', metavar='FILE',
-                   help='指定输出文件 (.crom/.bin)')
+                   help='指定输出文件 (.crom/.sdgcc/.bin)')
     p.add_argument('--crom', metavar='FILE', help='加载指定 .crom 内存镜像')
     p.add_argument('--save', action='store_true', dest='auto_save_crom',
                    help='执行后保存 .crom 内存镜像')
@@ -436,8 +436,9 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     program_file = ns.program
     crom_file = ns.crom
+    default_ext = '.sdgcc'
     output_file = (config.output_file
-                   or os.path.splitext(program_file)[0] + '.bin')
+                   or os.path.splitext(program_file)[0] + default_ext)
 
     if ns.disasm:
         from .disasm import disassemble_file
@@ -492,8 +493,15 @@ def main(argv: Optional[List[str]] = None) -> int:
             pass  # pytest 等捕获环境禁止读 stdin, 保持为空
 
         if config.compile_to_bin or config.compile_only:
-            from . import crom as crom_mod
-            crom_mod.save_bin(cpu, output_file, logger=cpu.logger)
+            from . import sdgcc as sdgcc_mod
+            sdgcc_mod.save_program(cpu, output_file, multi_file=False,
+                                   sources=[program_file],
+                                   meta={'build': {
+                                       'entry': os.path.basename(program_file),
+                                       'optimize': int(config.optimize),
+                                       'mem_size': len(cpu.memory),
+                                       'bin_version': 3,
+                                   }})
             console.print(Colors.colorize(
                 f"Compiled to {output_file}", Colors.GREEN))
             if config.compile_only:

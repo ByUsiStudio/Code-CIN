@@ -11,8 +11,10 @@
 模块布局::
 
     CVM-INF/MANIFEST.TOML
-    code/program.bin
+    code/program.sdgcc        # .sdgcc 容器, CODE 段为 BIN v3
     META-INF/SHA256SUMS
+
+旧模块的 ``code/program.bin`` 成员仍可读取 (格式 1)。
 
 CVM 模块只依赖 Code CIN 原生引擎的 ABI, 与宿主 Python 版本无关;
 同一 ``.cvm`` 可在 Windows/Linux/macOS 上由对应平台的 ``cvm`` 执行。
@@ -43,11 +45,14 @@ from .packaging.toml import loads as toml_loads
 __all__ = ['CVM', 'CVMModule', 'CVMError', 'build_module', 'load_module',
            'main', 'module_paths', 'run_module', 'verify_module']
 
-CVM_FORMAT = 1
+CVM_FORMAT = 2
 CVM_ENGINE = 'codecin-native'
 CVM_ABI = 2
 MANIFEST_MEMBER = 'CVM-INF/MANIFEST.TOML'
-CODE_MEMBER = 'code/program.bin'
+#: 编译产物成员: ``.sdgcc`` 容器 (CODE 段即 BIN v3)。
+CODE_MEMBER = 'code/program.sdgcc'
+#: v1 模块的旧成员名 (裸 BIN), 仍可读取。
+LEGACY_CODE_MEMBER = 'code/program.bin'
 CHECKSUMS_MEMBER = 'META-INF/SHA256SUMS'
 
 
@@ -123,10 +128,26 @@ def _bin_header(data: bytes) -> Dict[str, Any]:
     return info
 
 
+def _code_header(data: bytes) -> Dict[str, Any]:
+    """读取 ``.sdgcc`` (或兼容的裸 ``.bin``) 头部信息。"""
+    from . import sdgcc
+    code, container = sdgcc.unwrap(data)
+    info = _bin_header(code)
+    info['container'] = 'sdgcc' if container is not None else 'bin'
+    if container is not None:
+        info['mode'] = 'multi' if container.multi_file else 'single'
+        info['target'] = container.target
+        info['sources'] = len(container.sources)
+        info['symbols'] = len(container.symbols)
+    return info
+
+
 def _compile_source(source: str, *, optimize: int = 0,
                     mem_size: Optional[int] = None,
                     bounds_check: bool = False) -> Tuple[bytes, Dict[str, Any]]:
-    from . import crom
+    """单文件模式: 编译一个源文件, 直接封装为 ``.sdgcc`` (不落临时 .bin)。"""
+    from . import crom as crom_mod
+    from . import sdgcc
     from .cpu import CPU
     config = Config(log_level='ERROR', optimize=optimize)
     if mem_size:
@@ -134,24 +155,32 @@ def _compile_source(source: str, *, optimize: int = 0,
     config.bounds_check = bounds_check
     config.validate()
     cpu = CPU(config, source)
-    fd, tmp = tempfile.mkstemp(suffix='.bin', prefix='.cvm-build-')
-    os.close(fd)
-    try:
-        crom.save_bin(cpu, tmp)
-        with open(tmp, 'rb') as f:
-            data = f.read()
-    finally:
-        with contextlib.suppress(OSError):
-            os.remove(tmp)
+    data = crom_mod.dump_bin(cpu)
     info = _bin_header(data)
     info['mem_size'] = len(cpu.memory)
     info['optimize'] = config.optimize
-    return data, info
+    code = sdgcc.build(
+        data, multi_file=False, sources=[source],
+        meta={'build': {
+            'entry': os.path.basename(source),
+            'optimize': int(config.optimize),
+            'mem_size': len(cpu.memory),
+            'bin_version': 3,
+            'files': [os.path.basename(source)],
+        }})
+    info['container'] = 'sdgcc'
+    info['mode'] = 'single'
+    info['sources'] = 1
+    return code, info
 
 
 def _compile_input(source: str, *, optimize: int, mem_size: Optional[int],
-                   bounds_check: bool, release: bool) -> Tuple[bytes, Dict[str, Any], str, str, str]:
-    """返回 (bytecode, header, name, version, source_label)。"""
+                   bounds_check: bool, release: bool,
+                   single: bool = False
+                   ) -> Tuple[bytes, Dict[str, Any], str, str, str, str]:
+    """返回 (sdgcc 字节, 头信息, name, version, source_label, mode)。"""
+    from . import sdgcc
+
     source = os.path.abspath(source)
     if not os.path.exists(source):
         raise CVMError(f'输入不存在: {source}')
@@ -163,44 +192,68 @@ def _compile_input(source: str, *, optimize: int, mem_size: Optional[int],
         project = load_project(source)
         level = max(optimize, 2) if release else optimize
         out = build_project(project, optimize=level, mem_size=mem_size,
-                            bounds_check=bounds_check)
+                            bounds_check=bounds_check, single=single)
         if out.lower().endswith('.co'):
             raise CVMError(
                 f'{source}: 库项目没有 main 函数, 不能构建 .cvm 应用模块 '
                 f'(产物为对象文件 {out})')
         with open(out, 'rb') as f:
             data = f.read()
-        info = _bin_header(data)
-        return data, info, project.name, project.version, project.entry_path
+        if sdgcc.is_sdgcc(data):
+            code, container = data, sdgcc.parse(data)
+        else:                            # 显式 -o *.bin 的旧产物
+            code = sdgcc.build(
+                data, multi_file=not single,
+                meta={'build': {'entry': project.entry, 'bin_version': 3}})
+            container = sdgcc.parse(code)
+        info = _code_header(code)
+        info['optimize'] = level
+        mode = 'multi' if container.multi_file else 'single'
+        return code, info, project.name, project.version, project.entry_path, mode
 
     ext = os.path.splitext(source)[1].lower()
-    if ext == '.bin':
+    stem = os.path.splitext(os.path.basename(source))[0]
+    if ext in ('.sdgcc', '.bin'):
         with open(source, 'rb') as f:
             data = f.read()
-        info = _bin_header(data)
-        stem = os.path.splitext(os.path.basename(source))[0]
+        if sdgcc.is_sdgcc(data):
+            code, container = data, sdgcc.parse(data)
+        else:
+            # 旧 .bin 输入: 不改字节, 只做一层容器包装。
+            code = sdgcc.build(
+                data, multi_file=False, sources=[source],
+                meta={'build': {'entry': os.path.basename(source),
+                                'bin_version': data[5] if len(data) > 5 else 0}})
+            container = sdgcc.parse(code)
+        info = _code_header(code)
+        info['optimize'] = optimize
         name = validate_name(stem if stem and stem[0].isalpha() else 'app')
-        return data, info, name, '0.0.0', source
+        mode = 'multi' if container.multi_file else 'single'
+        return code, info, name, '0.0.0', source, mode
     if ext in ('.cin', '.asm', '.pl'):
         level = max(optimize, 2) if release else optimize
-        data, info = _compile_source(source, optimize=level,
+        code, info = _compile_source(source, optimize=level,
                                      mem_size=mem_size,
                                      bounds_check=bounds_check)
-        stem = os.path.splitext(os.path.basename(source))[0]
         name = stem if stem and stem[0].isalpha() else 'app'
-        return data, info, name, '0.0.0', source
-    raise CVMError(f'不支持的输入类型: {source} (需要 .cin/.asm/.pl/.bin/目录)')
+        return code, info, name, '0.0.0', source, 'single'
+    raise CVMError(f'不支持的输入类型: {source} '
+                   f'(需要 .cin/.asm/.pl/.sdgcc/.bin/目录)')
 
 
 def build_module(source: str, output: Optional[str] = None, *,
                  name: Optional[str] = None, version: Optional[str] = None,
                  main: Optional[str] = None, optimize: int = 0,
                  mem_size: Optional[int] = None, bounds_check: bool = False,
-                 release: bool = False) -> str:
-    """把 CIN/BIN/mkn 项目编译为 ``.cvm`` 模块。"""
-    code, info, detected_name, detected_version, label = _compile_input(
+                 release: bool = False, single: bool = False) -> str:
+    """把 CIN/BIN/SDGCC/mkn 项目编译为 ``.cvm`` 模块。
+
+    目录输入默认**多文件模式** (读取 ``mkn.toml``, 入口 + import 闭包一起编译);
+    ``single=True`` 时只编译入口文件, 产物标记为单文件模式。
+    """
+    code, info, detected_name, detected_version, label, mode = _compile_input(
         source, optimize=optimize, mem_size=mem_size,
-        bounds_check=bounds_check, release=release)
+        bounds_check=bounds_check, release=release, single=single)
     module_name = validate_name(name or detected_name)
     module_version = validate_version(version or detected_version)
     before = {}
@@ -212,6 +265,8 @@ def build_module(source: str, output: Optional[str] = None, *,
             'engine': CVM_ENGINE,
             'abi': CVM_ABI,
             'generator': f'cvm {__version__}',
+            'code_format': 'sdgcc',
+            'mode': mode,
         },
         'module': {
             'name': module_name,
@@ -226,6 +281,8 @@ def build_module(source: str, output: Optional[str] = None, *,
                             Config().mem_size),
             'bin_version': int(info.get('version', 3)),
             'bytecode_len': int(info.get('bytecode_len', 0) or 0),
+            'code_bytes': int(info.get('bytes', len(code))),
+            'mode': mode,
         },
     }
     out = os.path.abspath(output or f'{module_name}-{module_version}.cvm')
@@ -255,9 +312,10 @@ def load_module(path: str) -> CVMModule:
         fmt = int(cvm.get('format', 0))
     except (TypeError, ValueError):
         fmt = 0
-    if fmt != CVM_FORMAT:
+    if fmt not in (1, CVM_FORMAT):
         raise CVMError(
-            f'{path}: 不支持的 CVM 模块格式 {fmt} (当前支持 {CVM_FORMAT})')
+            f'{path}: 不支持的 CVM 模块格式 {fmt} '
+            f'(当前支持 1 / {CVM_FORMAT})')
     engine = str(cvm.get('engine') or '')
     if engine and engine != CVM_ENGINE:
         raise CVMError(
@@ -278,12 +336,17 @@ def load_module(path: str) -> CVMModule:
 
     try:
         with archive.zipfile.ZipFile(path) as zf:
-            if CODE_MEMBER not in zf.namelist():
-                raise CVMError(f'{path}: 缺少字节码成员 {CODE_MEMBER}')
-            code = zf.read(CODE_MEMBER)
+            names = set(zf.namelist())
+            member = CODE_MEMBER if CODE_MEMBER in names else (
+                LEGACY_CODE_MEMBER if LEGACY_CODE_MEMBER in names else None)
+            if member is None:
+                raise CVMError(
+                    f'{path}: 缺少字节码成员 {CODE_MEMBER} '
+                    f'(兼容旧名 {LEGACY_CODE_MEMBER})')
+            code = zf.read(member)
     except archive.zipfile.BadZipFile as e:
         raise CVMError(f'{path}: 不是有效的 .cvm (zip): {e}') from e
-    _bin_header(code)  # 校验 magic/版本
+    _code_header(code)  # 校验容器/BIN magic 与版本
     return CVMModule(path=path, name=name, version=version,
                      main=str(module.get('main') or name),
                      manifest=manifest, code=code)
@@ -311,7 +374,7 @@ def run_module(module: CVMModule, args: Optional[Sequence[str]] = None, *,
     config.program_args = list(args or [])
     config.validate()
 
-    fd, tmp = tempfile.mkstemp(suffix='.bin', prefix='.cvm-run-')
+    fd, tmp = tempfile.mkstemp(suffix='.sdgcc', prefix='.cvm-run-')
     os.close(fd)
     try:
         with open(tmp, 'wb') as f:
@@ -398,12 +461,15 @@ def cmd_build(args) -> int:
     out = build_module(args.source, output=args.output, name=args.name,
                        version=args.version, main=args.main,
                        optimize=args.optimize or 0, mem_size=args.mem_size,
-                       bounds_check=args.bounds_check, release=args.release)
+                       bounds_check=args.bounds_check, release=args.release,
+                       single=args.single)
     module = load_module(out)
     print(f'Built CVM module {module.name} {module.version}: {out}')
+    build = module.manifest.get('build') or {}
     print(f'  engine: {module.manifest["cvm"].get("engine")} '
           f'abi={module.manifest["cvm"].get("abi")} '
-          f'bytecode={module.size} bytes')
+          f'code={module.size} bytes '
+          f'mode={build.get("mode") or "multi"}')
     return 0
 
 
@@ -515,12 +581,14 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest='command', required=True)
 
     p = sub.add_parser('build', help='构建 .cvm 模块')
-    p.add_argument('source', help='.cin/.asm/.pl/.bin 或含 mkn.toml 的项目目录')
+    p.add_argument('source', help='.cin/.asm/.pl/.sdgcc/.bin 或含 mkn.toml 的项目目录')
     p.add_argument('-o', '--output')
     p.add_argument('--name')
     p.add_argument('--module-version', dest='module_version', metavar='VERSION',
                    help='模块版本 (默认取自 mkn.toml 或 0.0.0)')
     p.add_argument('--main')
+    p.add_argument('--single', action='store_true',
+                   help='单文件模式 (只编译入口, 不读 mkn.toml 的 import 闭包)')
     p.add_argument('--release', action='store_true')
     p.add_argument('--optimize', type=int, choices=range(0, 4))
     p.add_argument('--mem-size', type=int, dest='mem_size')

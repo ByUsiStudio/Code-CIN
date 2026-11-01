@@ -301,33 +301,56 @@ def _validate_bin_stack_layout(version: int, mem_size: int, sp: int,
             "SP 低于堆警戒线 (heap_base + 4096)")
 
 
-def save_bin(cpu: 'CPU', path: str, logger: Optional['Logger'] = None) -> None:
+def dump_bin(cpu: 'CPU') -> bytes:
+    """把已编译的 CPU 状态序列化为 BIN v3 字节流 (不落盘)。
+
+    ``.sdgcc`` 容器的 ``CODE`` 段就是本函数的返回值, 因此容器与旧 ``.bin``
+    在字节层面完全一致。
+    """
     from .native import encode_program
     all_labels = dict(cpu.labels)
     all_labels.update(cpu.data_labels)
     bytecode = encode_program(cpu.instructions, cpu.entry_pc, all_labels)
     segs = cpu.memory.snapshot_segments()
+    return b''.join((
+        Constants.MAGIC_NUMBER,                               # 5B
+        struct.pack('<B', Constants.BIN_VERSION),             # 1B
+        struct.pack('<Q', len(cpu.memory)),                   # 8B
+        struct.pack('<I', cpu.entry_pc),                      # 4B
+        struct.pack('<Q', cpu.sp),                            # 8B
+        struct.pack('<Q', cpu.heap_base),                     # 8B
+        struct.pack('<I', len(bytecode)),                     # 4B
+        struct.pack('<I', len(segs)),                         # 4B
+        b'\x00' * 8,                                          # 保留
+        _pack_segments(segs),
+        bytecode,
+    ))
 
+
+def save_bin(cpu: 'CPU', path: str, logger: Optional['Logger'] = None) -> None:
+    data = dump_bin(cpu)
     with open(path, 'wb') as f:
-        f.write(Constants.MAGIC_NUMBER)                       # 5B
-        f.write(struct.pack('<B', Constants.BIN_VERSION))     # 1B
-        f.write(struct.pack('<Q', len(cpu.memory)))           # 8B
-        f.write(struct.pack('<I', cpu.entry_pc))              # 4B
-        f.write(struct.pack('<Q', cpu.sp))                    # 8B
-        f.write(struct.pack('<Q', cpu.heap_base))             # 8B
-        f.write(struct.pack('<I', len(bytecode)))             # 4B
-        f.write(struct.pack('<I', len(segs)))                 # 4B
-        f.write(b'\x00' * 8)                                  # 保留
-        f.write(_pack_segments(segs))
-        f.write(bytecode)
+        f.write(data)
     if logger:
-        logger.info(f"Binary saved to {path} ({len(bytecode)} bytecode bytes, "
-                    f"{len(segs)} segments)")
+        logger.info(f"Binary saved to {path} ({len(data)} bytes)")
+
+
+def read_code(path: str) -> bytes:
+    """读取 ``.sdgcc`` / ``.bin`` 并返回其中的 BIN v3 字节流。"""
+    from . import sdgcc
+    with open(path, 'rb') as f:
+        data = f.read()
+    code, _container = sdgcc.unwrap(data)
+    return code
 
 
 def load_bin(cpu: 'CPU', path: str) -> None:
     with open(path, 'rb') as f:
         data = f.read()
+
+    from . import sdgcc
+    if sdgcc.is_sdgcc(data):
+        data = sdgcc.parse(data).code
 
     if len(data) < 6 or data[:5] != Constants.MAGIC_NUMBER:
         raise CPUSimulatorError("Invalid binary file (bad magic)")

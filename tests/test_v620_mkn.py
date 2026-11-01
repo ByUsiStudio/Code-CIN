@@ -21,7 +21,7 @@ def test_mkn_new_build_package_install(workdir, monkeypatch):
     monkeypatch.chdir(project)
 
     assert mkn.main(['build']) == 0
-    assert os.path.isfile(os.path.join(project, 'target', 'demo-0.1.0.bin'))
+    assert os.path.isfile(os.path.join(project, 'target', 'demo-0.1.0.sdgcc'))
 
     assert mkn.main(['package']) == 0
     pkg = os.path.join(project, 'target', 'demo-0.1.0.mkn')

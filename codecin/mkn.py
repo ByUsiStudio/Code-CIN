@@ -132,8 +132,16 @@ def build_project(project: MknManifest, *,
                   optimize: Optional[int] = None,
                   mem_size: Optional[int] = None,
                   bounds_check: bool = False,
-                  resolve: bool = True) -> str:
-    """编译项目入口; 可执行项目产出 ``.bin``, 库项目产出 ``.co`` 对象。"""
+                  resolve: bool = True,
+                  single: bool = False) -> str:
+    """编译项目入口。
+
+    可执行项目默认产出 ``.sdgcc`` (容器内 ``CODE`` 段为 BIN v3; 显式把
+    ``output`` 写成 ``.bin`` 时仍产出旧格式), 库项目产出 ``.co`` 对象。
+
+    ``single=False`` (默认) 为**多文件模式**: 入口 + ``import`` 闭包全部计入
+    ``SRCS`` 段; ``single=True`` 只记录入口文件, 供单文件产物使用。
+    """
     if resolve:
         resolve_dependencies(project)
     entry = project.entry_path
@@ -158,15 +166,43 @@ def build_project(project: MknManifest, *,
             raise
         return out
 
-    from . import crom as crom_mod
+    from . import sdgcc
     from .cpu import CPU
     cpu = CPU(config, entry)
     out = output or os.path.join(
-        project.target_dir, f'{project.name}-{project.version}.bin')
+        project.target_dir, f'{project.name}-{project.version}.sdgcc')
     out = os.path.abspath(out)
     os.makedirs(os.path.dirname(out), exist_ok=True)
-    crom_mod.save_bin(cpu, out)
+
+    sources = [entry] if single else _import_closure(entry)
+    symbols = [(pc, name) for name, pc in sorted(cpu.labels.items())]
+    symbols += [(pc, name) for name, pc in sorted(cpu.data_labels.items())]
+    meta = {
+        'project': {
+            'name': project.name,
+            'version': project.version,
+        },
+        'build': {
+            'entry': project.entry,
+            'optimize': int(config.optimize),
+            'mem_size': len(cpu.memory),
+            'bin_version': 3,
+            'files': [os.path.basename(p) for p in sources],
+        },
+    }
+    sdgcc.save_program(cpu, out, multi_file=not single, meta=meta,
+                       sources=sources, symbols=symbols)
     return out
+
+
+def _import_closure(entry: str) -> List[str]:
+    """入口文件的 ``import`` 闭包 (含自身); 解析失败时退化为单文件。"""
+    try:
+        from .cin import collect_imported_files
+        files = list(collect_imported_files(entry))
+    except Exception:  # noqa: BLE001 - 编译错误留给真正的编译步骤报告
+        files = [entry]
+    return files or [entry]
 
 
 # ==================== 依赖解析 ====================
@@ -403,7 +439,8 @@ def _create_project(root: str, name: str, version: str, description: str = '',
         },
         'build': {
             'optimize': 0,
-            'backend': 'vm',
+            'format': 'sdgcc',
+            'mode': 'multi',
         },
     }
     with open(os.path.join(root, 'mkn.toml'), 'w', encoding='utf-8',
@@ -433,7 +470,7 @@ def _create_project(root: str, name: str, version: str, description: str = '',
     gitignore = os.path.join(root, '.gitignore')
     if not os.path.isfile(gitignore):
         with open(gitignore, 'w', encoding='utf-8', newline='\n') as f:
-            f.write('target/\npic_modules/\n*.bin\n*.mkn\n*.cvm\n'
+            f.write('target/\npic_modules/\n*.sdgcc\n*.bin\n*.mkn\n*.cvm\n'
                     '__pycache__/\n')
     print(f'Created mkn project {name} {version} at {root}')
     print(f'  cd {root}')

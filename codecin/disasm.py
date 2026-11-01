@@ -142,4 +142,8 @@ def disassemble_file(path: str) -> List[str]:
         raise CPUSimulatorError(f"File '{path}' not found")
     with open(path, 'rb') as f:
         data = f.read()
+    from . import sdgcc
+    if sdgcc.is_sdgcc(data):
+        # .sdgcc 的 CODE 段就是 BIN v3, 直接对其进行反汇编。
+        data = sdgcc.parse(data).code
     return disassemble_bytes(data)
