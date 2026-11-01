@@ -22,10 +22,26 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 from . import toolchain
 from .isa import Constants
 
-__all__ = ['CBackendError', 'compile_instructions', 'emit_c']
+__all__ = ['CBackendError', 'compile_instructions', 'emit_c', 'supports',
+           'c_target']
 
 Instruction = Tuple[str, List[Tuple[Any, ...]]]
 Segments = Sequence[Tuple[int, bytes]]
+
+#: 已实现的指令助记符。
+SUPPORTED_OPS = frozenset({
+    'MOV', 'ADD', 'SUB', 'MUL', 'DIV', 'AND', 'OR', 'XOR', 'SHL', 'SHR',
+    'ASR', 'ROR', 'INC', 'DEC', 'MVN', 'CMP',
+    'ADDI', 'LSL', 'LSR', 'XORI', 'ORI', 'ANDI',
+    'PUSH', 'POP', 'CALL', 'BL', 'RET', 'HALT',
+    'LOAD', 'LW', 'LD', 'LB', 'LH', 'LDR',
+    'STORE', 'SW', 'STR', 'SD', 'SB', 'SH',
+    'JMP', 'JZ', 'JE', 'JNZ', 'JL', 'JG',
+    'B', 'CBZ', 'CBNZ', 'OUT', 'SYS',
+})
+
+#: 已实现的 SYS 功能号。
+SUPPORTED_SYS = frozenset({13, 14, 15, 16, 20, 21, 22, 23, 24, 27, 137})
 
 
 class CBackendError(RuntimeError):
@@ -34,6 +50,13 @@ class CBackendError(RuntimeError):
 
 #: 运行期未实现时的退出码。
 UNSUPPORTED_EXIT = 70
+
+#: ARM64 条件码 -> C 运行时编号 (与 isa.Cond / VM 的 condition() 一致)。
+_COND_CODES = {
+    'EQ': 0, 'NE': 1, 'CS': 2, 'HS': 2, 'CC': 3, 'LO': 3, 'MI': 4, 'PL': 5,
+    'VS': 6, 'VC': 7, 'HI': 8, 'LS': 9, 'GE': 10, 'LT': 11, 'GT': 12,
+    'LE': 13, 'AL': 14, 'NV': 15,
+}
 
 _RUNTIME = r'''
 #include <stdint.h>
@@ -48,6 +71,7 @@ static uint64_t R[33];          /* 0..31 通用, 32 = SP */
 static uint8_t *MEM;
 static uint64_t MEMSZ;
 static int ZF, NF, CF, VF;
+static uint64_t HEAPBASE;
 static const char *ERRMSG;
 static FILE *OUTP;
 
@@ -159,12 +183,89 @@ static void rt_unsupported(const char *what) {
     if (!ERRMSG) ERRMSG = what;
 }
 
-static int rt_init(uint64_t memsz, uint64_t sp) {
+static uint64_t HEAPP;
+static uint64_t rt_scratch(void) { return HEAPBASE - 4096; }
+
+static uint64_t rt_itoa(uint64_t v) {
+    char *base = (char *)(MEM + rt_scratch());
+    char tmp[32];
+    int n = 0;
+    if (v == 0) tmp[n++] = '0';
+    while (v) { tmp[n++] = (char)('0' + (v % 10)); v /= 10; }
+    for (int i = 0; i < n; i++) base[i] = tmp[n - 1 - i];
+    base[n] = '\0';
+    return rt_scratch();
+}
+
+static uint64_t rt_ftoa(uint64_t bits) {
+    char *base = (char *)(MEM + rt_scratch() + 64);
+    double d;
+    memcpy(&d, &bits, 8);
+    snprintf(base, 64, "%g", d);
+    return rt_scratch() + 64;
+}
+
+static uint64_t rt_malloc(uint64_t bytes) {
+    uint64_t p = HEAPP;
+    if (bytes > MEMSZ || p > MEMSZ - bytes) { rt_fail("Out of memory"); return 0; }
+    HEAPP = p + ((bytes + 7) & ~(uint64_t)7);
+    return p;
+}
+
+static uint64_t rt_strlen(uint64_t addr) {
+    if (addr >= MEMSZ) { rt_fail("String out of bounds"); return 0; }
+    return (uint64_t)strlen((const char *)(MEM + addr));
+}
+
+static void rt_abort(uint64_t addr) {
+    if (addr < MEMSZ) rt_fail((const char *)(MEM + addr));
+    else rt_fail("abort");
+}
+
+static uint64_t rt_rand_state = 1;
+static uint64_t rt_rand(void) {
+    rt_rand_state = rt_rand_state * UINT64_C(6364136223846793005) + 1;
+    return rt_rand_state >> 1;
+}
+
+static int rt_init(uint64_t memsz, uint64_t sp, uint64_t heapbase) {
     MEMSZ = memsz;
+    HEAPBASE = heapbase;
+    HEAPP = heapbase;
     MEM = (uint8_t *)calloc((size_t)memsz, 1);
     if (!MEM) return 0;
     R[32] = sp;
     OUTP = stdout;
+    return 1;
+}
+
+static int rt_cond(int code) {
+    switch (code) {
+    case 0: return ZF;                    /* EQ */
+    case 1: return !ZF;                   /* NE */
+    case 2: return CF;                    /* CS */
+    case 3: return !CF;                   /* CC */
+    case 4: return NF;                    /* MI */
+    case 5: return !NF;                   /* PL */
+    case 6: return VF;                    /* VS */
+    case 7: return !VF;                   /* VC */
+    case 8: return CF && !ZF;             /* HI */
+    case 9: return !CF || ZF;             /* LS */
+    case 10: return NF == VF;             /* GE */
+    case 11: return NF != VF;             /* LT */
+    case 12: return !ZF && NF == VF;      /* GT */
+    case 13: return ZF || NF != VF;       /* LE */
+    case 14: return 1;                    /* AL */
+    default: return 0;                    /* NV */
+    }
+}
+
+static int rt_allocframe(uint64_t bytes) {
+    int64_t guard = (int64_t)(HEAPBASE + 4096);
+    int64_t newsp = (int64_t)R[32] - (int64_t)bytes;
+    if (newsp < guard) { rt_fail("Stack overflow (frame allocation)"); return 0; }
+    R[32] = (uint64_t)newsp;
+    R[0] = R[32];
     return 1;
 }
 
@@ -389,6 +490,28 @@ class _Emitter:
                           f'{stores[op]})')
             return
 
+        if op == 'B':
+            cond_arg = next((a for a in args if a[0] == 'cond'), None)
+            target_arg = next((a for a in args if a[0] != 'cond'), None)
+            target = self.target(target_arg) if target_arg else None
+            if cond_arg is None or target is None:
+                self.unsupported(op)
+                return
+            code = _COND_CODES.get(str(cond_arg[1]).upper())
+            if code is None:
+                self.unsupported(op)
+                return
+            self.code(f'if (rt_cond({code})) goto L{target};')
+            return
+        if op in ('CBZ', 'CBNZ'):
+            target = self.target(args[-1])
+            if target is None:
+                self.unsupported(op)
+                return
+            test = '==' if op == 'CBZ' else '!='
+            self.code(f'if (R[{int(args[0][1])}] {test} 0) goto L{target};')
+            return
+
         # ---- 控制流 ----
         if op == 'JMP':
             target = self.target(args[0])
@@ -430,9 +553,29 @@ class _Emitter:
         if op == 'SYS':
             if args[0][0] != 'imm':
                 self.unsupported(op)
-            else:
-                self.code(f'rt_unsupported("SYS {_u64(args[0][1])} 未在 C 后端实现");')
-                self.code('goto Lerror;')
+                return
+            code = _u64(args[0][1])
+            if code == 137:                     # ALLOCFRAME
+                self.fail('rt_allocframe(R[0])')
+                return
+            simple = {
+                13: 'R[0] = rt_rand();',                     # RAND
+                14: 'rt_rand_state = R[0] ? R[0] : 1;',      # SRAND
+                15: 'R[0] = (uint64_t)time(NULL);',          # TIME
+                16: 'R[0] = rt_strlen(R[0]);',               # STRLEN
+                20: 'R[0] = rt_malloc(R[0]);',               # MALLOC
+                21: 'rt_out_float(R[0]);',                   # PRINT_FLOAT
+                22: 'R[0] = rt_itoa(R[0]);',                 # ITOA
+                23: 'R[0] = rt_ftoa(R[0]);',                 # FTOA
+                24: 'rt_out_str(R[0]);',                     # PRINT_STR
+                27: 'rt_abort(R[0]);',                       # ABORT
+            }
+            if code in simple:
+                self.code(simple[code])
+                self.code('if (ERRMSG) goto Lerror;')
+                return
+            self.code(f'rt_unsupported("SYS {code} 未在 C 后端实现");')
+            self.code('goto Lerror;')
             return
 
         self.unsupported(op)
@@ -476,8 +619,9 @@ class _Emitter:
         out: List[str] = [_RUNTIME]
         out.extend(data)
         out.append('int main(void) {')
-        out.append('\tif (!rt_init(UINT64_C({}), UINT64_C({}))) {{'.format(
-            self.mem_size, _u64(self.sp)))
+        out.append('\tif (!rt_init(UINT64_C({}), UINT64_C({}), '
+                   'UINT64_C({}))) {{'.format(
+                       self.mem_size, _u64(self.sp), _u64(self.heap_base)))
         out.append('\t\tfprintf(stderr, "runtime error: cannot allocate '
                    f'{self.mem_size} bytes\\n");')
         out.append('\t\treturn 1;')
@@ -567,3 +711,34 @@ def _host_target_name() -> str:
     if machine in ('arm64', 'aarch64'):
         return 'aarch64-linux'
     return 'x86_64-linux'
+
+
+def c_target(goos: str, goarch: str = 'amd64') -> str:
+    """把 AOT 的 (GOOS, GOARCH) 映射成 C 后端目标名。"""
+    goos = (goos or '').lower()
+    goarch = (goarch or 'amd64').lower()
+    if goos == 'windows' and goarch in ('amd64', 'x86_64'):
+        return 'x86_64-windows'
+    if goos == 'linux':
+        return 'aarch64-linux' if goarch in ('arm64', 'aarch64') \
+            else 'x86_64-linux'
+    raise CBackendError(
+        f'C 后端暂不支持目标 {goos}/{goarch} (可选: windows/amd64, '
+        f'linux/amd64, linux/arm64)')
+
+
+def supports(instructions: Sequence[Instruction]) -> Tuple[bool, str]:
+    """指令流能否由 C 后端完整翻译; 不支持时返回原因。"""
+    missing = sorted({str(op) for op, _args in instructions
+                      if str(op) not in SUPPORTED_OPS})
+    if missing:
+        return False, '未实现的指令: ' + ', '.join(missing)
+    for op, args in instructions:
+        if str(op) != 'SYS' or not args:
+            continue
+        if args[0][0] != 'imm':
+            return False, 'SYS 功能号必须是常量'
+        code = int(args[0][1])
+        if code not in SUPPORTED_SYS:
+            return False, f'未实现的 SYS {code}'
+    return True, ''
