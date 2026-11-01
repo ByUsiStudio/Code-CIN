@@ -42,8 +42,8 @@ SUPPORTED_OPS = frozenset({
 
 #: 已实现的 SYS 功能号。
 SUPPORTED_SYS = frozenset(set(range(0, 39)) | set(range(51, 59))
-                          | set(range(61, 68)) | {137, 147, 148, 149, 150,
-                                                  157})
+                          | set(range(61, 68)) | {137, 145, 146, 147, 148,
+                                                  149, 150, 157})
 
 
 class CBackendError(RuntimeError):
@@ -751,6 +751,125 @@ static uint64_t rt_tcp_close(uint64_t fd) {
     return 0;
 }
 
+/* ---------------- HTTP 客户端 (SYS 145/146) ---------------- */
+
+static int64_t LASTHTTPST = -1;
+
+static rt_sock_t rt_connect_host(const char *host, const char *port) {
+    struct addrinfo hints, *res = NULL, *it;
+    rt_sock_t s = RT_BAD_SOCK;
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_STREAM;
+    if (getaddrinfo(host, port, &hints, &res) != 0 || !res) return RT_BAD_SOCK;
+    for (it = res; it; it = it->ai_next) {
+        s = socket(it->ai_family, it->ai_socktype, it->ai_protocol);
+        if (s == RT_BAD_SOCK) continue;
+        if (connect(s, it->ai_addr, (int)it->ai_addrlen) == 0) break;
+#ifdef _WIN32
+        closesocket(s);
+#else
+        close(s);
+#endif
+        s = RT_BAD_SOCK;
+    }
+    freeaddrinfo(res);
+    return s;
+}
+
+static int rt_url_parse(const char *url, char *host, size_t hn,
+                        char *port, size_t pn, char *path, size_t pathn) {
+    const char *p = url;
+    const char *slash;
+    size_t n;
+    if (strncmp(p, "http://", 7) == 0) p += 7;
+    else if (strncmp(p, "https://", 8) == 0) return 0;  /* 无 TLS 实现 */
+    slash = strchr(p, '/');
+    n = slash ? (size_t)(slash - p) : strlen(p);
+    if (n == 0 || n >= hn) return 0;
+    memcpy(host, p, n);
+    host[n] = 0;
+    {
+        char *colon = strrchr(host, ':');
+        if (colon) {
+            *colon = 0;
+            snprintf(port, pn, "%s", colon + 1);
+        } else {
+            snprintf(port, pn, "80");
+        }
+    }
+    snprintf(path, pathn, "%s", slash ? slash : "/");
+    return 1;
+}
+
+static uint64_t rt_http(const char *method, const char *url,
+                        const char *headers, const char *body) {
+    char host[256], port[8], path[1024];
+    char head[4096];
+    char *resp = NULL;
+    size_t cap = 0, len = 0;
+    rt_sock_t s;
+    int n;
+    const char *body_start;
+    uint64_t out;
+    LASTHTTPST = -1;
+    if (!rt_url_parse(url, host, sizeof(host), port, sizeof(port),
+                      path, sizeof(path)))
+        return rt_empty();
+    s = rt_connect_host(host, port);
+    if (s == RT_BAD_SOCK) return rt_empty();
+
+    n = snprintf(head, sizeof(head),
+                 "%s %s HTTP/1.0\r\nHost: %s\r\nConnection: close\r\n%s%s\r\n",
+                 method, path, host, headers ? headers : "",
+                 (headers && *headers) ? "\r\n" : "");
+    if (send(s, head, n, 0) != n) {
+#ifdef _WIN32
+        closesocket(s);
+#else
+        close(s);
+#endif
+        return rt_empty();
+    }
+    if (body && *body) {
+        size_t bn = strlen(body);
+        send(s, body, (int)bn, 0);
+    }
+    for (;;) {
+        char chunk[4096];
+        int k;
+        if (len > (8u << 20)) break;          /* 8 MiB 上限 */
+        k = recv(s, chunk, (int)sizeof(chunk), 0);
+        if (k <= 0) break;
+        if (len + (size_t)k + 1 > cap) {
+            size_t ncap = cap ? cap * 2 : 8192;
+            char *grown;
+            while (ncap < len + (size_t)k + 1) ncap *= 2;
+            grown = (char *)realloc(resp, ncap);
+            if (!grown) { free(resp); resp = NULL; break; }
+            resp = grown;
+            cap = ncap;
+        }
+        memcpy(resp + len, chunk, (size_t)k);
+        len += (size_t)k;
+    }
+#ifdef _WIN32
+    closesocket(s);
+#else
+    close(s);
+#endif
+    if (!resp) return rt_empty();
+    resp[len] = 0;
+    if (strncmp(resp, "HTTP/", 5) == 0) {
+        const char *sp = strchr(resp, ' ');
+        LASTHTTPST = sp ? strtoll(sp + 1, NULL, 10) : -1;
+    }
+    body_start = strstr(resp, "\r\n\r\n");
+    out = rt_dupstr(body_start ? body_start + 4 : resp);
+    free(resp);
+    return out;
+}
+
 static double rt_bits2f(uint64_t bits) {    double d;
     memcpy(&d, &bits, 8);
     return d;
@@ -1115,8 +1234,10 @@ class _Emitter:
                 65: 'R[0] = rt_username();',                           # USERNAME
                 66: 'R[0] = rt_cwd();',                                # CWD
                 67: 'R[0] = rt_homedir();',                            # HOMEDIR
-                147: 'R[0] = rt_tcp_dial(rt_cstr(R[0]), R[1]);',       # TCP_DIAL
-                148: 'R[0] = rt_tcp_send(R[0], R[1], R[2]);',          # TCP_SEND
+                145: 'R[0] = rt_http(rt_cstr(R[0]), rt_cstr(R[1]), '
+                     'rt_cstr(R[2]), rt_cstr(R[3]));',                  # HTTP_REQ
+                146: 'R[0] = (uint64_t)LASTHTTPST;',                    # HTTP_CODE
+                147: 'R[0] = rt_tcp_dial(rt_cstr(R[0]), R[1]);',       # TCP_DIAL                148: 'R[0] = rt_tcp_send(R[0], R[1], R[2]);',          # TCP_SEND
                 149: 'R[0] = (uint64_t)(int64_t)rt_tcp_recv('
                      'R[0], R[1], R[2]);',                             # TCP_RECV
                 150: 'R[0] = rt_tcp_close(R[0]);',                      # TCP_CLOSE

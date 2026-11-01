@@ -209,6 +209,82 @@ def test_dirlist_and_env_runtime_symbols_are_emitted():
         assert symbol in source
 
 
+@pytest.mark.skipif(_compiler() is None, reason='本机没有可用的 C 编译器')
+def test_dns_lookup_matches_vm(workdir, capsys, monkeypatch):
+    src = os.path.join(workdir, 'dns.cin')
+    with open(src, 'w', encoding='utf-8') as f:
+        f.write('function main() -> int {\n'
+                '    println(dns_lookup("localhost"))\n'
+                '    return 0\n'
+                '}\n')
+    monkeypatch.chdir(workdir)
+    assert cli.main(['dns.cin', '--log-level', 'ERROR']) == 0
+    expected = capsys.readouterr().out
+    assert expected.strip().startswith('127.')
+
+    built = aot.build_program(src, out=os.path.join(workdir, 'dnsprog'),
+                              backend='c', use_cache=False)
+    result = subprocess.run([built], capture_output=True, text=True,
+                            timeout=60)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == expected
+
+
+@pytest.mark.skipif(_compiler() is None, reason='本机没有可用的 C 编译器')
+def test_tcp_echo_matches_vm(workdir, capsys, monkeypatch):
+    """TCP dial/send/recv/close 与 VM 行为一致（本地 echo 服务器）。"""
+    import socket
+    import threading
+
+    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    server.bind(('127.0.0.1', 0))
+    server.listen(4)
+    server.settimeout(30)
+    port = server.getsockname()[1]
+    received = []
+
+    def serve():
+        try:
+            for _ in range(2):
+                conn, _addr = server.accept()
+                data = conn.recv(64)
+                received.append(data)
+                conn.sendall(data)
+                conn.close()
+        finally:
+            server.close()
+
+    thread = threading.Thread(target=serve, daemon=True)
+    thread.start()
+
+    src = os.path.join(workdir, 'tcp.cin')
+    with open(src, 'w', encoding='utf-8') as f:
+        f.write('function main() -> int {\n'
+                f'    int fd = tcp_dial("127.0.0.1", {port})\n'
+                '    if (fd < 0) { println("dial_fail") return 1 }\n'
+                '    int buf[64]\n'
+                '    int sent = tcp_send(fd, "ping", 4)\n'
+                '    int n = tcp_recv(fd, buf, 64)\n'
+                '    println(sent)\n'
+                '    println(n)\n'
+                '    tcp_close(fd)\n'
+                '    return 0\n'
+                '}\n')
+    monkeypatch.chdir(workdir)
+    assert cli.main(['tcp.cin', '--log-level', 'ERROR']) == 0
+    expected = capsys.readouterr().out
+
+    built = aot.build_program(src, out=os.path.join(workdir, 'tcpprog'),
+                              backend='c', use_cache=False)
+    result = subprocess.run([built], capture_output=True, text=True,
+                            timeout=60)
+    thread.join(10)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == expected == '4\n4\n'
+    assert received == [b'ping', b'ping']
+
+
 def test_supports_reports_missing_opcode_and_syscall():
     ok, reason = cbackend.supports([('MOV', [('reg', 0), ('imm', 1)]),
                                     ('HALT', [])])
