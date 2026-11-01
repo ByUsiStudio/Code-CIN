@@ -394,7 +394,11 @@ class NativeEngine:
 
 
 def get_engine(logger=None) -> Optional[NativeEngine]:
-    """查找并加载原生库; 失败返回 None (纯 Python 回退)。"""
+    """查找并加载原生库; 加载失败返回 None。
+
+    v5.9.0 起为 native-only, **没有纯 Python 回退**: 返回 None 表示调用方
+    必须按「引擎不可用」处理 (CPU 会抛 CPUSimulatorError), 而不是降级执行。
+    """
     global _LIB_CACHE
     if _LIB_CACHE is not False:
         return _LIB_CACHE

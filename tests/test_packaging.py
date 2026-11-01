@@ -90,3 +90,19 @@ def test_setup_hook_installs_built_library():
         'setup.py 必须把编译出的原生库拷进安装目录 (它不在 package-data 里)'
     assert 'build_native_lib()' in text, \
         'setup.py 必须在构建时编译原生库'
+
+def test_setup_hint_matches_native_only_architecture():
+    """v5.9.0 起没有解释器回退: 安装提示必须说清「缺原生库 = 无法执行」。"""
+    text = _read('setup.py')
+    assert '回退纯 Python' not in text, \
+        'setup.py 又在承诺纯 Python 回退 (解释器已于 v5.9.0 删除)'
+    assert '无法执行' in text, \
+        'setup.py 缺少 Go 时必须说明后果: 程序无法执行'
+    assert '_report_native_status' in text, \
+        'setup.py 必须在安装收尾汇报原生引擎可用性'
+
+def test_native_loader_has_no_pure_python_fallback_promise():
+    """`get_engine()` 返回 None 是「不可用」而非「降级」, docstring 不能写反。"""
+    text = _read(os.path.join('codecin', 'native.py'))
+    assert '(纯 Python 回退)' not in text, \
+        'codecin/native.py 的 docstring 仍在承诺纯 Python 回退'
