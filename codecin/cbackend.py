@@ -45,10 +45,10 @@ SUPPORTED_SYS = frozenset(set(range(0, 39)) | {43, 44, 45, 46, 48, 49, 50}
                           | set(range(51, 59))
                           | set(range(61, 68)) | {80, 81, 82, 83, 84, 85, 86,
                                                   87, 88, 89, 90, 91, 92, 93,
-                                                  94, 97, 98, 99, 100, 101, 102,
-                                                  137, 145, 146, 147, 148, 149,
-                                                  150, 151, 152, 153, 154, 155,
-                                                  156, 157})
+                                                  94, 95, 96, 97, 98, 99, 100,
+                                                  101, 102, 137, 145, 146, 147,
+                                                  148, 149, 150, 151, 152, 153,
+                                                  154, 155, 156, 157})
 
 
 class CBackendError(RuntimeError):
@@ -1636,6 +1636,45 @@ static uint64_t rt_arch_name(void) {
 #endif
 }
 
+static uint64_t rt_meminfo(void) {
+    char buf[160];
+#ifdef _WIN32
+    MEMORYSTATUSEX ms;
+    ms.dwLength = sizeof(ms);
+    if (GlobalMemoryStatusEx(&ms)) {
+        snprintf(buf, sizeof(buf), "{\"total_kb\":%llu,\"free_kb\":%llu}",
+                 (unsigned long long)(ms.ullTotalPhys / 1024),
+                 (unsigned long long)(ms.ullAvailPhys / 1024));
+        return rt_dupstr(buf);
+    }
+#else
+    {
+        FILE *f = fopen("/proc/meminfo", "rb");
+        unsigned long long total = 0, avail = 0;
+        char line[256];
+        if (f) {
+            while (fgets(line, sizeof(line), f)) {
+                if (!total && sscanf(line, "MemTotal: %llu kB", &total) == 1)
+                    continue;
+                if (!avail &&
+                    sscanf(line, "MemAvailable: %llu kB", &avail) == 1)
+                    continue;
+            }
+            fclose(f);
+        }
+        snprintf(buf, sizeof(buf), "{\"total_kb\":%llu,\"free_kb\":%llu}",
+                 total, avail);
+        return rt_dupstr(buf);
+    }
+#endif
+    return rt_dupstr("{\"total_kb\":0,\"free_kb\":0}");
+}
+
+static uint64_t rt_is_android(void) {
+    struct stat st;
+    return stat("/system/build.prop", &st) == 0 ? 1 : 0;
+}
+
 static double rt_bits2f(uint64_t bits) {    double d;
     memcpy(&d, &bits, 8);
     return d;
@@ -2022,6 +2061,8 @@ class _Emitter:
                 92: 'R[0] = rt_sleep_ms(R[0]);',                        # SLEEP_MS
                 93: 'R[0] = rt_cpu_count();',                           # CPU_COUNT
                 94: 'R[0] = rt_arch_name();',                           # ARCH_NAME
+                95: 'R[0] = rt_meminfo();',                            # MEMINFO
+                96: 'R[0] = rt_is_android();',                         # IS_ANDROID
                 97: 'R[0] = rt_http("GET", rt_cstr(R[0]), "", "");',    # HTTP_GET
                 98: ('R[0] = rt_http("POST", rt_cstr(R[0]), '
                      '"Content-Type: text/plain; charset=utf-8\\r\\n", '

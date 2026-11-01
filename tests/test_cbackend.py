@@ -47,6 +47,7 @@ def test_unsupported_syscall_is_reported_at_runtime():
 def test_missing_compiler_gives_actionable_error(monkeypatch, tmp_path):
     monkeypatch.setenv('CODECIN_CC_X86_64_WINDOWS', str(tmp_path / 'nope'))
     monkeypatch.setattr(cbackend.toolchain, 'find_compiler', lambda spec: None)
+    monkeypatch.setattr(cbackend.toolchain, 'find_zig', lambda: None)
     with pytest.raises(toolchain.ToolchainError) as info:
         cbackend.compile_instructions([], {}, [], 0, 4096, 4088, 2048,
                                       str(tmp_path / 'out.exe'),
@@ -899,6 +900,24 @@ def test_cross_compile_elf_targets(workdir):
         data = open(built, 'rb').read()
         assert data[:4] == b'\x7fELF', target
         assert struct.unpack_from('<H', data, 18)[0] == machine, target
+
+
+@pytest.mark.skipif(_compiler() is None, reason='本机没有可用的 C 编译器')
+def test_meminfo_and_android_flags(workdir):
+    src = os.path.join(workdir, 'mi.cin')
+    with open(src, 'w', encoding='utf-8') as f:
+        f.write('function main() -> int {\n'
+                '    string m = mem_info()\n'
+                '    println(strlen(m) > 10)\n'
+                '    println(is_android())\n'
+                '    return 0\n'
+                '}\n')
+    built = aot.build_program(src, out=os.path.join(workdir, 'miprog'),
+                              backend='c', use_cache=False)
+    result = subprocess.run([built], cwd=workdir, capture_output=True,
+                            text=True, timeout=60)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines() == ['true', '0']
 
 
 def test_supports_reports_missing_opcode_and_syscall():

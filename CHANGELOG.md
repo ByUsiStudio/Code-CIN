@@ -7,6 +7,11 @@
 
 ## [7.0.0] - 2026-11-01
 
+一次以「编译产物格式统一 + AOT 去 Go 化」为主题的大版本：默认产物从 `.bin`
+切换为可自描述的 `.sdgcc`（内部 `CODE` 段仍与 BIN v3 逐字节一致），`cvm`
+改为读取 `mkn.toml` 驱动多文件编译，AOT 新增纯 C 后端（GCC/Clang/Zig），
+不再依赖 Go 工具链即可产出 Windows PE 与 Linux ELF（x86-64 / AArch64）。
+
 ### 新增 (Added)
 
 - **`.sdgcc` 编译产物容器**（`codecin/sdgcc.py`）：28 字节头 + 24 字节/段的
@@ -81,6 +86,14 @@
 - **C 后端时间/平台信息（SYS 91-94）**：`time_ms`（单调时钟）、
   `sleep_ms`（上限 600s）、`cpu_count`、`arch_name`（amd64/arm64/x86），
   与 VM 语义一致，并有用例验证计时单调与休眠生效。
+- **C 后端 `mem_info`/`is_android`（SYS 95/96）**：`mem_info` 输出
+  `{"total_kb":N,"free_kb":M}`（Windows `GlobalMemoryStatusEx`、Linux 解析
+  `/proc/meminfo`）；`is_android` 以 `/system/build.prop` 判定。
+- **C 后端交叉编译打通（Zig 兜底）**：`toolchain.find_zig()` 自动发现
+  `~/.codecin/zig/**/zig` 或 `CODECIN_ZIG`，在缺少目标 GCC 时改用
+  `zig cc -target <triple>`（自带 libc，无需 sysroot）。已实测同一份指令流
+  交叉编译为 `x86_64-linux`（ELF e_machine 0x3E）与 `aarch64-linux`
+  （0xB7），并加入自动跳过式用例 `test_cross_compile_elf_targets`。
 - **测试稳定性**：网络用例改用 `ThreadingTCPServer` + `daemon_threads`
   并在 `finally` 里 `server_close()`；TCP 服务端用例改为按需重新分配端口
   重试；`tcp_echo` 的对端在 accept 超时后直接退出。`tests/test_cbackend.py`
@@ -113,6 +126,18 @@
   `原生引擎: 可用/不可用` 汇总，避免 `pip install` 静默成功、首次运行才暴露。
 - `codecin/native.py:get_engine()` 的 docstring 改为「无纯 Python 回退」，
   与 `cpu.py` 的 native-only 语义一致。
+
+### 已知限制 (Known limitations)
+
+- **C 后端运行时尚未覆盖**：`draw_text`(47)（缺内嵌点阵字体）、音频
+  (39–42)、GUI 与键盘类 SYS。含这些调用的程序在 `--build-backend auto`
+  下会回退旧的 Go 后端，`--build-backend c` 会明确报出 `SYS 47
+  (CANVASTEXT)` 之类的功能号，不会静默产出错误结果。
+- **交叉编译产物未在目标机执行验证**：`x86_64-linux` / `aarch64-linux`
+  已能产出合法 ELF（e_machine 0x3E / 0xB7），但本机为 Windows，未在
+  Linux 真机或 WSL 中运行过。
+- **旧 Go 后端仍保留**：`--build-backend native|vm` 作为回退路径存在，
+  待 C 后端覆盖足够后再移除。
 
 ---
 
