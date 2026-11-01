@@ -509,6 +509,22 @@ C 后端的目标：`x86_64-windows`（PE）、`x86_64-linux`（ELF）、`aarch6
 提示安装，或 `python -m codecin.toolchain install <target> --url <压缩包>` 安装
 自带工具链。
 
+C 后端当前覆盖的 syscall（未列出的会让 `auto` 回退 Go 后端，`c` 则报错）：
+
+| 范围 | 能力 |
+|------|------|
+| 0–38 | 浮点/整数/字符串/`itoa`/`ftoa`/`malloc`/`substr`/`trim`/`atoi` 等 |
+| 43–46, 48–50 | 画布：新建、颜色、矩形、圆、直线、`save_png`；`show_canvas` 无窗口环境下返回 -1 |
+| 51–58 | 文件读写/追加/存在/删除/大小/建目录、`dirlist` |
+| 61–67 | 环境变量、`osname/hostname/username/cwd/homedir` |
+| 80–90 | `path_join/basename/dirname/abs`、`file_copy`/`file_move`/`dir_remove`/`is_dir`/`file_mtime`/`temp_dir`/`chdir` |
+| 91–94 | `time_ms`、`sleep_ms`、`cpu_count`、`arch_name` |
+| 97–102 | `http_get`/`http_post`/`download`/`sha256`/`base64` |
+| 137, 145–157 | `ALLOCFRAME`、`http_req`/`http_code`、TCP 客户端与服务端、UDP、DNS |
+
+未覆盖：`draw_text`(47)、音频(39–42)、GUI/键盘。这些 syscall 会让 `auto`
+回退 Go 后端；用 `--build-backend c` 强制时会明确报出功能号。
+
 ```bash
 # 本机平台 (auto: 能走 C 后端就走 C, 否则回退 Go 后端)
 codecin program.cin --build-exe program          # Windows 自动补 .exe

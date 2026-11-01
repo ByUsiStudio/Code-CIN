@@ -54,6 +54,37 @@
   收发字节数对拍。
 - **C 后端 Base64（SYS 101/102）**：`base64_encode/base64_decode`
   （标准字母表、`=` 填充、解码忽略空白与非法字符），与 VM 对拍一致。
+- **C 后端 SHA-256（SYS 100）**：`sha256` 返回小写十六进制摘要（自实现
+  压缩函数，无第三方依赖），`"abc"` 与空串摘要均与 VM 一致。
+- **C 后端画布（SYS 43-46/48/49）**：`canvas/set_color/fill_rect/
+  fill_circle/draw_line/save_png`，白底 RGBA8、坐标裁剪、Bresenham 直线，
+  PNG 用 zlib stored 块 + CRC32 手写输出；用例解码像素后校验红块/蓝圆/
+  绿线与白底，并与 VM 产物尺寸对齐。
+- **C 后端 `download`（SYS 99）**：GET → 仅 2xx 落盘（非 2xx 或网络错误
+  返回 -1），与 VM 的 0/-1 语义一致，并有用例校验落盘内容。
+- **C 后端 `show_canvas`（SYS 50）**：无窗口环境下明确返回 `-1`（不静默成功、
+  也不崩溃），画布内容仍可 `save_png` 落盘。
+- **C 后端路径/环境补充（SYS 87/89/90）**：`is_dir`、`temp_dir`、`chdir`
+  （Windows 走 `_chdir`），与 VM 输出对拍一致。
+- **C 后端 `dir_remove`（SYS 86）**：递归删除（`rm -rf` 语义），与 VM 对拍
+  一致，用例额外断言目录确实不存在。
+- **C 后端 `file_copy`/`file_move`/`file_mtime`（SYS 84/85/88）**：复制、
+  重命名（跨盘回退为复制+删除）、mtime（unix 秒，失败 -1），与 VM 对拍一致。
+- **C 后端 `path_join`/`path_basename`/`path_dirname`（SYS 80-82）**：
+  按平台分隔符归一化（Windows `\`，POSIX `/`）、折叠重复分隔符，与
+  `filepath.Join/Base/Dir` 输出一致。
+- **C 后端 `path_abs`（SYS 83）**：Windows 用 `_fullpath`、POSIX 用
+  `realpath`（失败回退 `getcwd + 拼接`），输出与 `filepath.Abs` 一致。
+- **C 后端不支持项提示更精确**：`supports()` 报错从「未实现的 SYS 47」升级为
+  「未实现的 SYS 47 (CANVASTEXT)」，`auto` 回退/`c` 报错时可直接看出缺什么。
+  对应端到端用例改为用 `draw_text` 触发，验证报错含 syscall 名。
+- **C 后端时间/平台信息（SYS 91-94）**：`time_ms`（单调时钟）、
+  `sleep_ms`（上限 600s）、`cpu_count`、`arch_name`（amd64/arm64/x86），
+  与 VM 语义一致，并有用例验证计时单调与休眠生效。
+- **测试稳定性**：网络用例改用 `ThreadingTCPServer` + `daemon_threads`
+  并在 `finally` 里 `server_close()`；TCP 服务端用例改为按需重新分配端口
+  重试；`tcp_echo` 的对端在 accept 超时后直接退出。`tests/test_cbackend.py`
+  全量从偶发挂起恢复到 ~78s 稳定通过。
 
 ### 变更 (Changed)
 

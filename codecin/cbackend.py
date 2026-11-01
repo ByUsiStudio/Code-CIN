@@ -41,10 +41,13 @@ SUPPORTED_OPS = frozenset({
 })
 
 #: 已实现的 SYS 功能号。
-SUPPORTED_SYS = frozenset(set(range(0, 39)) | set(range(51, 59))
-                          | set(range(61, 68)) | {97, 98, 101, 102, 137, 145,
-                                                  146, 147, 148, 149, 150,
-                                                  151, 152, 153, 154, 155,
+SUPPORTED_SYS = frozenset(set(range(0, 39)) | {43, 44, 45, 46, 48, 49, 50}
+                          | set(range(51, 59))
+                          | set(range(61, 68)) | {80, 81, 82, 83, 84, 85, 86,
+                                                  87, 88, 89, 90, 91, 92, 93,
+                                                  94, 97, 98, 99, 100, 101, 102,
+                                                  137, 145, 146, 147, 148, 149,
+                                                  150, 151, 152, 153, 154, 155,
                                                   156, 157})
 
 
@@ -598,6 +601,7 @@ static uint64_t rt_homedir(void) {
 #ifdef _WIN32
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#include <windows.h>
 typedef SOCKET rt_sock_t;
 #define RT_BAD_SOCK INVALID_SOCKET
 #else
@@ -1097,6 +1101,541 @@ static uint64_t rt_b64dec(uint64_t addr) {
     return p;
 }
 
+/* ---------------- SHA-256 (SYS 100) ---------------- */
+
+static const uint32_t RT_SHA_K[64] = {
+    0x428a2f98u, 0x71374491u, 0xb5c0fbcfu, 0xe9b5dba5u, 0x3956c25bu,
+    0x59f111f1u, 0x923f82a4u, 0xab1c5ed5u, 0xd807aa98u, 0x12835b01u,
+    0x243185beu, 0x550c7dc3u, 0x72be5d74u, 0x80deb1feu, 0x9bdc06a7u,
+    0xc19bf174u, 0xe49b69c1u, 0xefbe4786u, 0x0fc19dc6u, 0x240ca1ccu,
+    0x2de92c6fu, 0x4a7484aau, 0x5cb0a9dcu, 0x76f988dau, 0x983e5152u,
+    0xa831c66du, 0xb00327c8u, 0xbf597fc7u, 0xc6e00bf3u, 0xd5a79147u,
+    0x06ca6351u, 0x14292967u, 0x27b70a85u, 0x2e1b2138u, 0x4d2c6dfcu,
+    0x53380d13u, 0x650a7354u, 0x766a0abbu, 0x81c2c92eu, 0x92722c85u,
+    0xa2bfe8a1u, 0xa81a664bu, 0xc24b8b70u, 0xc76c51a3u, 0xd192e819u,
+    0xd6990624u, 0xf40e3585u, 0x106aa070u, 0x19a4c116u, 0x1e376c08u,
+    0x2748774cu, 0x34b0bcb5u, 0x391c0cb3u, 0x4ed8aa4au, 0x5b9cca4fu,
+    0x682e6ff3u, 0x748f82eeu, 0x78a5636fu, 0x84c87814u, 0x8cc70208u,
+    0x90befffau, 0xa4506cebu, 0xbef9a3f7u, 0xc67178f2u
+};
+
+typedef struct {
+    uint32_t h[8];
+    uint64_t len;
+    unsigned char buf[64];
+    size_t fill;
+} rt_sha256_ctx;
+
+static void rt_sha256_init(rt_sha256_ctx *c) {
+    c->h[0] = 0x6a09e667u; c->h[1] = 0xbb67ae85u;
+    c->h[2] = 0x3c6ef372u; c->h[3] = 0xa54ff53au;
+    c->h[4] = 0x510e527fu; c->h[5] = 0x9b05688cu;
+    c->h[6] = 0x1f83d9abu; c->h[7] = 0x5be0cd19u;
+    c->len = 0;
+    c->fill = 0;
+}
+
+static uint32_t rt_rotr32(uint32_t x, int n) {
+    return (x >> n) | (x << (32 - n));
+}
+
+static void rt_sha256_block(rt_sha256_ctx *c, const unsigned char *p) {
+    uint32_t w[64], a, b, d, e, f, g, h, t1, t2, cc;
+    int i;
+    for (i = 0; i < 16; i++)
+        w[i] = ((uint32_t)p[i * 4] << 24) | ((uint32_t)p[i * 4 + 1] << 16)
+               | ((uint32_t)p[i * 4 + 2] << 8) | (uint32_t)p[i * 4 + 3];
+    for (i = 16; i < 64; i++) {
+        uint32_t s0 = rt_rotr32(w[i - 15], 7) ^ rt_rotr32(w[i - 15], 18)
+                      ^ (w[i - 15] >> 3);
+        uint32_t s1 = rt_rotr32(w[i - 2], 17) ^ rt_rotr32(w[i - 2], 19)
+                      ^ (w[i - 2] >> 10);
+        w[i] = w[i - 16] + s0 + w[i - 7] + s1;
+    }
+    a = c->h[0]; b = c->h[1]; cc = c->h[2]; d = c->h[3];
+    e = c->h[4]; f = c->h[5]; g = c->h[6]; h = c->h[7];
+    for (i = 0; i < 64; i++) {
+        uint32_t S1 = rt_rotr32(e, 6) ^ rt_rotr32(e, 11) ^ rt_rotr32(e, 25);
+        uint32_t ch = (e & f) ^ ((~e) & g);
+        uint32_t S0 = rt_rotr32(a, 2) ^ rt_rotr32(a, 13) ^ rt_rotr32(a, 22);
+        uint32_t maj = (a & b) ^ (a & cc) ^ (b & cc);
+        t1 = h + S1 + ch + RT_SHA_K[i] + w[i];
+        t2 = S0 + maj;
+        h = g; g = f; f = e; e = d + t1;
+        d = cc; cc = b; b = a; a = t1 + t2;
+    }
+    c->h[0] += a; c->h[1] += b; c->h[2] += cc; c->h[3] += d;
+    c->h[4] += e; c->h[5] += f; c->h[6] += g; c->h[7] += h;
+}
+
+static void rt_sha256_update(rt_sha256_ctx *c, const unsigned char *p,
+                             size_t n) {
+    c->len += (uint64_t)n;
+    while (n > 0) {
+        size_t take = 64 - c->fill;
+        if (take > n) take = n;
+        memcpy(c->buf + c->fill, p, take);
+        c->fill += take;
+        p += take;
+        n -= take;
+        if (c->fill == 64) {
+            rt_sha256_block(c, c->buf);
+            c->fill = 0;
+        }
+    }
+}
+
+static void rt_sha256_final(rt_sha256_ctx *c, unsigned char out[32]) {
+    uint64_t bits = c->len * 8;
+    unsigned char pad = 0x80;
+    unsigned char zero = 0;
+    int i;
+    rt_sha256_update(c, &pad, 1);
+    while (c->fill != 56) rt_sha256_update(c, &zero, 1);
+    for (i = 7; i >= 0; i--) {
+        unsigned char byte = (unsigned char)((bits >> (i * 8)) & 0xFF);
+        rt_sha256_update(c, &byte, 1);
+    }
+    for (i = 0; i < 8; i++) {
+        out[i * 4] = (unsigned char)(c->h[i] >> 24);
+        out[i * 4 + 1] = (unsigned char)(c->h[i] >> 16);
+        out[i * 4 + 2] = (unsigned char)(c->h[i] >> 8);
+        out[i * 4 + 3] = (unsigned char)c->h[i];
+    }
+}
+
+static uint64_t rt_sha256_hex(uint64_t addr) {
+    static const char hexdig[] = "0123456789abcdef";
+    const unsigned char *s = (const unsigned char *)rt_cstr(addr);
+    unsigned char digest[32];
+    rt_sha256_ctx ctx;
+    uint64_t p = rt_heap(65);
+    int i;
+    if (!p) return 0;
+    rt_sha256_init(&ctx);
+    rt_sha256_update(&ctx, s, strlen((const char *)s));
+    rt_sha256_final(&ctx, digest);
+    for (i = 0; i < 32; i++) {
+        MEM[p + i * 2] = (unsigned char)hexdig[digest[i] >> 4];
+        MEM[p + i * 2 + 1] = (unsigned char)hexdig[digest[i] & 15];
+    }
+    MEM[p + 64] = 0;
+    return p;
+}
+
+/* ---------------- 画布 + PNG (SYS 43-49) ---------------- */
+
+static unsigned char *CANVAS;
+static int CW, CH;
+static int COL_R, COL_G, COL_B;
+
+static int rt_clamp_coord(uint64_t v) {
+    return v > 100000 ? 100000 : (int)v;
+}
+
+static uint64_t rt_canvas_new(uint64_t w, uint64_t h) {
+    int cw = rt_clamp_coord(w), ch = rt_clamp_coord(h);
+    if (cw < 1) cw = 1;
+    if (ch < 1) ch = 1;
+    free(CANVAS);
+    CANVAS = (unsigned char *)malloc((size_t)cw * (size_t)ch * 4);
+    if (!CANVAS) { CW = CH = 0; return (uint64_t)-1; }
+    memset(CANVAS, 255, (size_t)cw * (size_t)ch * 4);
+    CW = cw; CH = ch;
+    COL_R = COL_G = COL_B = 0;
+    return 0;
+}
+
+static uint64_t rt_canvas_set(uint64_t rgb) {
+    COL_R = (int)((rgb >> 16) & 0xFF);
+    COL_G = (int)((rgb >> 8) & 0xFF);
+    COL_B = (int)(rgb & 0xFF);
+    return 0;
+}
+
+static uint64_t rt_canvas_rect(uint64_t x, uint64_t y, uint64_t w,
+                               uint64_t h) {
+    int x0 = rt_clamp_coord(x), y0 = rt_clamp_coord(y);
+    int x1 = x0 + rt_clamp_coord(w), y1 = y0 + rt_clamp_coord(h);
+    int px, py;
+    if (!CANVAS) return (uint64_t)-1;
+    if (x0 < 0) x0 = 0;
+    if (y0 < 0) y0 = 0;
+    if (x1 > CW) x1 = CW;
+    if (y1 > CH) y1 = CH;
+    for (py = y0; py < y1; py++) {
+        for (px = x0; px < x1; px++) {
+            unsigned char *p = CANVAS + ((size_t)py * CW + px) * 4;
+            p[0] = (unsigned char)COL_R;
+            p[1] = (unsigned char)COL_G;
+            p[2] = (unsigned char)COL_B;
+            p[3] = 255;
+        }
+    }
+    return 0;
+}
+
+static uint64_t rt_canvas_circle(uint64_t cx, uint64_t cy, uint64_t r) {
+    int x0 = rt_clamp_coord(cx), y0 = rt_clamp_coord(cy);
+    int rr = rt_clamp_coord(r);
+    long dx, dy;
+    if (!CANVAS) return (uint64_t)-1;
+    for (dy = -rr; dy <= rr; dy++) {
+        for (dx = -rr; dx <= rr; dx++) {
+            long px = x0 + dx, py = y0 + dy;
+            if (dx * dx + dy * dy > (long)rr * (long)rr) continue;
+            if (px < 0 || px >= CW || py < 0 || py >= CH) continue;
+            {
+                unsigned char *p = CANVAS + ((size_t)py * CW + px) * 4;
+                p[0] = (unsigned char)COL_R;
+                p[1] = (unsigned char)COL_G;
+                p[2] = (unsigned char)COL_B;
+                p[3] = 255;
+            }
+        }
+    }
+    return 0;
+}
+
+static uint64_t rt_canvas_line(uint64_t x0, uint64_t y0, uint64_t x1,
+                               uint64_t y1) {
+    long ax = (long)rt_clamp_coord(x0), ay = (long)rt_clamp_coord(y0);
+    long bx = (long)rt_clamp_coord(x1), by = (long)rt_clamp_coord(y1);
+    long dx = labs(bx - ax), sx = ax < bx ? 1 : -1;
+    long dy = -labs(by - ay), sy = ay < by ? 1 : -1;
+    long err = dx + dy;
+    if (!CANVAS) return (uint64_t)-1;
+    for (;;) {
+        if (ax >= 0 && ax < CW && ay >= 0 && ay < CH) {
+            unsigned char *p = CANVAS + ((size_t)ay * CW + ax) * 4;
+            p[0] = (unsigned char)COL_R;
+            p[1] = (unsigned char)COL_G;
+            p[2] = (unsigned char)COL_B;
+            p[3] = 255;
+        }
+        if (ax == bx && ay == by) break;
+        {
+            long e2 = 2 * err;
+            if (e2 >= dy) { err += dy; ax += sx; }
+            if (e2 <= dx) { err += dx; ay += sy; }
+        }
+    }
+    return 0;
+}
+
+static uint32_t rt_crc32(const unsigned char *data, size_t n) {
+    uint32_t crc = 0xFFFFFFFFu;
+    size_t i;
+    int k;
+    for (i = 0; i < n; i++) {
+        crc ^= data[i];
+        for (k = 0; k < 8; k++)
+            crc = (crc >> 1) ^ (0xEDB88320u & (uint32_t)(-(int32_t)(crc & 1)));
+    }
+    return crc ^ 0xFFFFFFFFu;
+}
+
+static void rt_png_chunk(FILE *f, const char *type, const unsigned char *data,
+                         size_t n) {
+    unsigned char hdr[8];
+    unsigned char crcbuf[4];
+    uint32_t crc;
+    unsigned char *tmp = (unsigned char *)malloc(n + 4);
+    hdr[0] = (unsigned char)(n >> 24); hdr[1] = (unsigned char)(n >> 16);
+    hdr[2] = (unsigned char)(n >> 8);  hdr[3] = (unsigned char)n;
+    memcpy(hdr + 4, type, 4);
+    fwrite(hdr, 1, 8, f);
+    if (n) fwrite(data, 1, n, f);
+    if (!tmp) return;
+    memcpy(tmp, type, 4);
+    if (n) memcpy(tmp + 4, data, n);
+    crc = rt_crc32(tmp, n + 4);
+    crcbuf[0] = (unsigned char)(crc >> 24); crcbuf[1] = (unsigned char)(crc >> 16);
+    crcbuf[2] = (unsigned char)(crc >> 8);  crcbuf[3] = (unsigned char)crc;
+    fwrite(crcbuf, 1, 4, f);
+    free(tmp);
+}
+
+static uint64_t rt_canvas_save(const char *path) {
+    FILE *f;
+    unsigned char ihdr[13];
+    unsigned char *raw = NULL, *z = NULL;
+    size_t rown = (size_t)CW * 4 + 1, rawlen, zlen, off = 0, i, left;
+    uint32_t a = 1, b = 0;
+    int y;
+    if (!CANVAS || !path || !*path) return (uint64_t)-1;
+    rawlen = rown * (size_t)CH;
+    raw = (unsigned char *)malloc(rawlen);
+    if (!raw) return (uint64_t)-1;
+    for (y = 0; y < CH; y++) {
+        raw[(size_t)y * rown] = 0;                 /* filter: none */
+        memcpy(raw + (size_t)y * rown + 1, CANVAS + (size_t)y * CW * 4,
+               (size_t)CW * 4);
+    }
+    /* zlib: 2 字节头 + stored deflate 块 + adler32 */
+    zlen = rawlen + rawlen / 65535 * 5 + 64;
+    z = (unsigned char *)malloc(zlen);
+    if (!z) { free(raw); return (uint64_t)-1; }
+    z[off++] = 0x78; z[off++] = 0x01;
+    left = rawlen;
+    i = 0;
+    while (i < rawlen) {
+        size_t blk = left > 65535 ? 65535 : left;
+        int final = (i + blk >= rawlen);
+        z[off++] = (unsigned char)(final ? 1 : 0);
+        z[off++] = (unsigned char)(blk & 0xFF);
+        z[off++] = (unsigned char)((blk >> 8) & 0xFF);
+        z[off++] = (unsigned char)(~blk & 0xFF);
+        z[off++] = (unsigned char)((~blk >> 8) & 0xFF);
+        memcpy(z + off, raw + i, blk);
+        off += blk;
+        i += blk;
+        left -= blk;
+    }
+    for (i = 0; i < rawlen; i++) {
+        a = (a + raw[i]) % 65521u;
+        b = (b + a) % 65521u;
+    }
+    {
+        uint32_t adler = (b << 16) | a;
+        z[off++] = (unsigned char)(adler >> 24);
+        z[off++] = (unsigned char)(adler >> 16);
+        z[off++] = (unsigned char)(adler >> 8);
+        z[off++] = (unsigned char)adler;
+    }
+    f = fopen(path, "wb");
+    if (!f) { free(raw); free(z); return (uint64_t)-1; }
+    fwrite("\x89PNG\r\n\x1a\n", 1, 8, f);
+    ihdr[0] = (unsigned char)(CW >> 24); ihdr[1] = (unsigned char)(CW >> 16);
+    ihdr[2] = (unsigned char)(CW >> 8);  ihdr[3] = (unsigned char)CW;
+    ihdr[4] = (unsigned char)(CH >> 24); ihdr[5] = (unsigned char)(CH >> 16);
+    ihdr[6] = (unsigned char)(CH >> 8);  ihdr[7] = (unsigned char)CH;
+    ihdr[8] = 8; ihdr[9] = 6; ihdr[10] = 0; ihdr[11] = 0; ihdr[12] = 0;
+    rt_png_chunk(f, "IHDR", ihdr, 13);
+    rt_png_chunk(f, "IDAT", z, off);
+    rt_png_chunk(f, "IEND", NULL, 0);
+    fclose(f);
+    free(raw);
+    free(z);
+    return 0;
+}
+
+static uint64_t rt_download(uint64_t url, uint64_t path) {
+    uint64_t body = rt_http("GET", rt_cstr(url), "", "");
+    if (ERRMSG) return (uint64_t)-1;
+    if (LASTHTTPST < 200 || LASTHTTPST >= 300) return (uint64_t)-1;
+    return rt_writefile(rt_cstr(path), rt_cstr(body), 0) == 0
+        ? 0 : (uint64_t)-1;
+}
+
+static uint64_t rt_is_dir(const char *path) {
+    struct stat st;
+    return (stat(path, &st) == 0 && (st.st_mode & S_IFMT) == S_IFDIR) ? 1 : 0;
+}
+
+static uint64_t rt_chdir(const char *path) {
+#ifdef _WIN32
+    return _chdir(path) == 0 ? 0 : (uint64_t)-1;
+#else
+    return chdir(path) == 0 ? 0 : (uint64_t)-1;
+#endif
+}
+
+static uint64_t rt_temp_dir(void) {
+    static const char *keys[] = {"TMPDIR", "TEMP", "TMP"};
+    size_t i;
+    for (i = 0; i < sizeof(keys) / sizeof(keys[0]); i++) {
+        const char *v = getenv(keys[i]);
+        if (v && *v) return rt_dupstr(v);
+    }
+    return rt_dupstr("/tmp");
+}
+
+static int rt_rm_rf(const char *path) {
+    struct stat st;
+    if (stat(path, &st) != 0) return -1;
+    if ((st.st_mode & S_IFMT) == S_IFDIR) {
+        DIR *d = opendir(path);
+        struct dirent *ent;
+        if (!d) return -1;
+        while ((ent = readdir(d)) != NULL) {
+            char child[2048];
+            if (!strcmp(ent->d_name, ".") || !strcmp(ent->d_name, ".."))
+                continue;
+            snprintf(child, sizeof(child), "%s/%s", path, ent->d_name);
+            if (rt_rm_rf(child) != 0) {
+                closedir(d);
+                return -1;
+            }
+        }
+        closedir(d);
+#ifdef _WIN32
+        return _rmdir(path);
+#else
+        return rmdir(path);
+#endif
+    }
+    return remove(path);
+}
+
+static uint64_t rt_dir_remove(const char *path) {
+    return rt_rm_rf(path) == 0 ? 0 : (uint64_t)-1;
+}
+
+static uint64_t rt_file_copy(const char *src, const char *dst) {
+    FILE *in = fopen(src, "rb");
+    FILE *out;
+    char buf[8192];
+    size_t n;
+    int ok = 1;
+    if (!in) return (uint64_t)-1;
+    out = fopen(dst, "wb");
+    if (!out) { fclose(in); return (uint64_t)-1; }
+    while ((n = fread(buf, 1, sizeof(buf), in)) > 0) {
+        if (fwrite(buf, 1, n, out) != n) { ok = 0; break; }
+    }
+    fclose(in);
+    if (fclose(out) != 0) ok = 0;
+    return ok ? 0 : (uint64_t)-1;
+}
+
+static uint64_t rt_file_move(const char *src, const char *dst) {
+    if (rename(src, dst) == 0) return 0;
+    if (rt_file_copy(src, dst) != 0) return (uint64_t)-1;
+    return remove(src) == 0 ? 0 : (uint64_t)-1;
+}
+
+static uint64_t rt_file_mtime(const char *path) {
+    struct stat st;
+    if (stat(path, &st) != 0) return (uint64_t)-1;
+    return (uint64_t)st.st_mtime;
+}
+
+#ifdef _WIN32
+#define RT_SEP '\\'
+#else
+#define RT_SEP '/'
+#endif
+
+static int rt_is_sep(int c) { return c == '/' || c == '\\'; }
+
+static void rt_norm_seps(char *s) {
+    char *w = s;
+    int last_sep = 0;
+    for (; *s; s++) {
+        if (rt_is_sep((unsigned char)*s)) {
+            if (last_sep) continue;
+            *w++ = RT_SEP;
+            last_sep = 1;
+        } else {
+            *w++ = *s;
+            last_sep = 0;
+        }
+    }
+    *w = 0;
+}
+
+static uint64_t rt_path_join(const char *a, const char *b) {
+    char buf[2048];
+    if (!b || !*b) return rt_dupstr(a ? a : "");
+    if (b[0] == '/' || b[0] == '\\' || (b[0] && b[1] == ':'))
+        return rt_dupstr(b);
+    snprintf(buf, sizeof(buf), "%s%c%s", a ? a : "", RT_SEP, b);
+    rt_norm_seps(buf);
+    return rt_dupstr(buf);
+}
+
+static uint64_t rt_path_basename(const char *p) {
+    const char *end = p + strlen(p), *start = p;
+    while (end > p && rt_is_sep((unsigned char)end[-1])) end--;
+    start = end;
+    while (start > p && !rt_is_sep((unsigned char)start[-1])) start--;
+    {
+        size_t n = (size_t)(end - start);
+        char buf[2048];
+        if (n >= sizeof(buf)) n = sizeof(buf) - 1;
+        memcpy(buf, start, n);
+        buf[n] = 0;
+        return rt_dupstr(buf);
+    }
+}
+
+static uint64_t rt_path_dirname(const char *p) {
+    char buf[2048];
+    size_t n = strlen(p);
+    while (n > 1 && rt_is_sep((unsigned char)p[n - 1])) n--;
+    while (n > 0 && !rt_is_sep((unsigned char)p[n - 1])) n--;
+    while (n > 1 && rt_is_sep((unsigned char)p[n - 1])) n--;
+    if (n == 0) return rt_dupstr(".");
+    if (n >= sizeof(buf)) n = sizeof(buf) - 1;
+    memcpy(buf, p, n);
+    buf[n] = 0;
+    rt_norm_seps(buf);
+    return rt_dupstr(buf);
+}
+
+static uint64_t rt_path_abs(const char *p) {
+    char buf[4096];
+#ifdef _WIN32
+    if (!_fullpath(buf, p, sizeof(buf))) return rt_empty();
+#else
+    if (!realpath(p, buf)) {
+        char cwd[2048];
+        if (!getcwd(cwd, sizeof(cwd))) return rt_empty();
+        if (p[0] == '/') return rt_dupstr(p);
+        snprintf(buf, sizeof(buf), "%s/%s", cwd, p);
+    }
+#endif
+    rt_norm_seps(buf);
+    return rt_dupstr(buf);
+}
+
+static uint64_t rt_time_ms(void) {
+#ifdef _WIN32
+    return (uint64_t)GetTickCount64();
+#else
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (uint64_t)ts.tv_sec * 1000u + (uint64_t)ts.tv_nsec / 1000000u;
+#endif
+}
+
+static uint64_t rt_sleep_ms(uint64_t ms) {
+    if (ms > 600000) ms = 600000;
+#ifdef _WIN32
+    Sleep((DWORD)ms);
+#else
+    {
+        struct timespec ts;
+        ts.tv_sec = (time_t)(ms / 1000);
+        ts.tv_nsec = (long)((ms % 1000) * 1000000);
+        nanosleep(&ts, NULL);
+    }
+#endif
+    return 0;
+}
+
+static uint64_t rt_cpu_count(void) {
+#ifdef _WIN32
+    SYSTEM_INFO si;
+    GetSystemInfo(&si);
+    return (uint64_t)si.dwNumberOfProcessors;
+#else
+    long n = sysconf(_SC_NPROCESSORS_ONLN);
+    return n > 0 ? (uint64_t)n : 1;
+#endif
+}
+
+static uint64_t rt_arch_name(void) {
+#if defined(__aarch64__) || defined(_M_ARM64)
+    return rt_dupstr("arm64");
+#elif defined(__x86_64__) || defined(_M_X64)
+    return rt_dupstr("amd64");
+#else
+    return rt_dupstr("x86");
+#endif
+}
+
 static double rt_bits2f(uint64_t bits) {    double d;
     memcpy(&d, &bits, 8);
     return d;
@@ -1444,6 +1983,13 @@ class _Emitter:
                 36: 'R[0] = rt_trim(R[0], 1, 1);',                    # TRIM
                 37: 'R[0] = rt_trim(R[0], 1, 0);',                    # LTRIM
                 38: 'R[0] = rt_trim(R[0], 0, 1);',                    # RTRIM
+                43: 'R[0] = rt_canvas_new(R[0], R[1]);',               # CANVAS_NEW
+                44: 'R[0] = rt_canvas_set(R[0]);',                     # CANVAS_SET
+                45: 'R[0] = rt_canvas_rect(R[0], R[1], R[2], R[3]);',  # RECT
+                46: 'R[0] = rt_canvas_circle(R[0], R[1], R[2]);',      # CIRCLE
+                48: 'R[0] = rt_canvas_line(R[0], R[1], R[2], R[3]);',  # LINE
+                49: 'R[0] = rt_canvas_save(rt_cstr(R[0]));',           # SAVE
+                50: 'R[0] = (uint64_t)-1;  /* 无窗口环境: show_canvas 不支持 */',
                 51: 'R[0] = rt_readfile(rt_cstr(R[0]));',              # FILE_READ
                 52: 'R[0] = (uint64_t)(int64_t)rt_writefile('
                     'rt_cstr(R[0]), rt_cstr(R[1]), 0);',               # WRITE
@@ -1461,10 +2007,27 @@ class _Emitter:
                 65: 'R[0] = rt_username();',                           # USERNAME
                 66: 'R[0] = rt_cwd();',                                # CWD
                 67: 'R[0] = rt_homedir();',                            # HOMEDIR
+                86: 'R[0] = rt_dir_remove(rt_cstr(R[0]));',            # DIR_REMOVE
+                80: 'R[0] = rt_path_join(rt_cstr(R[0]), rt_cstr(R[1]));',  # JOIN
+                81: 'R[0] = rt_path_basename(rt_cstr(R[0]));',         # BASENAME
+                82: 'R[0] = rt_path_dirname(rt_cstr(R[0]));',          # DIRNAME
+                83: 'R[0] = rt_path_abs(rt_cstr(R[0]));',              # ABS
+                84: 'R[0] = rt_file_copy(rt_cstr(R[0]), rt_cstr(R[1]));',  # COPY
+                85: 'R[0] = rt_file_move(rt_cstr(R[0]), rt_cstr(R[1]));',  # MOVE
+                88: 'R[0] = rt_file_mtime(rt_cstr(R[0]));',            # MTIME
+                87: 'R[0] = rt_is_dir(rt_cstr(R[0]));',                 # IS_DIR
+                89: 'R[0] = rt_temp_dir();',                            # TEMP_DIR
+                90: 'R[0] = rt_chdir(rt_cstr(R[0]));',                  # CHDIR
+                91: 'R[0] = rt_time_ms();',                             # TIME_MS
+                92: 'R[0] = rt_sleep_ms(R[0]);',                        # SLEEP_MS
+                93: 'R[0] = rt_cpu_count();',                           # CPU_COUNT
+                94: 'R[0] = rt_arch_name();',                           # ARCH_NAME
                 97: 'R[0] = rt_http("GET", rt_cstr(R[0]), "", "");',    # HTTP_GET
                 98: ('R[0] = rt_http("POST", rt_cstr(R[0]), '
                      '"Content-Type: text/plain; charset=utf-8\\r\\n", '
                      'rt_cstr(R[1]));'),                                # HTTP_POST
+                99: 'R[0] = rt_download(R[0], R[1]);',                  # DOWNLOAD
+                100: 'R[0] = rt_sha256_hex(R[0]);',                      # SHA256
                 101: 'R[0] = rt_b64enc(R[0]);',                         # B64_ENC
                 102: 'R[0] = rt_b64dec(R[0]);',                         # B64_DEC
                 145: 'R[0] = rt_http(rt_cstr(R[0]), rt_cstr(R[1]), '
@@ -1645,6 +2208,14 @@ def c_target(goos: str, goarch: str = 'amd64') -> str:
         f'linux/amd64, linux/arm64)')
 
 
+def _syscall_name(code: int) -> str:
+    try:
+        from .isa import Syscall
+        return Syscall(code).name
+    except (ValueError, ImportError):
+        return f'SYS{code}'
+
+
 def supports(instructions: Sequence[Instruction]) -> Tuple[bool, str]:
     """指令流能否由 C 后端完整翻译; 不支持时返回原因。"""
     missing = sorted({str(op) for op, _args in instructions
@@ -1658,5 +2229,5 @@ def supports(instructions: Sequence[Instruction]) -> Tuple[bool, str]:
             return False, 'SYS 功能号必须是常量'
         code = int(args[0][1])
         if code not in SUPPORTED_SYS:
-            return False, f'未实现的 SYS {code}'
+            return False, f'未实现的 SYS {code} ({_syscall_name(code)})'
     return True, ''
