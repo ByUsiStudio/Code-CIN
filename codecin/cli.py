@@ -85,8 +85,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument('--mem-size', type=int, metavar='BYTES',
                    help='内存大小 (默认 1073741824 = 1 GiB, 动态分配, '
                         '只占实际写入的物理内存)')
+    # --max-instructions 已弃用: 默认不限制指令数 (保留为隐藏参数以免破坏脚本)
     p.add_argument('--max-instructions', type=int, metavar='N',
-                   help='指令数上限 (默认 100000000)')
+                   help=argparse.SUPPRESS)
 
     # 编译 / CROM
     p.add_argument('--compile', action='store_true', dest='compile_to_bin',

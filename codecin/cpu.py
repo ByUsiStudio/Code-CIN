@@ -256,7 +256,8 @@ class CPU:
         if 'steps' in result:
             # 原生 VM 整程序执行完毕: 统计一次性批量写入
             steps = int(result.get('steps') or 0)
-            counted = min(steps, self.config.max_instructions)
+            limit = self.config.max_instructions
+            counted = steps if limit <= 0 else min(steps, limit)
             self.stats.instruction_count = steps
             self.stats.opcode_count.clear()
             self.stats.hot_instructions['?'] += counted

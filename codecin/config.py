@@ -13,7 +13,8 @@ DEFAULT_MEM_SIZE = 1 << 30
 class Config:
     mem_size: int = DEFAULT_MEM_SIZE
     auto_save_crom: bool = False
-    max_instructions: int = 100_000_000
+    # 0 = 不限制指令数 (默认); 字段保留用于兼容旧调用方
+    max_instructions: int = 0
     sandbox_mode: bool = False
     # 调试模式: 强制 DEBUG 日志, 执行结束输出 CPU 状态与统计, 异常完整堆栈
     debug_mode: bool = False
@@ -40,8 +41,8 @@ class Config:
             self.mem_size = 256
         if self.mem_size > (1 << 40):
             self.mem_size = 1 << 40
-        if self.max_instructions < 1:
-            self.max_instructions = 1
+        if self.max_instructions < 0:
+            self.max_instructions = 0
         if self.optimize < 0:
             self.optimize = 0
         if self.optimize > 3:
