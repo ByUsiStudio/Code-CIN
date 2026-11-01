@@ -41,7 +41,9 @@ SUPPORTED_OPS = frozenset({
 })
 
 #: 已实现的 SYS 功能号。
-SUPPORTED_SYS = frozenset(set(range(0, 39)) | {137})
+SUPPORTED_SYS = frozenset(set(range(0, 39)) | set(range(51, 59))
+                          | set(range(61, 68)) | {137, 147, 148, 149, 150,
+                                                  157})
 
 
 class CBackendError(RuntimeError):
@@ -65,6 +67,13 @@ _RUNTIME = r'''
 #include <string.h>
 #include <math.h>
 #include <time.h>
+#include <sys/stat.h>
+#include <dirent.h>
+#ifdef _WIN32
+#include <direct.h>
+#else
+#include <unistd.h>
+#endif
 
 #define CODECIN_UNSUPPORTED 70
 
@@ -210,6 +219,7 @@ static int rt_init(uint64_t memsz, uint64_t sp, uint64_t heapbase) {
     SYSPTR = heapbase > 8192 ? heapbase - 8192 : 512;
     MEM = (uint8_t *)calloc((size_t)memsz, 1);
     if (!MEM) return 0;
+    rt_net_init();          /* 网络不可用不致命: 相关 SYS 会返回 -1 */
     R[32] = sp;
     OUTP = stdout;
     return 1;
@@ -375,8 +385,371 @@ static uint64_t rt_indexof(uint64_t hay, uint64_t needle) {
     return found ? (uint64_t)(found - (const char *)MEM) : (uint64_t)-1;
 }
 
-static double rt_bits2f(uint64_t bits) {
-    double d;
+/* ---------------- 文件系统 ---------------- */
+
+static uint64_t rt_empty(void) {
+    uint64_t p = rt_heap(1);
+    if (p) MEM[p] = 0;
+    return p;
+}
+
+static uint64_t rt_readfile(const char *path) {
+    FILE *f = fopen(path, "rb");
+    long n;
+    uint64_t p;
+    size_t got;
+    if (!f) return rt_empty();
+    if (fseek(f, 0, SEEK_END) != 0) { fclose(f); return rt_empty(); }
+    n = ftell(f);
+    if (n < 0) { fclose(f); return rt_empty(); }
+    rewind(f);
+    p = rt_heap((uint64_t)n + 1);
+    if (!p) { fclose(f); return rt_empty(); }
+    got = fread(MEM + p, 1, (size_t)n, f);
+    MEM[p + got] = 0;
+    fclose(f);
+    return p;
+}
+
+static int rt_writefile(const char *path, const char *data, int append) {
+    FILE *f = fopen(path, append ? "ab" : "wb");
+    size_t n;
+    int ok;
+    if (!f) return -1;
+    n = strlen(data);
+    ok = (fwrite(data, 1, n, f) == n);
+    if (fclose(f) != 0) ok = 0;
+    return ok ? 0 : -1;
+}
+
+static uint64_t rt_fileexists(const char *path) {
+    FILE *f = fopen(path, "rb");
+    if (!f) return 0;
+    fclose(f);
+    return 1;
+}
+
+static uint64_t rt_filedelete(const char *path) {
+    return remove(path) == 0 ? 0 : (uint64_t)-1;
+}
+
+static uint64_t rt_filesize(const char *path) {
+    FILE *f = fopen(path, "rb");
+    long n;
+    if (!f) return (uint64_t)-1;
+    if (fseek(f, 0, SEEK_END) != 0) { fclose(f); return (uint64_t)-1; }
+    n = ftell(f);
+    fclose(f);
+    return n < 0 ? (uint64_t)-1 : (uint64_t)n;
+}
+
+static int rt_mkdir_one(const char *path) {
+#ifdef _WIN32
+    return _mkdir(path);
+#else
+    return mkdir(path, 0755);
+#endif
+}
+
+static uint64_t rt_mkdirs(const char *path) {
+    char buf[1024];
+    size_t n = strlen(path);
+    char *p;
+    if (n == 0 || n >= sizeof(buf)) return (uint64_t)-1;
+    memcpy(buf, path, n + 1);
+    for (p = buf + 1; *p; p++) {
+        if (*p == '/' || *p == '\\') {
+            char save = *p;
+            *p = 0;
+            rt_mkdir_one(buf);
+            *p = save;
+        }
+    }
+    return rt_mkdir_one(buf) == 0 ? 0 : (uint64_t)-1;
+}
+
+/* ---------------- 目录 / 环境 ---------------- */
+
+static int rt_cmp_name(const void *a, const void *b) {
+    return strcmp(*(char *const *)a, *(char *const *)b);
+}
+
+static uint64_t rt_dirlist(const char *path) {
+    DIR *d = opendir(path);
+    char **names = NULL;
+    size_t count = 0, cap = 0, total = 0, i, at;
+    struct dirent *ent;
+    uint64_t out;
+    if (!d) return rt_empty();
+    while ((ent = readdir(d)) != NULL) {
+        char full[2048];
+        struct stat st;
+        size_t n;
+        int is_dir = 0;
+        if (!strcmp(ent->d_name, ".") || !strcmp(ent->d_name, "..")) continue;
+        snprintf(full, sizeof(full), "%s/%s", path, ent->d_name);
+        if (stat(full, &st) == 0 && (st.st_mode & S_IFMT) == S_IFDIR) is_dir = 1;
+        n = strlen(ent->d_name) + (is_dir ? 2 : 1);
+        if (count == cap) {
+            cap = cap ? cap * 2 : 16;
+            names = (char **)realloc(names, cap * sizeof(char *));
+            if (!names) { closedir(d); return rt_empty(); }
+        }
+        names[count] = (char *)malloc(n);
+        if (!names[count]) { closedir(d); return rt_empty(); }
+        snprintf(names[count], n, "%s%s", ent->d_name, is_dir ? "/" : "");
+        count++;
+    }
+    closedir(d);
+    qsort(names, count, sizeof(char *), rt_cmp_name);
+    for (i = 0; i < count; i++) total += strlen(names[i]) + 1;
+    out = rt_heap((uint64_t)total + 1);
+    if (!out) { for (i = 0; i < count; i++) free(names[i]); free(names); return 0; }
+    at = 0;
+    for (i = 0; i < count; i++) {
+        size_t n = strlen(names[i]);
+        if (i) MEM[out + at++] = '\n';
+        memcpy(MEM + out + at, names[i], n);
+        at += n;
+        free(names[i]);
+    }
+    MEM[out + at] = 0;
+    free(names);
+    return out;
+}
+
+static uint64_t rt_getenv(const char *name) {
+    const char *v = getenv(name);
+    return rt_dupstr(v ? v : "");
+}
+
+static uint64_t rt_setenv(const char *name, const char *value) {
+#ifdef _WIN32
+    return _putenv_s(name, value) == 0 ? 0 : (uint64_t)-1;
+#else
+    return setenv(name, value, 1) == 0 ? 0 : (uint64_t)-1;
+#endif
+}
+
+static uint64_t rt_osname(void) {
+#if defined(_WIN32)
+    return rt_dupstr("windows");
+#elif defined(__APPLE__)
+    return rt_dupstr("darwin");
+#else
+    return rt_dupstr("linux");
+#endif
+}
+
+static uint64_t rt_hostname(void) {
+#if defined(_WIN32)
+    const char *name = getenv("COMPUTERNAME");
+    return rt_dupstr(name ? name : "");
+#else
+    char buf[256];
+    if (gethostname(buf, sizeof(buf)) != 0) return rt_empty();
+    buf[sizeof(buf) - 1] = 0;
+    return rt_dupstr(buf);
+#endif
+}
+
+static uint64_t rt_username(void) {
+#if defined(_WIN32)
+    /* 与 Go 的 user.Current() 对齐: Windows 返回 DOMAIN\user */
+    const char *user = getenv("USERNAME");
+    const char *domain = getenv("USERDOMAIN");
+    char buf[512];
+    if (user && *user) {
+        if (domain && *domain) {
+            snprintf(buf, sizeof(buf), "%s\\%s", domain, user);
+            return rt_dupstr(buf);
+        }
+        return rt_dupstr(user);
+    }
+    return rt_empty();
+#else
+    static const char *keys[] = {"USER", "USERNAME", "LOGNAME"};
+    size_t i;
+    for (i = 0; i < sizeof(keys) / sizeof(keys[0]); i++) {
+        const char *v = getenv(keys[i]);
+        if (v && *v) return rt_dupstr(v);
+    }
+    return rt_empty();
+#endif
+}
+
+static uint64_t rt_cwd(void) {
+    char buf[4096];
+    return getcwd(buf, sizeof(buf)) ? rt_dupstr(buf) : rt_empty();
+}
+
+static uint64_t rt_homedir(void) {
+    const char *home = getenv("HOME");
+    if (!home || !*home) home = getenv("USERPROFILE");
+    return rt_dupstr(home ? home : "");
+}
+
+/* ---------------- 网络 (TCP / DNS) ---------------- */
+
+#ifdef _WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
+typedef SOCKET rt_sock_t;
+#define RT_BAD_SOCK INVALID_SOCKET
+#else
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <netdb.h>
+typedef int rt_sock_t;
+#define RT_BAD_SOCK (-1)
+#endif
+
+#define RT_MAX_SOCKS 64
+static rt_sock_t rt_socks[RT_MAX_SOCKS];
+static int rt_sock_open[RT_MAX_SOCKS];
+
+static int rt_net_init(void) {
+#ifdef _WIN32
+    WSADATA w;
+    return WSAStartup(MAKEWORD(2, 2), &w) == 0;
+#else
+    return 1;
+#endif
+}
+
+static int rt_sock_register(rt_sock_t s) {
+    int i;
+    for (i = 1; i < RT_MAX_SOCKS; i++) {
+        if (!rt_sock_open[i]) {
+            rt_socks[i] = s;
+            rt_sock_open[i] = 1;
+            return i;
+        }
+    }
+    return -1;
+}
+
+static rt_sock_t rt_sock_get(uint64_t fd) {
+    if (fd == 0 || fd >= RT_MAX_SOCKS || !rt_sock_open[fd]) return RT_BAD_SOCK;
+    return rt_socks[fd];
+}
+
+static void rt_sock_release(uint64_t fd) {
+    if (fd > 0 && fd < RT_MAX_SOCKS && rt_sock_open[fd]) {
+#ifdef _WIN32
+        closesocket(rt_socks[fd]);
+#else
+        close(rt_socks[fd]);
+#endif
+        rt_sock_open[fd] = 0;
+    }
+}
+
+static uint64_t rt_dns_lookup(const char *host) {
+    struct addrinfo hints, *res = NULL, *it;
+    char text[64];
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_INET;          /* 与 VM 一致: 优先 IPv4 */
+    hints.ai_socktype = SOCK_STREAM;
+    if (getaddrinfo(host, NULL, &hints, &res) != 0 || !res) {
+        hints.ai_family = AF_UNSPEC;
+        if (getaddrinfo(host, NULL, &hints, &res) != 0 || !res) {
+            return rt_empty();
+        }
+    }
+    for (it = res; it; it = it->ai_next) {
+        if (it->ai_family == AF_INET) {
+            struct sockaddr_in *sa = (struct sockaddr_in *)it->ai_addr;
+            if (inet_ntop(AF_INET, &sa->sin_addr, text, sizeof(text))) {
+                freeaddrinfo(res);
+                return rt_dupstr(text);
+            }
+        }
+    }
+    for (it = res; it; it = it->ai_next) {
+        if (it->ai_family == AF_INET6) {
+            struct sockaddr_in6 *sa = (struct sockaddr_in6 *)it->ai_addr;
+            if (inet_ntop(AF_INET6, &sa->sin6_addr, text, sizeof(text))) {
+                freeaddrinfo(res);
+                return rt_dupstr(text);
+            }
+        }
+    }
+    freeaddrinfo(res);
+    return rt_empty();
+}
+
+static uint64_t rt_tcp_dial(const char *host, uint64_t port) {
+    struct addrinfo hints, *res = NULL, *it;
+    char service[16];
+    rt_sock_t s = RT_BAD_SOCK;
+    int id;
+    if (!host || !*host || port == 0 || port > 65535) return (uint64_t)-1;
+    snprintf(service, sizeof(service), "%u", (unsigned)port);
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_STREAM;
+    if (getaddrinfo(host, service, &hints, &res) != 0 || !res)
+        return (uint64_t)-1;
+    for (it = res; it; it = it->ai_next) {
+        s = socket(it->ai_family, it->ai_socktype, it->ai_protocol);
+        if (s == RT_BAD_SOCK) continue;
+        if (connect(s, it->ai_addr, (int)it->ai_addrlen) == 0) break;
+#ifdef _WIN32
+        closesocket(s);
+#else
+        close(s);
+#endif
+        s = RT_BAD_SOCK;
+    }
+    freeaddrinfo(res);
+    if (s == RT_BAD_SOCK) return (uint64_t)-1;
+    id = rt_sock_register(s);
+    if (id < 0) {
+#ifdef _WIN32
+        closesocket(s);
+#else
+        close(s);
+#endif
+        return (uint64_t)-1;
+    }
+    return (uint64_t)id;
+}
+
+static uint64_t rt_tcp_send(uint64_t fd, uint64_t buf, uint64_t n) {
+    rt_sock_t s = rt_sock_get(fd);
+    size_t sent = 0;
+    if (s == RT_BAD_SOCK || n > (16u << 20)) return (uint64_t)-1;
+    if (n == 0) return 0;
+    if (buf >= MEMSZ || n > MEMSZ - buf) return (uint64_t)-1;
+    while (sent < (size_t)n) {
+        int k = send(s, (const char *)(MEM + buf) + sent,
+                     (int)((size_t)n - sent), 0);
+        if (k <= 0) return sent ? (uint64_t)sent : (uint64_t)-1;
+        sent += (size_t)k;
+    }
+    return (uint64_t)sent;
+}
+
+static uint64_t rt_tcp_recv(uint64_t fd, uint64_t buf, uint64_t max) {
+    rt_sock_t s = rt_sock_get(fd);
+    int k;
+    if (s == RT_BAD_SOCK || max > (8u << 20)) return (uint64_t)-1;
+    if (max == 0) return 0;
+    if (buf >= MEMSZ || max > MEMSZ - buf) return 0;
+    k = recv(s, (char *)(MEM + buf), (int)max, 0);
+    if (k < 0) return (uint64_t)-1;
+    return (uint64_t)k;
+}
+
+static uint64_t rt_tcp_close(uint64_t fd) {
+    if (rt_sock_get(fd) == RT_BAD_SOCK) return (uint64_t)-1;
+    rt_sock_release(fd);
+    return 0;
+}
+
+static double rt_bits2f(uint64_t bits) {    double d;
     memcpy(&d, &bits, 8);
     return d;
 }
@@ -723,6 +1096,29 @@ class _Emitter:
                 36: 'R[0] = rt_trim(R[0], 1, 1);',                    # TRIM
                 37: 'R[0] = rt_trim(R[0], 1, 0);',                    # LTRIM
                 38: 'R[0] = rt_trim(R[0], 0, 1);',                    # RTRIM
+                51: 'R[0] = rt_readfile(rt_cstr(R[0]));',              # FILE_READ
+                52: 'R[0] = (uint64_t)(int64_t)rt_writefile('
+                    'rt_cstr(R[0]), rt_cstr(R[1]), 0);',               # WRITE
+                53: 'R[0] = (uint64_t)(int64_t)rt_writefile('
+                    'rt_cstr(R[0]), rt_cstr(R[1]), 1);',               # APPEND
+                54: 'R[0] = rt_fileexists(rt_cstr(R[0]));',            # EXISTS
+                55: 'R[0] = rt_filedelete(rt_cstr(R[0]));',            # DELETE
+                56: 'R[0] = rt_filesize(rt_cstr(R[0]));',              # SIZE
+                57: 'R[0] = rt_mkdirs(rt_cstr(R[0]));',                # MKDIR
+                58: 'R[0] = rt_dirlist(rt_cstr(R[0]));',               # DIRLIST
+                61: 'R[0] = rt_getenv(rt_cstr(R[0]));',                # GETENV
+                62: 'R[0] = rt_setenv(rt_cstr(R[0]), rt_cstr(R[1]));', # SETENV
+                63: 'R[0] = rt_osname();',                             # OSNAME
+                64: 'R[0] = rt_hostname();',                           # HOSTNAME
+                65: 'R[0] = rt_username();',                           # USERNAME
+                66: 'R[0] = rt_cwd();',                                # CWD
+                67: 'R[0] = rt_homedir();',                            # HOMEDIR
+                147: 'R[0] = rt_tcp_dial(rt_cstr(R[0]), R[1]);',       # TCP_DIAL
+                148: 'R[0] = rt_tcp_send(R[0], R[1], R[2]);',          # TCP_SEND
+                149: 'R[0] = (uint64_t)(int64_t)rt_tcp_recv('
+                     'R[0], R[1], R[2]);',                             # TCP_RECV
+                150: 'R[0] = rt_tcp_close(R[0]);',                      # TCP_CLOSE
+                157: 'R[0] = rt_dns_lookup(rt_cstr(R[0]));',           # DNS_LOOKUP
             }
             if code in simple:
                 self.code(simple[code])
@@ -843,6 +1239,8 @@ def compile_instructions(instructions: Sequence[Instruction],
                '-std=c11', '-o', out, c_path]
         if spec.fmt != 'pe':
             cmd.append('-lm')          # Linux/ELF 的 libm 需显式链接
+        else:
+            cmd.append('-lws2_32')     # Windows 的 Winsock
         try:
             result = subprocess.run(cmd, capture_output=True, text=True,
                                     timeout=300, check=False)

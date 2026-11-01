@@ -132,6 +132,83 @@ def test_builtin_syscalls_match_vm(workdir, capsys):
     assert expected.splitlines()[:3] == ['42', '4', 'world']
 
 
+@pytest.mark.skipif(_compiler() is None, reason='本机没有可用的 C 编译器')
+def test_file_syscalls_match_vm(workdir, capsys, monkeypatch):
+    """file_* 系列 (51-57) 与 VM 行为一致: 返回值/内容/删除。"""
+    program = ('function main() -> int {\n'
+               '    file_write("data.txt", "hello")\n'
+               '    println(file_exists("data.txt"))\n'
+               '    println(file_size("data.txt"))\n'
+               '    println(file_read("data.txt"))\n'
+               '    file_append("data.txt", " world")\n'
+               '    println(file_read("data.txt"))\n'
+               '    println(file_delete("data.txt"))\n'
+               '    println(file_exists("data.txt"))\n'
+               '    return 0\n'
+               '}\n')
+    vm_dir = os.path.join(workdir, 'vm')
+    aot_dir = os.path.join(workdir, 'aot')
+    os.makedirs(vm_dir)
+    os.makedirs(aot_dir)
+    for target in (vm_dir, aot_dir):
+        with open(os.path.join(target, 'fs.cin'), 'w', encoding='utf-8') as f:
+            f.write(program)
+
+    monkeypatch.chdir(vm_dir)
+    assert cli.main(['fs.cin', '--log-level', 'ERROR']) == 0
+    expected = capsys.readouterr().out
+    monkeypatch.chdir(workdir)
+
+    built = aot.build_program(os.path.join(aot_dir, 'fs.cin'),
+                              out=os.path.join(aot_dir, 'fs'),
+                              backend='c', use_cache=False)
+    result = subprocess.run([built], cwd=aot_dir, capture_output=True,
+                            text=True, timeout=60)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == expected
+    assert expected.splitlines() == ['1', '5', 'hello', 'hello world',
+                                     '0', '0']
+    assert not os.path.exists(os.path.join(aot_dir, 'data.txt'))
+
+
+@pytest.mark.skipif(_compiler() is None, reason='本机没有可用的 C 编译器')
+def test_system_info_syscalls_match_vm(workdir, capsys, monkeypatch):
+    """getenv/hostname/username/cwd (61,64,65,66) 与 VM 一致。"""
+    program = ('function main() -> int {\n'
+               '    println(cwd())\n'
+               '    println(getenv("CIN_AOT_TEST"))\n'
+               '    println(hostname())\n'
+               '    println(username())\n'
+               '    return 0\n'
+               '}\n')
+    monkeypatch.setenv('CIN_AOT_TEST', 'hello-env')
+    src = os.path.join(workdir, 'sys.cin')
+    with open(src, 'w', encoding='utf-8') as f:
+        f.write(program)
+
+    monkeypatch.chdir(workdir)
+    assert cli.main(['sys.cin', '--log-level', 'ERROR']) == 0
+    expected = capsys.readouterr().out
+    monkeypatch.chdir(os.path.dirname(workdir))
+
+    built = aot.build_program(src, out=os.path.join(workdir, 'sysinfo'),
+                              backend='c', use_cache=False)
+    result = subprocess.run([built], cwd=workdir, capture_output=True,
+                            text=True, timeout=60, env=os.environ.copy())
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == expected
+    assert 'hello-env' in expected.splitlines()
+
+
+def test_dirlist_and_env_runtime_symbols_are_emitted():
+    source = cbackend.emit_c(
+        [('SYS', [('imm', 58)]), ('SYS', [('imm', 61)]), ('HALT', [])],
+        {}, [], 0, 1 << 20, (1 << 20) - 8, 1 << 19)
+    for symbol in ('rt_dirlist', 'rt_getenv', 'rt_osname', 'rt_hostname',
+                   'rt_cwd', 'rt_homedir'):
+        assert symbol in source
+
+
 def test_supports_reports_missing_opcode_and_syscall():
     ok, reason = cbackend.supports([('MOV', [('reg', 0), ('imm', 1)]),
                                     ('HALT', [])])
