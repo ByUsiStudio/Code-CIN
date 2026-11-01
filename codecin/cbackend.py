@@ -42,9 +42,10 @@ SUPPORTED_OPS = frozenset({
 
 #: 已实现的 SYS 功能号。
 SUPPORTED_SYS = frozenset(set(range(0, 39)) | set(range(51, 59))
-                          | set(range(61, 68)) | {97, 98, 137, 145, 146, 147,
-                                                  148, 149, 150, 151, 152,
-                                                  153, 154, 155, 156, 157})
+                          | set(range(61, 68)) | {97, 98, 101, 102, 137, 145,
+                                                  146, 147, 148, 149, 150,
+                                                  151, 152, 153, 154, 155,
+                                                  156, 157})
 
 
 class CBackendError(RuntimeError):
@@ -1020,6 +1021,82 @@ static uint64_t rt_udp_recvfrom(uint64_t fd, uint64_t buf, uint64_t max,
     return (uint64_t)k;
 }
 
+/* ---------------- Base64 (SYS 101/102) ---------------- */
+
+static const char RT_B64[] =
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+static uint64_t rt_b64enc(uint64_t addr) {
+    const unsigned char *s = (const unsigned char *)rt_cstr(addr);
+    size_t n = strlen((const char *)s);
+    size_t outn = 4 * ((n + 2) / 3);
+    uint64_t p = rt_heap((uint64_t)outn + 1);
+    size_t i, j = 0;
+    if (!p) return 0;
+    for (i = 0; i + 2 < n; i += 3) {
+        unsigned v = ((unsigned)s[i] << 16) | ((unsigned)s[i + 1] << 8)
+                     | (unsigned)s[i + 2];
+        MEM[p + j++] = RT_B64[(v >> 18) & 63];
+        MEM[p + j++] = RT_B64[(v >> 12) & 63];
+        MEM[p + j++] = RT_B64[(v >> 6) & 63];
+        MEM[p + j++] = RT_B64[v & 63];
+    }
+    if (i < n) {
+        unsigned v = (unsigned)s[i] << 16;
+        int rem = (int)(n - i);
+        if (rem == 2) v |= (unsigned)s[i + 1] << 8;
+        MEM[p + j++] = RT_B64[(v >> 18) & 63];
+        MEM[p + j++] = RT_B64[(v >> 12) & 63];
+        MEM[p + j++] = rem == 2 ? RT_B64[(v >> 6) & 63] : '=';
+        MEM[p + j++] = '=';
+    }
+    MEM[p + j] = 0;
+    return p;
+}
+
+static int rt_b64val(int c) {
+    if (c >= 'A' && c <= 'Z') return c - 'A';
+    if (c >= 'a' && c <= 'z') return c - 'a' + 26;
+    if (c >= '0' && c <= '9') return c - '0' + 52;
+    if (c == '+') return 62;
+    if (c == '/') return 63;
+    return -1;
+}
+
+static uint64_t rt_b64dec(uint64_t addr) {
+    const char *s = rt_cstr(addr);
+    size_t n = strlen(s);
+    uint64_t p = rt_heap((uint64_t)(n / 4 + 1) * 3 + 1);
+    size_t i, j = 0;
+    int quad[4], k = 0;
+    if (!p) return 0;
+    for (i = 0; i < n; i++) {
+        int v;
+        if (s[i] == ' ' || s[i] == '\n' || s[i] == '\r' || s[i] == '\t'
+            || s[i] == '=')
+            continue;
+        v = rt_b64val((unsigned char)s[i]);
+        if (v < 0) continue;
+        quad[k++] = v;
+        if (k == 4) {
+            unsigned w = ((unsigned)quad[0] << 18) | ((unsigned)quad[1] << 12)
+                         | ((unsigned)quad[2] << 6) | (unsigned)quad[3];
+            MEM[p + j++] = (unsigned char)((w >> 16) & 0xFF);
+            MEM[p + j++] = (unsigned char)((w >> 8) & 0xFF);
+            MEM[p + j++] = (unsigned char)(w & 0xFF);
+            k = 0;
+        }
+    }
+    if (k >= 2) {
+        unsigned w = ((unsigned)quad[0] << 18) | ((unsigned)quad[1] << 12);
+        if (k >= 3) w |= (unsigned)quad[2] << 6;
+        MEM[p + j++] = (unsigned char)((w >> 16) & 0xFF);
+        if (k >= 3) MEM[p + j++] = (unsigned char)((w >> 8) & 0xFF);
+    }
+    MEM[p + j] = 0;
+    return p;
+}
+
 static double rt_bits2f(uint64_t bits) {    double d;
     memcpy(&d, &bits, 8);
     return d;
@@ -1388,6 +1465,8 @@ class _Emitter:
                 98: ('R[0] = rt_http("POST", rt_cstr(R[0]), '
                      '"Content-Type: text/plain; charset=utf-8\\r\\n", '
                      'rt_cstr(R[1]));'),                                # HTTP_POST
+                101: 'R[0] = rt_b64enc(R[0]);',                         # B64_ENC
+                102: 'R[0] = rt_b64dec(R[0]);',                         # B64_DEC
                 145: 'R[0] = rt_http(rt_cstr(R[0]), rt_cstr(R[1]), '
                      'rt_cstr(R[2]), rt_cstr(R[3]));',                  # HTTP_REQ
                 146: 'R[0] = (uint64_t)LASTHTTPST;',                    # HTTP_CODE

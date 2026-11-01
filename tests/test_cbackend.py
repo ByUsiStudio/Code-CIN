@@ -467,6 +467,29 @@ def test_udp_roundtrip_matches_vm(workdir):
     assert vm_out == aot_out == b'4\n4'
 
 
+@pytest.mark.skipif(_compiler() is None, reason='本机没有可用的 C 编译器')
+def test_base64_matches_vm(workdir, capsys, monkeypatch):
+    src = os.path.join(workdir, 'b64.cin')
+    with open(src, 'w', encoding='utf-8') as f:
+        f.write('function main() -> int {\n'
+                '    println(base64_encode("hello"))\n'
+                '    println(base64_decode("aGVsbG8="))\n'
+                '    println(base64_encode("abc"))\n'
+                '    return 0\n'
+                '}\n')
+    monkeypatch.chdir(workdir)
+    assert cli.main(['b64.cin', '--log-level', 'ERROR']) == 0
+    expected = capsys.readouterr().out
+    assert expected.splitlines() == ['aGVsbG8=', 'hello', 'YWJj']
+
+    built = aot.build_program(src, out=os.path.join(workdir, 'b64prog'),
+                              backend='c', use_cache=False)
+    result = subprocess.run([built], capture_output=True, text=True,
+                            timeout=60)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == expected
+
+
 def test_supports_reports_missing_opcode_and_syscall():
     ok, reason = cbackend.supports([('MOV', [('reg', 0), ('imm', 1)]),
                                     ('HALT', [])])

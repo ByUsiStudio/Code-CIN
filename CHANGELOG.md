@@ -5,6 +5,86 @@
 
 ---
 
+## [7.0.0] - 2026-11-01
+
+### 新增 (Added)
+
+- **`.sdgcc` 编译产物容器**（`codecin/sdgcc.py`）：28 字节头 + 24 字节/段的
+  定长段表，`CODE` 段逐字节保存 BIN v3，另附 `META`（TOML）、`SYMS`（标签）、
+  `SRCS`（源码清单）。`CODE` 与旧 `.bin` 完全同构，旧读取器可直接消费。
+- **单文件 / 多文件模式**：容器内记录 `mode` 与源码清单；`cvm build` 对 mkn
+  项目默认**多文件**（入口 + `import` 闭包），`--single` 切换单文件模式。
+- `cvm` 模块（CVM format 2）改为 `code/program.sdgcc` 成员，仍可读取旧
+  `code/program.bin`（format 1）；`cvm build` 接受 `.sdgcc` / `.bin` 混合输入，
+  旧 `.bin` 输入会被原样封装。
+- **AOT 工具链层**（`codecin/toolchain.py`）：为去除 Go 依赖后的 C 后端提供
+  编译器发现与交叉编译支持——三个目标（`x86_64-windows` / `x86_64-linux` /
+  `aarch64-linux`）、`CODECIN_CC_<TARGET>` 覆盖、自带工具链目录、
+  `-dumpmachine` 目标校验，以及 `python -m codecin.toolchain install` 从镜像
+  下载/校验/解包（含路径穿越防护）。
+- **AOT C 后端**（`codecin/cbackend.py`）：把 UCBC 指令逐条展开成 C（寄存器
+  数组 + 显式 NZCV + 扁平内存 + 栈/call-ret），由 GCC/Clang 生成机器码；
+  不再经过 Go。已覆盖整数运算、比较跳转、`B`/`CBZ` 条件分支、内存读写、
+  `PUSH/POP/CALL/RET`、`OUT` 与核心 syscall（ALLOCFRAME/TIME/RAND/MALLOC/
+  ITOA/FTOA/PRINT_STR/ABORT 等），未实现指令在运行期以明确信息退出（码 1）。
+  与 VM 对同一 CIN 程序的输出已做逐字节比对。
+- **C 后端 syscall 覆盖 0-38**：浮点数学（`sqrt/pow/sin/cos/tan/FADD…/FCMP/
+  FTOI/ITOF`）、整数/字符串（`abs/strlen/strcmp/strcpy/strcat/malloc/itoa/
+  ftoa/str_concat/bool_str/substr/indexof/upper/lower/trim/ltrim/rtrim/atoi`）
+  与 `floor/ceil/round`、`time/rand/srand`、`abort`，全部按 VM 语义实现
+  （含 `malloc` 16 字节对齐、`itoa` 有符号、`strcmp` 字节差、`substr` 越界裁剪）。
+- **C 后端文件 I/O（SYS 51-57）**：`file_read/file_write/file_append/
+  file_exists/file_delete/file_size/mkdir`，返回值与 VM 对齐（失败 -1、
+  `file_read` 失败返回空串、`mkdir` 递归建目录），并与 VM 做了同一程序
+  的输出对拍。
+- **C 后端系统层（SYS 58/61-67）**：`dirlist`（有序、目录带 `/`）、
+  `getenv/setenv`、`osname/hostname/username/cwd/homedir`；Windows 的
+  `username` 与 Go `user.Current()` 对齐为 `DOMAIN\user`。
+- **C 后端网络（SYS 147-150/157）**：`tcp_dial/tcp_send/tcp_recv/tcp_close`
+  与 `dns_lookup`，Windows 走 Winsock（`-lws2_32`）、POSIX 走 BSD socket；
+  与 VM 在本地 echo 服务器上做了同程序对拍（收发字节数、退出码一致）。
+- **C 后端 HTTP（SYS 97/98/145/146）**：`http_get`/`http_post`/`http_req` 与
+  `http_code`；URL 解析（host/port/path）、`Connection: close` 读尽响应、
+  8 MiB 上限、状态码记录，GET 与 POST 均与 VM 在本地 HTTP 服务上对拍。
+- **C 后端 TCP 服务端（SYS 151/152）**：`tcp_listen/tcp_accept`，与
+  `tcp_recv/tcp_send/tcp_close` 组合可让 AOT 产物直接对外提供 TCP 服务；
+  已用 Python 客户端对 VM 与 AOT 两个版本做同一协议对拍。
+- **C 后端 UDP（SYS 153-156）**：`udp_open/udp_sendto/udp_recvfrom/
+  udp_close`（可选 `ip:port` 回填），与 VM 在本地 UDP echo 对端上完成
+  收发字节数对拍。
+- **C 后端 Base64（SYS 101/102）**：`base64_encode/base64_decode`
+  （标准字母表、`=` 填充、解码忽略空白与非法字符），与 VM 对拍一致。
+
+### 变更 (Changed)
+
+- **AOT 默认走 C 后端**：`--build-backend auto` 在指令流可被 C 后端完整翻译时
+  使用「C → GCC/Clang」管线（不再经过 Go），遇到未覆盖的指令/syscall 才回退
+  旧的 Go 后端；新增 `--build-backend c` 可强制 C 后端（不支持时直接报出
+  具体指令/SYS 号，不静默换后端）。`--build-target windows/amd64`、
+  `linux/amd64`、`linux/arm64` 映射到 `x86_64-windows` / `x86_64-linux` /
+  `aarch64-linux`；AOT 输入新增 `.sdgcc`。
+- `mkn build` / `codecin --compile-only` 默认产物由 `.bin` 改为 `.sdgcc`；
+  显式 `-o *.bin` 仍产出旧格式，`.bin` 作为**兼容输入**继续受支持。
+- `crom.dump_bin()` 抽出序列化逻辑供容器复用，`cvm` 单文件编译不再落临时
+  `.bin`；`cvm build` 读取 `mkn.toml` 的 `[build] optimize/mem_size` 与
+  `entry`，产物元数据随之记录。
+- **弃用 `--max-instructions`，默认不限制指令数**：`Config.max_instructions`
+  默认改为 `0`（0 = 不限），`aot`/`native_codegen` 的步数上限默认同步改为
+  0（引擎侧 `maxSteps <= 0` 即不限）；`codecin`/`cvm` 的帮助中不再展示该
+  参数（保留为隐藏参数以兼容旧脚本）。死循环请用 `Ctrl+C` 中断。
+
+### 修复 (Fixed)
+
+- **安装提示仍在承诺纯 Python 回退**：`setup.py` 在 PATH 缺 `go` 时输出
+  「本次安装回退纯 Python 解释执行」，而 v5.9.0 起解释器与 JIT 已整体删除，
+  缺少 `codecin-native` 时程序根本无法执行。现改为说明真实后果与两条修复路径
+  （安装 Go 后重装 / 从 Release 取预编译库），并在安装收尾打印
+  `原生引擎: 可用/不可用` 汇总，避免 `pip install` 静默成功、首次运行才暴露。
+- `codecin/native.py:get_engine()` 的 docstring 改为「无纯 Python 回退」，
+  与 `cpu.py` 的 native-only 语义一致。
+
+---
+
 ## [6.4.2] - 2026-10-31
 
 一次以「内置标准库 pic 包化 / 注册表文档补全」为主题的维护发布。
