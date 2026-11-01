@@ -415,6 +415,58 @@ def test_tcp_server_accept_matches_vm(workdir):
                                                        aot_err)
 
 
+@pytest.mark.skipif(_compiler() is None, reason='本机没有可用的 C 编译器')
+def test_udp_roundtrip_matches_vm(workdir):
+    """udp_open/sendto/recvfrom/close 与 VM 一致（本地 UDP echo 对端）。"""
+    import socket
+    import sys
+    import threading
+
+    peer = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    peer.bind(('127.0.0.1', 0))
+    peer.settimeout(30)
+    peer_port = peer.getsockname()[1]
+
+    def echo():
+        try:
+            for _ in range(2):
+                data, addr = peer.recvfrom(64)
+                peer.sendto(data, addr)
+        finally:
+            peer.close()
+
+    threading.Thread(target=echo, daemon=True).start()
+
+    program = ('function main() -> int {\n'
+               '    int fd = udp_open(0)\n'
+               '    if (fd < 0) { println("open_fail") return 1 }\n'
+               '    int buf[64]\n'
+               f'    int sent = udp_sendto(fd, "127.0.0.1", {peer_port}, '
+               '"ping", 4)\n'
+               '    int n = udp_recvfrom(fd, buf, 64, 0)\n'
+               '    println(sent)\n'
+               '    println(n)\n'
+               '    udp_close(fd)\n'
+               '    return 0\n'
+               '}\n')
+    src = os.path.join(workdir, 'udp.cin')
+    with open(src, 'w', encoding='utf-8') as f:
+        f.write(program)
+
+    vm = subprocess.run(
+        [sys.executable, '-c',
+         'import sys; from codecin.cli import main; '
+         'sys.exit(main([sys.argv[1], "--log-level", "ERROR"]))', src],
+        capture_output=True, timeout=60)
+    built = aot.build_program(src, out=os.path.join(workdir, 'udpprog'),
+                              backend='c', use_cache=False)
+    result = subprocess.run([built], capture_output=True, timeout=60)
+    assert vm.returncode == result.returncode == 0
+    vm_out = vm.stdout.replace(b'\r\n', b'\n').strip()
+    aot_out = result.stdout.replace(b'\r\n', b'\n').strip()
+    assert vm_out == aot_out == b'4\n4'
+
+
 def test_supports_reports_missing_opcode_and_syscall():
     ok, reason = cbackend.supports([('MOV', [('reg', 0), ('imm', 1)]),
                                     ('HALT', [])])

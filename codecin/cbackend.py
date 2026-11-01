@@ -44,7 +44,7 @@ SUPPORTED_OPS = frozenset({
 SUPPORTED_SYS = frozenset(set(range(0, 39)) | set(range(51, 59))
                           | set(range(61, 68)) | {97, 98, 137, 145, 146, 147,
                                                   148, 149, 150, 151, 152,
-                                                  157})
+                                                  153, 154, 155, 156, 157})
 
 
 class CBackendError(RuntimeError):
@@ -942,6 +942,84 @@ static uint64_t rt_tcp_accept(uint64_t lfd) {
     return (uint64_t)id;
 }
 
+static uint64_t rt_udp_open(uint64_t port) {
+    struct sockaddr_in addr;
+    rt_sock_t s = socket(AF_INET, SOCK_DGRAM, 0);
+    int id;
+    if (s == RT_BAD_SOCK) return (uint64_t)-1;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    addr.sin_port = htons((unsigned short)port);
+    if (port > 0 && bind(s, (struct sockaddr *)&addr, sizeof(addr)) != 0) {
+#ifdef _WIN32
+        closesocket(s);
+#else
+        close(s);
+#endif
+        return (uint64_t)-1;
+    }
+    id = rt_sock_register(s);
+    if (id < 0) {
+#ifdef _WIN32
+        closesocket(s);
+#else
+        close(s);
+#endif
+        return (uint64_t)-1;
+    }
+    return (uint64_t)id;
+}
+
+static uint64_t rt_udp_sendto(uint64_t fd, const char *host, uint64_t port,
+                              uint64_t buf, uint64_t n) {
+    rt_sock_t s = rt_sock_get(fd);
+    struct sockaddr_in addr;
+    struct addrinfo hints, *res = NULL;
+    struct sockaddr_in *sa;
+    int k;
+    if (s == RT_BAD_SOCK || port == 0 || port > 65535) return (uint64_t)-1;
+    if (buf >= MEMSZ || n > MEMSZ - buf || n > (16u << 20)) return (uint64_t)-1;
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_DGRAM;
+    if (getaddrinfo(host, NULL, &hints, &res) != 0 || !res) return (uint64_t)-1;
+    sa = (struct sockaddr_in *)res->ai_addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_addr = sa->sin_addr;
+    addr.sin_port = htons((unsigned short)port);
+    freeaddrinfo(res);
+    k = sendto(s, (const char *)(MEM + buf), (int)n, 0,
+               (struct sockaddr *)&addr, sizeof(addr));
+    return k < 0 ? (uint64_t)-1 : (uint64_t)k;
+}
+
+static uint64_t rt_udp_recvfrom(uint64_t fd, uint64_t buf, uint64_t max,
+                                uint64_t srcinfo) {
+    rt_sock_t s = rt_sock_get(fd);
+    struct sockaddr_in from;
+    int fl = (int)sizeof(from);
+    int k;
+    char text[64];
+    size_t tn;
+    if (s == RT_BAD_SOCK || max > (8u << 20)) return (uint64_t)-1;
+    if (buf >= MEMSZ || max > MEMSZ - buf) return (uint64_t)-1;
+    k = recvfrom(s, (char *)(MEM + buf), (int)max, 0,
+                 (struct sockaddr *)&from, &fl);
+    if (k < 0) return (uint64_t)-1;
+    if (srcinfo && srcinfo < MEMSZ) {
+        inet_ntop(AF_INET, &from.sin_addr, text, sizeof(text));
+        tn = strlen(text);
+        snprintf(text + tn, sizeof(text) - tn, ":%u",
+                 (unsigned)ntohs(from.sin_port));
+        tn = strlen(text);
+        if (srcinfo + tn + 1 <= MEMSZ)
+            memcpy(MEM + srcinfo, text, tn + 1);
+    }
+    return (uint64_t)k;
+}
+
 static double rt_bits2f(uint64_t bits) {    double d;
     memcpy(&d, &bits, 8);
     return d;
@@ -1320,6 +1398,11 @@ class _Emitter:
                 150: 'R[0] = rt_tcp_close(R[0]);',                      # TCP_CLOSE
                 151: 'R[0] = rt_tcp_listen(R[0]);',                     # TCP_LISTEN
                 152: 'R[0] = rt_tcp_accept(R[0]);',                     # TCP_ACCEPT
+                153: 'R[0] = rt_udp_open(R[0]);',                       # UDP_OPEN
+                154: 'R[0] = rt_udp_sendto(R[0], rt_cstr(R[1]), R[2], '
+                     'R[3], R[4]);',                                    # UDP_SENDTO
+                155: 'R[0] = rt_udp_recvfrom(R[0], R[1], R[2], R[3]);',  # UDP_RECV
+                156: 'R[0] = rt_tcp_close(R[0]);',                      # UDP_CLOSE
                 157: 'R[0] = rt_dns_lookup(rt_cstr(R[0]));',           # DNS_LOOKUP
             }
             if code in simple:
