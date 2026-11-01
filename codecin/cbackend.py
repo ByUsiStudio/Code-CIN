@@ -212,6 +212,8 @@ static uint64_t rt_rand(void) {
     return rt_rand_state >> 1;
 }
 
+static int rt_net_init(void);   /* 定义在下方网络段 */
+
 static int rt_init(uint64_t memsz, uint64_t sp, uint64_t heapbase) {
     MEMSZ = memsz;
     HEAPBASE = heapbase;
