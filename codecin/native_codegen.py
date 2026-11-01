@@ -968,7 +968,7 @@ def generate_go_source(instructions: Sequence[Instruction],
                        mem_size: int = 1 << 30,
                        sp: Optional[int] = None,
                        heap_base: Optional[int] = None,
-                       max_steps: int = 100000000,
+                       max_steps: int = 0,
                        program_name: str = 'program',
                        block_mode: Optional[bool] = None) -> str:
     """生成 native AOT 的 Go 源码。

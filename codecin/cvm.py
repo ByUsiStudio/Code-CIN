@@ -598,7 +598,8 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser('run', help='运行模块')
     p.add_argument('module', help='.cvm 文件或模块名')
     p.add_argument('--mem-size', type=int, dest='mem_size')
-    p.add_argument('--max-instructions', type=int, dest='max_instructions')
+    p.add_argument('--max-instructions', type=int, dest='max_instructions',
+                   help=argparse.SUPPRESS)   # 已弃用: 默认不限制指令数
     p.add_argument('--sandbox', action='store_true')
     p.add_argument('--log-level', default='ERROR', dest='log_level',
                    choices=['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'])
