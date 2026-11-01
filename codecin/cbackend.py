@@ -42,8 +42,9 @@ SUPPORTED_OPS = frozenset({
 
 #: 已实现的 SYS 功能号。
 SUPPORTED_SYS = frozenset(set(range(0, 39)) | set(range(51, 59))
-                          | set(range(61, 68)) | {137, 145, 146, 147, 148,
-                                                  149, 150, 157})
+                          | set(range(61, 68)) | {97, 98, 137, 145, 146, 147,
+                                                  148, 149, 150, 151, 152,
+                                                  157})
 
 
 class CBackendError(RuntimeError):
@@ -805,7 +806,8 @@ static int rt_url_parse(const char *url, char *host, size_t hn,
 static uint64_t rt_http(const char *method, const char *url,
                         const char *headers, const char *body) {
     char host[256], port[8], path[1024];
-    char head[4096];
+    char head[8192];
+    char extra[4096];
     char *resp = NULL;
     size_t cap = 0, len = 0;
     rt_sock_t s;
@@ -819,10 +821,17 @@ static uint64_t rt_http(const char *method, const char *url,
     s = rt_connect_host(host, port);
     if (s == RT_BAD_SOCK) return rt_empty();
 
+    extra[0] = 0;
+    if (headers && *headers) {
+        size_t hn = strlen(headers);
+        snprintf(extra, sizeof(extra), "%s%s", headers,
+                 headers[hn - 1] == '\n' ? "" : "\r\n");
+    }
     n = snprintf(head, sizeof(head),
-                 "%s %s HTTP/1.0\r\nHost: %s\r\nConnection: close\r\n%s%s\r\n",
-                 method, path, host, headers ? headers : "",
-                 (headers && *headers) ? "\r\n" : "");
+                 "%s %s HTTP/1.0\r\nHost: %s\r\nConnection: close\r\n%s"
+                 "Content-Length: %lu\r\n\r\n",
+                 method, path, host, extra,
+                 (unsigned long)(body ? strlen(body) : 0));
     if (send(s, head, n, 0) != n) {
 #ifdef _WIN32
         closesocket(s);
@@ -868,6 +877,69 @@ static uint64_t rt_http(const char *method, const char *url,
     out = rt_dupstr(body_start ? body_start + 4 : resp);
     free(resp);
     return out;
+}
+
+static uint64_t rt_tcp_listen(uint64_t port) {
+    struct sockaddr_in addr;
+    rt_sock_t s;
+    int id;
+    if (port == 0 || port > 65535) return (uint64_t)-1;
+    s = socket(AF_INET, SOCK_STREAM, 0);
+    if (s == RT_BAD_SOCK) return (uint64_t)-1;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    addr.sin_port = htons((unsigned short)port);
+#ifdef _WIN32
+    {
+        BOOL reuse = TRUE;
+        setsockopt(s, SOL_SOCKET, SO_REUSEADDR, (const char *)&reuse,
+                   sizeof(reuse));
+    }
+#else
+    {
+        int reuse = 1;
+        setsockopt(s, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
+    }
+#endif
+    if (bind(s, (struct sockaddr *)&addr, sizeof(addr)) != 0 ||
+        listen(s, 16) != 0) {
+#ifdef _WIN32
+        closesocket(s);
+#else
+        close(s);
+#endif
+        return (uint64_t)-1;
+    }
+    id = rt_sock_register(s);
+    if (id < 0) {
+#ifdef _WIN32
+        closesocket(s);
+#else
+        close(s);
+#endif
+        return (uint64_t)-1;
+    }
+    return (uint64_t)id;
+}
+
+static uint64_t rt_tcp_accept(uint64_t lfd) {
+    rt_sock_t l = rt_sock_get(lfd);
+    rt_sock_t c;
+    int id;
+    if (l == RT_BAD_SOCK) return (uint64_t)-1;
+    c = accept(l, NULL, NULL);
+    if (c == RT_BAD_SOCK) return (uint64_t)-1;
+    id = rt_sock_register(c);
+    if (id < 0) {
+#ifdef _WIN32
+        closesocket(c);
+#else
+        close(c);
+#endif
+        return (uint64_t)-1;
+    }
+    return (uint64_t)id;
 }
 
 static double rt_bits2f(uint64_t bits) {    double d;
@@ -1234,13 +1306,20 @@ class _Emitter:
                 65: 'R[0] = rt_username();',                           # USERNAME
                 66: 'R[0] = rt_cwd();',                                # CWD
                 67: 'R[0] = rt_homedir();',                            # HOMEDIR
+                97: 'R[0] = rt_http("GET", rt_cstr(R[0]), "", "");',    # HTTP_GET
+                98: ('R[0] = rt_http("POST", rt_cstr(R[0]), '
+                     '"Content-Type: text/plain; charset=utf-8\\r\\n", '
+                     'rt_cstr(R[1]));'),                                # HTTP_POST
                 145: 'R[0] = rt_http(rt_cstr(R[0]), rt_cstr(R[1]), '
                      'rt_cstr(R[2]), rt_cstr(R[3]));',                  # HTTP_REQ
                 146: 'R[0] = (uint64_t)LASTHTTPST;',                    # HTTP_CODE
-                147: 'R[0] = rt_tcp_dial(rt_cstr(R[0]), R[1]);',       # TCP_DIAL                148: 'R[0] = rt_tcp_send(R[0], R[1], R[2]);',          # TCP_SEND
+                147: 'R[0] = rt_tcp_dial(rt_cstr(R[0]), R[1]);',       # TCP_DIAL
+                148: 'R[0] = rt_tcp_send(R[0], R[1], R[2]);',          # TCP_SEND
                 149: 'R[0] = (uint64_t)(int64_t)rt_tcp_recv('
                      'R[0], R[1], R[2]);',                             # TCP_RECV
                 150: 'R[0] = rt_tcp_close(R[0]);',                      # TCP_CLOSE
+                151: 'R[0] = rt_tcp_listen(R[0]);',                     # TCP_LISTEN
+                152: 'R[0] = rt_tcp_accept(R[0]);',                     # TCP_ACCEPT
                 157: 'R[0] = rt_dns_lookup(rt_cstr(R[0]));',           # DNS_LOOKUP
             }
             if code in simple:

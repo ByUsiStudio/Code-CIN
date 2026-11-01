@@ -285,6 +285,136 @@ def test_tcp_echo_matches_vm(workdir, capsys, monkeypatch):
     assert received == [b'ping', b'ping']
 
 
+@pytest.mark.skipif(_compiler() is None, reason='本机没有可用的 C 编译器')
+def test_http_get_and_post_match_vm(workdir, capsys, monkeypatch):
+    """http_get/http_post/http_code 与 VM 一致（本地 HTTP 服务）。"""
+    import http.server
+    import socketserver
+    import threading
+
+    class Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            body = b'hello-http'
+            self.send_response(200)
+            self.send_header('Content-Length', str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def do_POST(self):
+            length = int(self.headers.get('Content-Length', '0'))
+            data = self.rfile.read(length)
+            body = b'got:' + data
+            self.send_response(201)
+            self.send_header('Content-Length', str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args):
+            pass
+
+    server = socketserver.TCPServer(('127.0.0.1', 0), Handler)
+    port = server.server_address[1]
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        src = os.path.join(workdir, 'http.cin')
+        with open(src, 'w', encoding='utf-8') as f:
+            f.write('function main() -> int {\n'
+                    f'    println(http_get("http://127.0.0.1:{port}/x"))\n'
+                    '    println(http_code())\n'
+                    f'    println(http_post("http://127.0.0.1:{port}/p", '
+                    '"abc"))\n'
+                    '    println(http_code())\n'
+                    '    return 0\n'
+                    '}\n')
+        monkeypatch.chdir(workdir)
+        assert cli.main(['http.cin', '--log-level', 'ERROR']) == 0
+        expected = capsys.readouterr().out
+        assert expected.splitlines() == ['hello-http', '200', 'got:abc',
+                                         '201']
+
+        built = aot.build_program(src, out=os.path.join(workdir, 'httpprog'),
+                                  backend='c', use_cache=False)
+        result = subprocess.run([built], capture_output=True, text=True,
+                                timeout=60)
+        assert result.returncode == 0, result.stderr
+        assert result.stdout == expected
+    finally:
+        server.shutdown()
+
+
+@pytest.mark.skipif(_compiler() is None, reason='本机没有可用的 C 编译器')
+def test_tcp_server_accept_matches_vm(workdir):
+    """tcp_listen/tcp_accept 可以对外提供 TCP 服务，行为与 VM 一致。"""
+    import socket
+    import sys
+    import time
+
+    probe = socket.socket()
+    probe.bind(('127.0.0.1', 0))
+    port = probe.getsockname()[1]
+    probe.close()
+
+    program = ('function main() -> int {\n'
+               f'    int lfd = tcp_listen({port})\n'
+               '    if (lfd < 0) { println("listen_fail") return 1 }\n'
+               '    int fd = tcp_accept(lfd)\n'
+               '    if (fd < 0) { println("accept_fail") return 1 }\n'
+               '    int buf[64]\n'
+               '    int n = tcp_recv(fd, buf, 64)\n'
+               '    println(n)\n'
+               '    tcp_send(fd, "pong", 4)\n'
+               '    tcp_close(fd)\n'
+               '    tcp_close(lfd)\n'
+               '    return 0\n'
+               '}\n')
+    src = os.path.join(workdir, 'server.cin')
+    with open(src, 'w', encoding='utf-8') as f:
+        f.write(program)
+
+    def exercise(process_factory):
+        proc = process_factory()
+        try:
+            deadline = time.time() + 15
+            while time.time() < deadline:
+                try:
+                    conn = socket.create_connection(('127.0.0.1', port),
+                                                    timeout=1)
+                    break
+                except OSError:
+                    time.sleep(0.1)
+            else:
+                raise AssertionError('server did not start')
+            conn.sendall(b'ping')
+            reply = conn.recv(64)
+            conn.close()
+            out, err = proc.communicate(timeout=30)
+            return proc.returncode, out, reply, err
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+
+    vm_code, vm_out, vm_reply, _vm_err = exercise(
+        lambda: subprocess.Popen(
+            [sys.executable, '-c',
+             'import sys; from codecin.cli import main; '
+             'sys.exit(main([sys.argv[1], "--log-level", "ERROR"]))', src],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE))
+    port += 1
+    with open(src, 'w', encoding='utf-8') as f:
+        f.write(program.replace(f'tcp_listen({port - 1})',
+                                f'tcp_listen({port})'))
+    built = aot.build_program(src, out=os.path.join(workdir, 'serverprog'),
+                              backend='c', use_cache=False)
+    aot_code, aot_out, aot_reply, aot_err = exercise(
+        lambda: subprocess.Popen([built], stdout=subprocess.PIPE,
+                                 stderr=subprocess.PIPE))
+
+    assert vm_code == aot_code == 0
+    assert vm_reply == aot_reply == b'pong'
+    assert vm_out.strip() == aot_out.strip() == b'4', (vm_out, aot_out,
+                                                       aot_err)
+
+
 def test_supports_reports_missing_opcode_and_syscall():
     ok, reason = cbackend.supports([('MOV', [('reg', 0), ('imm', 1)]),
                                     ('HALT', [])])
