@@ -41,7 +41,7 @@ SUPPORTED_OPS = frozenset({
 })
 
 #: 已实现的 SYS 功能号。
-SUPPORTED_SYS = frozenset({13, 14, 15, 16, 20, 21, 22, 23, 24, 27, 137})
+SUPPORTED_SYS = frozenset(set(range(0, 39)) | {137})
 
 
 class CBackendError(RuntimeError):
@@ -63,6 +63,7 @@ _RUNTIME = r'''
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
 #include <time.h>
 
 #define CODECIN_UNSUPPORTED 70
@@ -72,6 +73,7 @@ static uint8_t *MEM;
 static uint64_t MEMSZ;
 static int ZF, NF, CF, VF;
 static uint64_t HEAPBASE;
+static uint64_t SYSPTR;
 static const char *ERRMSG;
 static FILE *OUTP;
 
@@ -184,33 +186,6 @@ static void rt_unsupported(const char *what) {
 }
 
 static uint64_t HEAPP;
-static uint64_t rt_scratch(void) { return HEAPBASE - 4096; }
-
-static uint64_t rt_itoa(uint64_t v) {
-    char *base = (char *)(MEM + rt_scratch());
-    char tmp[32];
-    int n = 0;
-    if (v == 0) tmp[n++] = '0';
-    while (v) { tmp[n++] = (char)('0' + (v % 10)); v /= 10; }
-    for (int i = 0; i < n; i++) base[i] = tmp[n - 1 - i];
-    base[n] = '\0';
-    return rt_scratch();
-}
-
-static uint64_t rt_ftoa(uint64_t bits) {
-    char *base = (char *)(MEM + rt_scratch() + 64);
-    double d;
-    memcpy(&d, &bits, 8);
-    snprintf(base, 64, "%g", d);
-    return rt_scratch() + 64;
-}
-
-static uint64_t rt_malloc(uint64_t bytes) {
-    uint64_t p = HEAPP;
-    if (bytes > MEMSZ || p > MEMSZ - bytes) { rt_fail("Out of memory"); return 0; }
-    HEAPP = p + ((bytes + 7) & ~(uint64_t)7);
-    return p;
-}
 
 static uint64_t rt_strlen(uint64_t addr) {
     if (addr >= MEMSZ) { rt_fail("String out of bounds"); return 0; }
@@ -232,6 +207,7 @@ static int rt_init(uint64_t memsz, uint64_t sp, uint64_t heapbase) {
     MEMSZ = memsz;
     HEAPBASE = heapbase;
     HEAPP = heapbase;
+    SYSPTR = heapbase > 8192 ? heapbase - 8192 : 512;
     MEM = (uint8_t *)calloc((size_t)memsz, 1);
     if (!MEM) return 0;
     R[32] = sp;
@@ -267,6 +243,148 @@ static int rt_allocframe(uint64_t bytes) {
     R[32] = (uint64_t)newsp;
     R[0] = R[32];
     return 1;
+}
+
+/* ---------------- 堆 / 字符串 ---------------- */
+
+static uint64_t rt_heap(uint64_t size) {
+    uint64_t p = HEAPP;
+    size = (size + 15) & ~(uint64_t)15;
+    if (p + size > R[32] || p + size < p) {
+        rt_fail("Heap exhausted");
+        return 0;
+    }
+    HEAPP = p + size;
+    return p;
+}
+
+static const char *rt_cstr(uint64_t addr) {
+    if (addr >= MEMSZ) { rt_fail("String out of bounds"); return ""; }
+    return (const char *)(MEM + addr);
+}
+
+static uint64_t rt_sysbuf(void) { return SYSPTR; }
+
+static void rt_writesys(const char *s) {
+    size_t n = strlen(s);
+    if (SYSPTR + n + 1 > MEMSZ) { rt_fail("sysbuf out of bounds"); return; }
+    memcpy(MEM + SYSPTR, s, n + 1);
+}
+
+static uint64_t rt_dupstr(const char *s) {
+    size_t n = strlen(s) + 1;
+    uint64_t p = rt_heap((uint64_t)n);
+    if (!p) return 0;
+    memcpy(MEM + p, s, n);
+    return p;
+}
+
+static void rt_to_upper(char *s) {
+    for (; *s; s++) if (*s >= 'a' && *s <= 'z') *s -= 32;
+}
+
+static void rt_to_lower(char *s) {
+    for (; *s; s++) if (*s >= 'A' && *s <= 'Z') *s += 32;
+}
+
+static int rt_is_space(int c) {
+    return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\v'
+        || c == '\f';
+}
+
+static uint64_t rt_trim(uint64_t addr, int left, int right) {
+    const char *s = rt_cstr(addr);
+    size_t n = strlen(s), b = 0, e = n;
+    if (left) while (b < e && rt_is_space((unsigned char)s[b])) b++;
+    if (right) while (e > b && rt_is_space((unsigned char)s[e - 1])) e--;
+    uint64_t p = rt_heap((uint64_t)(e - b) + 1);
+    if (!p) return 0;
+    memcpy(MEM + p, s + b, e - b);
+    MEM[p + (e - b)] = 0;
+    return p;
+}
+
+static uint64_t rt_substr(uint64_t src, uint64_t start, uint64_t length) {
+    const char *s = rt_cstr(src);
+    int64_t n = (int64_t)strlen(s);
+    int64_t st = (int64_t)start > n ? n : ((int64_t)start > 0 ? (int64_t)start : 0);
+    int64_t len = (int64_t)length > 0 ? (int64_t)length : 0;
+    int64_t end = st + len;
+    if (end > n) end = n;
+    uint64_t p = rt_heap((uint64_t)(end - st) + 1);
+    if (!p) return 0;
+    memcpy(MEM + p, s + st, (size_t)(end - st));
+    MEM[p + (uint64_t)(end - st)] = 0;
+    return p;
+}
+
+static uint64_t rt_itoa(int64_t v) {
+    char buf[32];
+    snprintf(buf, sizeof(buf), "%lld", (long long)v);
+    rt_writesys(buf);
+    return SYSPTR;
+}
+
+static uint64_t rt_ftoa(uint64_t bits) {
+    double d;
+    char buf[64];
+    memcpy(&d, &bits, 8);
+    snprintf(buf, sizeof(buf), "%g", d);
+    rt_writesys(buf);
+    return SYSPTR;
+}
+
+static uint64_t rt_boolstr(uint64_t v) {
+    rt_writesys(v ? "true" : "false");
+    return SYSPTR;
+}
+
+static uint64_t rt_strconcat(uint64_t a, uint64_t b) {
+    const char *sa = rt_cstr(a);
+    const char *sb = rt_cstr(b);
+    size_t na = strlen(sa), nb = strlen(sb);
+    uint64_t p = rt_heap((uint64_t)(na + nb + 1));
+    if (!p) return 0;
+    memcpy(MEM + p, sa, na);
+    memcpy(MEM + p + na, sb, nb + 1);
+    return p;
+}
+
+static uint64_t rt_strcpy(uint64_t dst, uint64_t src, int append) {
+    const char *s = rt_cstr(src);
+    size_t n = strlen(s);
+    uint64_t at = dst;
+    if (append) {
+        if (at >= MEMSZ) { rt_fail("String out of bounds"); return dst; }
+        at += strlen((const char *)(MEM + at));
+    }
+    if (at + n + 1 > MEMSZ) { rt_fail("String out of bounds"); return dst; }
+    memcpy(MEM + at, s, n + 1);
+    return dst;
+}
+
+static uint64_t rt_strcmp(uint64_t a, uint64_t b) {
+    const char *sa = rt_cstr(a);
+    const char *sb = rt_cstr(b);
+    while (*sa && *sa == *sb) { sa++; sb++; }
+    return (uint64_t)(int64_t)((unsigned char)*sa - (unsigned char)*sb);
+}
+
+static uint64_t rt_indexof(uint64_t hay, uint64_t needle) {
+    const char *found = strstr(rt_cstr(hay), rt_cstr(needle));
+    return found ? (uint64_t)(found - (const char *)MEM) : (uint64_t)-1;
+}
+
+static double rt_bits2f(uint64_t bits) {
+    double d;
+    memcpy(&d, &bits, 8);
+    return d;
+}
+
+static uint64_t rt_f2bits(double d) {
+    uint64_t bits;
+    memcpy(&bits, &d, 8);
+    return bits;
 }
 
 static int rt_finish(void) {
@@ -559,16 +677,52 @@ class _Emitter:
                 self.fail('rt_allocframe(R[0])')
                 return
             simple = {
-                13: 'R[0] = rt_rand();',                     # RAND
-                14: 'rt_rand_state = R[0] ? R[0] : 1;',      # SRAND
-                15: 'R[0] = (uint64_t)time(NULL);',          # TIME
-                16: 'R[0] = rt_strlen(R[0]);',               # STRLEN
-                20: 'R[0] = rt_malloc(R[0]);',               # MALLOC
-                21: 'rt_out_float(R[0]);',                   # PRINT_FLOAT
-                22: 'R[0] = rt_itoa(R[0]);',                 # ITOA
-                23: 'R[0] = rt_ftoa(R[0]);',                 # FTOA
-                24: 'rt_out_str(R[0]);',                     # PRINT_STR
-                27: 'rt_abort(R[0]);',                       # ABORT
+                0: 'R[0] = rt_f2bits(sqrt(rt_bits2f(R[0])));',          # SQRT
+                1: 'R[0] = rt_f2bits(pow(rt_bits2f(R[0]), rt_bits2f(R[1])));',
+                2: 'R[0] = (uint64_t)llabs((long long)R[0]);',          # ABS
+                3: 'R[0] = rt_f2bits(sin(rt_bits2f(R[0])));',           # SIN
+                4: 'R[0] = rt_f2bits(cos(rt_bits2f(R[0])));',           # COS
+                5: 'R[0] = rt_f2bits(tan(rt_bits2f(R[0])));',           # TAN
+                6: 'R[0] = rt_f2bits(rt_bits2f(R[0]) + rt_bits2f(R[1]));',
+                7: 'R[0] = rt_f2bits(rt_bits2f(R[0]) - rt_bits2f(R[1]));',
+                8: 'R[0] = rt_f2bits(rt_bits2f(R[0]) * rt_bits2f(R[1]));',
+                9: ('if (rt_bits2f(R[1]) == 0.0) { rt_fail("Float division '
+                    'by zero (SYS)"); goto Lerror; } '
+                    'R[0] = rt_f2bits(rt_bits2f(R[0]) / rt_bits2f(R[1]));'),
+                10: ('{ double fa = rt_bits2f(R[0]), fb = rt_bits2f(R[1]); '
+                     'R[0] = fa < fb ? (uint64_t)-1 : (fa > fb ? 1 : 0); }'),
+                11: 'R[0] = (uint64_t)(int64_t)rt_bits2f(R[0]);',       # FTOI
+                12: 'R[0] = rt_f2bits((double)(int64_t)R[0]);',         # ITOF
+                13: 'R[0] = rt_rand();',                                # RAND
+                14: 'rt_rand_state = R[0] ? R[0] : 1;',                 # SRAND
+                15: 'R[0] = (uint64_t)time(NULL);',                     # TIME
+                16: 'R[0] = rt_strlen(R[0]);',                          # STRLEN
+                17: 'R[0] = rt_strcmp(R[0], R[1]);',                    # STRCMP
+                18: 'R[0] = rt_strcpy(R[0], R[1], 0);',                 # STRCPY
+                19: 'R[0] = rt_strcpy(R[0], R[1], 1);',                 # STRCAT
+                20: 'R[0] = rt_heap(R[0]);',                            # MALLOC
+                21: 'rt_out_float(R[0]);',                              # PRINT_FLOAT
+                22: 'R[0] = rt_itoa((int64_t)R[0]);',                   # ITOA
+                23: 'R[0] = rt_ftoa(R[0]);',                            # FTOA
+                24: 'rt_out_str(R[0]);',                                # PRINT_STR
+                25: 'R[0] = rt_strconcat(R[0], R[1]);',                 # STR_CONCAT
+                26: 'R[0] = rt_boolstr(R[0]);',                         # BOOL_STR
+                27: 'rt_abort(R[0]);',                                  # ABORT
+                28: 'R[0] = rt_substr(R[0], R[1], R[2]);',              # SUBSTR
+                29: 'R[0] = rt_indexof(R[0], R[1]);',                   # INDEXOF
+                30: ('R[0] = rt_dupstr(rt_cstr(R[0])); '
+                     'if (R[0]) rt_to_upper((char *)(MEM + R[0]));'),   # TOUPPER
+                31: ('R[0] = rt_dupstr(rt_cstr(R[0])); '
+                     'if (R[0]) rt_to_lower((char *)(MEM + R[0]));'),   # TOLOWER
+                32: 'R[0] = rt_f2bits(floor(rt_bits2f(R[0])));',        # FLOOR
+                33: 'R[0] = rt_f2bits(ceil(rt_bits2f(R[0])));',         # CEIL
+                34: 'R[0] = rt_f2bits(floor(rt_bits2f(R[0]) + 0.5));',  # ROUND
+                35: ('{ const char *s = rt_cstr(R[0]); char *end = NULL; '
+                     'long long v = strtoll(s, &end, 10); '
+                     'R[0] = (end && end != s) ? (uint64_t)v : 0; }'),
+                36: 'R[0] = rt_trim(R[0], 1, 1);',                    # TRIM
+                37: 'R[0] = rt_trim(R[0], 1, 0);',                    # LTRIM
+                38: 'R[0] = rt_trim(R[0], 0, 1);',                    # RTRIM
             }
             if code in simple:
                 self.code(simple[code])
@@ -687,6 +841,8 @@ def compile_instructions(instructions: Sequence[Instruction],
             shutil.copyfile(c_path, out + '.c')
         cmd = [info.path, f'-O{max(0, min(3, int(optimize)))}',
                '-std=c11', '-o', out, c_path]
+        if spec.fmt != 'pe':
+            cmd.append('-lm')          # Linux/ELF 的 libm 需显式链接
         try:
             result = subprocess.run(cmd, capture_output=True, text=True,
                                     timeout=300, check=False)

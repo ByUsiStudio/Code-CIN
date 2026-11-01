@@ -135,10 +135,11 @@ def build_parser() -> argparse.ArgumentParser:
                         'darwin/amd64, darwin/arm64')
     p.add_argument('--build-keep-temp', action='store_true',
                    help='AOT 构建时保留临时目录 (排查 go build 失败)')
-    p.add_argument('--build-backend', choices=['auto', 'native', 'vm'],
+    p.add_argument('--build-backend', choices=['auto', 'c', 'native', 'vm'],
                    default='auto',
-                   help='AOT 后端: auto = 小程序 native / 大程序 VM (默认); '
-                        'native = 强制直接生成机器码; '
+                   help='AOT 后端: auto = 优先 C 后端, 不支持时回退 Go/VM (默认); '
+                        'c = 生成 C 并由 GCC/Clang 编译 (不依赖 Go); '
+                        'native = 旧 Go 代码生成后端; '
                         'vm = 内嵌 UCBC 字节码由 Go VM 执行')
     p.add_argument('--no-build-cache', action='store_false', dest='build_cache',
                    default=True,

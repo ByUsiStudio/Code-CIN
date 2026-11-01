@@ -178,7 +178,7 @@ graph LR
 | 日志系统 | rich | 彩色日志/表格/面板/traceback, --debug / --log-level DEBUG 超详细诊断 |
 | 性能分析 | 指令级 | CPI + 内存统计 + 热指令 |
 | CROM压缩 | zlib | 段式格式 (v4), 只保存已分配页 (Go/Python双实现) |
-| AOT 静态编译 | 独立可执行 | native 后端直接生成机器码 (VM 后端兼容), Windows/Linux/macOS 静态可执行 |
+| AOT 静态编译 | 独立可执行 | C 后端把指令逐条翻译成 C, 由 GCC/Clang 生成机器码 (Windows/Linux, x86-64/AArch64); 未覆盖指令回退 Go 后端 |
 
 ---
 
@@ -498,24 +498,29 @@ v5.9.0 起**只有一条执行路径**: Python 完成 CIN/PL/ASM 编译后, 通�
 Python、Go 工具链、libc 或任何动态库**。CIN 构建时会解析 `import` 闭包做依赖
 完整性检查, 并把**全部依赖库在编译期展开嵌入产物** (产物不读取任何 `.cin` 文件)。
 
-默认使用 **auto 后端**: 指令数不超过 20000 时走 **native** (把编译后的指令流
-直接生成 Go 源码, 核心整数/控制流/内存/SYS 指令不再经过 UCBC 解码与 opcode
-dispatch, 由 Go 编译器产出目标平台机器码); 超过阈值自动回退 **VM** (内嵌 UCBC
-字节码), 避免大量指令展开导致 `go build` 极慢。`--build-backend auto|native|vm`
-可强制指定。超过 800 条指令的 native 程序会自动按基本块拆分成多个 Go
-函数，进一步控制编译时间。
+默认使用 **auto 后端**: 指令流能被 **C 后端**（`codecin/cbackend.py`）完整翻译时，
+逐条展开成 C，再由本机或交叉 **GCC/Clang** 编译成机器码——**不再依赖 Go 工具链**；
+遇到尚未覆盖的指令或 syscall 时回退到旧的 Go 后端（`native`/`vm`）。
+`--build-backend auto|c|native|vm` 可强制指定，`c` 遇到不支持的程序会直接报出
+具体指令/syscall，不会静默换后端。
+
+C 后端的目标：`x86_64-windows`（PE）、`x86_64-linux`（ELF）、`aarch64-linux`
+（ELF），与 `--build-target windows/amd64` 等写法一一对应。缺少交叉编译器时按
+提示安装，或 `python -m codecin.toolchain install <target> --url <压缩包>` 安装
+自带工具链。
 
 ```bash
-# 本机平台 (auto: 小程序 native, 大程序 VM)
+# 本机平台 (auto: 能走 C 后端就走 C, 否则回退 Go 后端)
 codecin program.cin --build-exe program          # Windows 自动补 .exe
 
-# 交叉编译 (只需要安装 Go 工具链; native/vm 后端都支持)
+# 交叉编译 (C 后端需要对应目标的 GCC/Clang; Go 后端只需 Go 工具链)
 codecin program.cin --build-exe app-linux --build-target linux/amd64
-codecin program.cin --build-exe app-mac   --build-target darwin/arm64
+codecin program.cin --build-exe app-arm   --build-target linux/arm64
 
 # 强制某个后端 + 优化级别
+codecin program.cin --build-exe app-c      --build-backend c --optimize 2
 codecin program.cin --build-exe app-native --build-backend native --optimize 2
-codecin program.cin --build-exe app-vm --build-backend vm --optimize 2
+codecin program.cin --build-exe app-vm     --build-backend vm --optimize 2
 
 # 独立编译 + 链接 (ASM/PL): 每个对象单独汇编, 再由链接器合并
 codecin --emit-object main.asm -o main.co

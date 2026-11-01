@@ -835,10 +835,10 @@ def _compile_program(program_file: str,
             'deps': [program_file],
         }
 
-    if ext not in ('.asm', '.pl', '.bin'):
+    if ext not in ('.asm', '.pl', '.bin', '.sdgcc'):
         raise AotError(f'不支持 AOT 输入格式: {ext or "(无扩展名)"}')
 
-    # ASM/PL 由 Assembler 装载; BIN 由 crom.load_bin 解码。
+    # ASM/PL 由 Assembler 装载; BIN/SDGCC 由 crom.load_bin 解码。
     from . import Config
     from .cpu import CPU
     from .errors import CPUSimulatorError
@@ -902,23 +902,41 @@ def build_from_ir(instructions,
     if use_cache and cache_key and _cache_lookup(cache_key, goos, out, logger):
         return os.path.abspath(out)
 
-    effective = resolve_backend(backend, len(instructions))
-    if effective != backend and logger:
-        logger.info(
-            f'AOT: 指令数 {len(instructions)} 超过 native 自动阈值 '
-            f'{NATIVE_INSTRUCTION_LIMIT}, 使用 VM 后端')
-    elif backend == 'native' and len(instructions) > NATIVE_INSTRUCTION_LIMIT \
-            and logger:
-        logger.warning(
-            f'AOT: 指令数 {len(instructions)} 超过 native 自动阈值 '
-            f'{NATIVE_INSTRUCTION_LIMIT}, 强制 native 可能编译较慢')
+    from . import cbackend
+    c_ok, c_reason = cbackend.supports(instructions)
+    if backend == 'c':
+        if not c_ok:
+            raise AotError(f'C 后端不支持该程序: {c_reason}')
+        effective = 'c'
+    elif backend == 'auto':
+        effective = 'c' if c_ok else resolve_backend('auto',
+                                                     len(instructions))
+        if not c_ok and logger:
+            logger.info(f'AOT: C 后端不适用 ({c_reason}), '
+                        f'改走 {effective} 后端')
+    else:
+        effective = resolve_backend(backend, len(instructions))
 
-    if effective == 'vm':
+    if effective == 'c':
+        goos2, goarch2 = parse_target(target) if target else \
+            parse_target(host_target())
+        try:
+            cname = cbackend.c_target(goos2, goarch2)
+        except cbackend.CBackendError as e:
+            raise AotError(str(e)) from e
+        try:
+            built = cbackend.compile_instructions(
+                instructions, labels, segments, entry_pc, mem_size, sp,
+                heap_base, out, target=cname, optimize=optimize)
+        except cbackend.CBackendError as e:
+            raise AotError(f'C 后端编译失败: {e}') from e
+    elif effective == 'vm':
         built = build(bytes(bytecode), seg_file, out, target=target,
                       keep_temp=keep_temp, debug=debug, logger=logger)
     else:
         if effective != 'native':
-            raise AotError(f'未知 AOT 后端: {backend} (可选 auto / native / vm)')
+            raise AotError(
+                f'未知 AOT 后端: {backend} (可选 auto / c / native / vm)')
 
         from .native_codegen import NativeCodegenError, generate_go_source
         try:
