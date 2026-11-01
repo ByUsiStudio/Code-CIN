@@ -40,12 +40,22 @@ def test_unknown_option_returns_error_code(capsys):
     assert code in (1, 2)
 
 
-def test_instruction_limit_is_reported_as_failure(capsys, workdir):
-    """步数用尽不再伪装成正常结束。
+def test_max_instructions_is_deprecated_and_hidden(capsys):
+    """--max-instructions 已弃用: 帮助里不再出现, 默认不限制指令数。"""
+    import contextlib
+    from codecin.config import Config
 
-    旧行为: 解释器只 warning + break, 原生 VM 返回 StatusDone,
-    于是被截断的程序以退出码 0 报告成功。
-    """
+    with contextlib.suppress(SystemExit):
+        cli.main(['--help'])
+    assert 'max-instructions' not in capsys.readouterr().out
+
+    config = Config()
+    config.validate()
+    assert config.max_instructions == 0          # 0 = 不限制
+
+
+def test_explicit_instruction_limit_still_reported_as_failure(capsys, workdir):
+    """隐藏的旧参数仍可显式设限: 步数用尽不再伪装成正常结束。"""
     code = cli.main([BASIC_CIN, '--max-instructions', '2000',
                      '--log-level', 'ERROR'])
     assert code == 1
