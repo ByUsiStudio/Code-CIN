@@ -39,6 +39,7 @@ __all__ = [
     'ToolchainError',
     'download',
     'find_compiler',
+    'find_zig',
     'get_target',
     'hint',
     'install_archive',
@@ -218,6 +219,24 @@ def find_compiler(target: Target) -> Optional[CompilerInfo]:
         if info.ok and matches(target, info.machine):
             return info
     return None
+
+
+def find_zig() -> Optional[str]:
+    """查找 Zig (``zig cc`` 自带跨平台 libc, 可当交叉编译器用)。
+
+    顺序: ``CODECIN_ZIG`` -> ``~/.codecin/zig/**/zig[.exe]`` -> PATH。
+    """
+    explicit = os.environ.get('CODECIN_ZIG')
+    if explicit and os.path.isfile(explicit):
+        return os.path.abspath(explicit)
+    base = os.path.join(os.path.expanduser('~'), '.codecin', 'zig')
+    if os.path.isdir(base):
+        for name in sorted(os.listdir(base)):
+            for exe in ('zig.exe', 'zig'):
+                candidate = os.path.join(base, name, exe)
+                if os.path.isfile(candidate):
+                    return candidate
+    return shutil.which('zig')
 
 
 def hint(target: Target) -> str:

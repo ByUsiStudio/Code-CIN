@@ -495,7 +495,7 @@ static uint64_t rt_dirlist(const char *path) {
         int is_dir = 0;
         if (!strcmp(ent->d_name, ".") || !strcmp(ent->d_name, "..")) continue;
         snprintf(full, sizeof(full), "%s/%s", path, ent->d_name);
-        if (stat(full, &st) == 0 && (st.st_mode & S_IFMT) == S_IFDIR) is_dir = 1;
+        if (stat(full, &st) == 0 && S_ISDIR(st.st_mode)) is_dir = 1;
         n = strlen(ent->d_name) + (is_dir ? 2 : 1);
         if (count == cap) {
             cap = cap ? cap * 2 : 16;
@@ -1430,7 +1430,7 @@ static uint64_t rt_download(uint64_t url, uint64_t path) {
 
 static uint64_t rt_is_dir(const char *path) {
     struct stat st;
-    return (stat(path, &st) == 0 && (st.st_mode & S_IFMT) == S_IFDIR) ? 1 : 0;
+    return (stat(path, &st) == 0 && S_ISDIR(st.st_mode)) ? 1 : 0;
 }
 
 static uint64_t rt_chdir(const char *path) {
@@ -1454,7 +1454,7 @@ static uint64_t rt_temp_dir(void) {
 static int rt_rm_rf(const char *path) {
     struct stat st;
     if (stat(path, &st) != 0) return -1;
-    if ((st.st_mode & S_IFMT) == S_IFDIR) {
+    if (S_ISDIR(st.st_mode)) {
         DIR *d = opendir(path);
         struct dirent *ent;
         if (!d) return -1;
@@ -2147,7 +2147,12 @@ def compile_instructions(instructions: Sequence[Instruction],
     """把指令流编译成独立可执行文件, 返回产物路径。"""
     target_name = target or _host_target_name()
     spec = toolchain.get_target(target_name)
-    info = toolchain.require(spec)
+    info = toolchain.find_compiler(spec)
+    zig = None
+    if info is None:
+        zig = toolchain.find_zig()
+    if info is None and zig is None:
+        raise toolchain.ToolchainError(toolchain.hint(spec))
     source = emit_c(instructions, labels, segments, entry_pc, mem_size, sp,
                     heap_base)
     out = os.path.abspath(out)
@@ -2162,20 +2167,28 @@ def compile_instructions(instructions: Sequence[Instruction],
         if keep_c:
             import shutil
             shutil.copyfile(c_path, out + '.c')
-        cmd = [info.path, f'-O{max(0, min(3, int(optimize)))}',
-               '-std=c11', '-o', out, c_path]
+        if info is not None:
+            cmd = [info.path, f'-O{max(0, min(3, int(optimize)))}',
+                   '-std=c11', '-o', out, c_path]
+        else:
+            # Zig 自带目标平台 libc, 无需交叉 sysroot
+            cmd = [zig, 'cc', '-target', spec.triple,
+                   '-D_DEFAULT_SOURCE', '-D_GNU_SOURCE',
+                   '-D_POSIX_C_SOURCE=200809L',
+                   f'-O{max(0, min(3, int(optimize)))}',
+                   '-std=c11', '-o', out, c_path]
         if spec.fmt != 'pe':
             cmd.append('-lm')          # Linux/ELF 的 libm 需显式链接
         else:
             cmd.append('-lws2_32')     # Windows 的 Winsock
         try:
             result = subprocess.run(cmd, capture_output=True, text=True,
-                                    timeout=300, check=False)
+                                    timeout=600, check=False)
         except (OSError, subprocess.SubprocessError) as e:
             raise CBackendError(f'调用 C 编译器失败: {e}') from e
         if result.returncode != 0:
             raise CBackendError(
-                f'C 编译失败 ({info.path}):\n'
+                f'C 编译失败 ({"zig cc" if info is None else info.path}):\n'
                 f'{(result.stderr or result.stdout).strip()[:4000]}')
     finally:
         import shutil

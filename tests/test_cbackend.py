@@ -870,6 +870,37 @@ def test_time_cpu_arch_syscalls(workdir):
     assert lines[2] == 'true'
 
 
+def _zig_available():
+    return toolchain.find_zig() is not None
+
+
+@pytest.mark.skipif(not _zig_available(), reason='未安装 Zig (无交叉工具链)')
+def test_cross_compile_elf_targets(workdir):
+    """同一份 C 后端产物可交叉编译为 x86-64 / AArch64 ELF。"""
+    import struct
+
+    src = os.path.join(workdir, 'x.cin')
+    with open(src, 'w', encoding='utf-8') as f:
+        f.write('function main() -> int {\n'
+                '    int s = 0\n'
+                '    int i = 1\n'
+                '    while (i <= 5) { s = s + i i = i + 1 }\n'
+                '    println(s)\n'
+                '    return 0\n'
+                '}\n')
+    cpu = CPU(Config(log_level='ERROR'), src)
+    expected = {'x86_64-linux': 0x3E, 'aarch64-linux': 0xB7}
+    for target, machine in expected.items():
+        out = os.path.join(workdir, target)
+        built = cbackend.compile_instructions(
+            cpu.instructions, cpu.labels, cpu.memory.snapshot_segments(),
+            cpu.entry_pc, len(cpu.memory), cpu.sp, cpu.heap_base, out,
+            target=target)
+        data = open(built, 'rb').read()
+        assert data[:4] == b'\x7fELF', target
+        assert struct.unpack_from('<H', data, 18)[0] == machine, target
+
+
 def test_supports_reports_missing_opcode_and_syscall():
     ok, reason = cbackend.supports([('MOV', [('reg', 0), ('imm', 1)]),
                                     ('HALT', [])])
