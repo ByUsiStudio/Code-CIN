@@ -42,7 +42,20 @@ _PREAMBLE = ('#include <stdint.h>\n#include <stdio.h>\n\n'
              'printf("%s\\n", s); }\n'
              'static void __cin_print_float(double v) { printf("%g", v); }\n'
              'static void __cin_println_float(double v) { '
-             'printf("%g\\n", v); }\n\n')
+             'printf("%g\\n", v); }\n'
+             'static char __cin_arena[65536];\n'
+             'static size_t __cin_arena_used = 0;\n'
+             'static const char *__cin_concat(const char *a, const char *b) {\n'
+             '    size_t na = strlen(a), nb = strlen(b);\n'
+             '    char *p;\n'
+             '    if (__cin_arena_used + na + nb + 1 > sizeof(__cin_arena))\n'
+             '        return "";\n'
+             '    p = __cin_arena + __cin_arena_used;\n'
+             '    memcpy(p, a, na);\n'
+             '    memcpy(p + na, b, nb + 1);\n'
+             '    __cin_arena_used += na + nb + 1;\n'
+             '    return p;\n'
+             '}\n\n')
 
 
 def _c_string(text: str) -> str:
@@ -112,6 +125,10 @@ class _Generator:
             return f'(-{self.expr(node[1])})'
         if kind == 'binop':
             op = node[1]
+            if op == '+' and 'str' in (self.arg_type(node[2]),
+                                       self.arg_type(node[3])):
+                return (f'__cin_concat({self.expr(node[2])}, '
+                        f'{self.expr(node[3])})')
             if op in _BINOPS:
                 return (f'({self.expr(node[2])} {_BINOPS[op]} '
                         f'{self.expr(node[3])})')
@@ -138,8 +155,10 @@ class _Generator:
         if kind == 'neg':
             return self.arg_type(arg[1])
         if kind == 'binop':
-            return ('float' if 'float' in (self.arg_type(arg[2]),
-                                           self.arg_type(arg[3])) else 'int')
+            lt, rt = self.arg_type(arg[2]), self.arg_type(arg[3])
+            if 'str' in (lt, rt):
+                return 'str' if arg[1] == '+' else 'bool'
+            return 'float' if 'float' in (lt, rt) else 'int'
         if kind == 'call':
             fn = self.functions.get(arg[1])
             ret = (fn.ret_type if fn is not None else None) or 'int'
