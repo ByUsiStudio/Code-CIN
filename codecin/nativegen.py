@@ -39,7 +39,10 @@ _PREAMBLE = ('#include <stdint.h>\n#include <stdio.h>\n\n'
              'printf("%s\\n", v ? "true" : "false"); }\n'
              'static void __cin_print_str(const char *s) { printf("%s", s); }\n'
              'static void __cin_println_str(const char *s) { '
-             'printf("%s\\n", s); }\n\n')
+             'printf("%s\\n", s); }\n'
+             'static void __cin_print_float(double v) { printf("%g", v); }\n'
+             'static void __cin_println_float(double v) { '
+             'printf("%g\\n", v); }\n\n')
 
 
 def _c_string(text: str) -> str:
@@ -61,6 +64,8 @@ class NativeGenError(RuntimeError):
 def _typename(t: Any) -> str:
     if t == 'int':
         return 'int64_t'
+    if t == 'float':
+        return 'double'
     if t == 'void':
         return 'void'
     raise NativeGenError(f'直接原生后端暂不支持类型: {t!r}')
@@ -72,6 +77,7 @@ class _Generator:
         self.lines: List[str] = []
         self.vars: List[str] = []
         self.types: Dict[str, str] = {}
+        self.arrays: Dict[str, int] = {}
         self.buf: List[str] = []
 
     # ---------- 发射 ----------
@@ -96,7 +102,7 @@ class _Generator:
         if kind == 'num':
             value = node[1]
             if node[2]:                       # 浮点字面量
-                raise NativeGenError('直接原生后端暂不支持浮点字面量')
+                return f'{float(value)!r}'
             return f'INT64_C({int(value)})'
         if kind == 'var':
             return self._sanitize(node[1])
@@ -108,27 +114,48 @@ class _Generator:
                 return (f'({self.expr(node[2])} {_BINOPS[op]} '
                         f'{self.expr(node[3])})')
             raise NativeGenError(f'直接原生后端暂不支持运算符: {op!r}')
+        if kind == 'index':
+            return f'{self.expr(node[1])}[{self.expr(node[2])}]'
         if kind == 'str':
             raise NativeGenError('字符串字面量目前只能直接用于 print/println')
         if kind == 'call':
             return self.call(node[1], node[2])
         raise NativeGenError(f'直接原生后端暂不支持表达式节点: {kind!r}')
 
+    def arg_type(self, arg: AST) -> str:
+        kind = arg[0]
+        if kind == 'str':
+            return 'str'
+        if kind == 'num':
+            return 'float' if arg[2] else 'int'
+        if kind == 'var':
+            return self.types.get(arg[1], 'int')
+        if kind == 'index':
+            return 'int'
+        if kind == 'neg':
+            return self.arg_type(arg[1])
+        if kind == 'binop':
+            return ('float' if 'float' in (self.arg_type(arg[2]),
+                                           self.arg_type(arg[3])) else 'int')
+        if kind == 'call':
+            fn = self.functions.get(arg[1])
+            return (fn.ret_type if fn is not None else None) or 'int'
+        return 'int'
+
     def call(self, name: str, args: Sequence[AST]) -> str:
         if name in ('print', 'println'):
             if len(args) != 1:
                 raise NativeGenError(f'{name}() 需要恰好 1 个参数')
             arg = args[0]
-            if arg[0] == 'str':
-                fn = '__cin_println_str' if name == 'println' \
-                    else '__cin_print_str'
-                return f'{fn}({_c_string(arg[1])})'
-            if arg[0] == 'var' and self.types.get(arg[1]) == 'bool':
-                fn = '__cin_println_bool' if name == 'println' \
-                    else '__cin_print_bool'
-                return f'{fn}({self.expr(arg)})'
-            fn = '__cin_println_int' if name == 'println' else '__cin_print_int'
-            return f'{fn}({self.expr(arg)})'
+            kind = self.arg_type(arg)
+            suffix = 'ln' if name == 'println' else ''
+            if kind == 'str':
+                return f'__cin_print{suffix}_str({_c_string(arg[1])})'
+            if kind == 'bool':
+                return f'__cin_print{suffix}_bool({self.expr(arg)})'
+            if kind == 'float':
+                return f'__cin_print{suffix}_float({self.expr(arg)})'
+            return f'__cin_print{suffix}_int({self.expr(arg)})'
         if name not in self.functions:
             raise NativeGenError(f'直接原生后端暂不支持内建/外部函数: {name!r}')
         callee = self.functions[name]
@@ -139,17 +166,61 @@ class _Generator:
 
     # ---------- 语句 ----------
 
+    def declare(self, name: str, typ: Any) -> str:
+        cname = self._sanitize(name)
+        if isinstance(typ, tuple) and typ[0] == 'array':
+            base, size = typ[1], typ[2]
+            if base != 'int':
+                raise NativeGenError(f'数组元素类型 {base!r} 暂不支持')
+            if not isinstance(size, int):
+                raise NativeGenError('数组长度必须是整数字面量')
+            self.arrays[cname] = int(size)
+            self.types[cname] = 'array'
+        elif typ in ('int', 'bool', 'float'):
+            self.types[cname] = typ
+        else:
+            raise NativeGenError(f'直接原生后端暂不支持声明类型: {typ!r}')
+        if cname not in self.vars:
+            self.vars.append(cname)
+        return cname
+
+    def assign(self, target: AST, value: str) -> str:
+        if target[0] == 'var':
+            cname = self._sanitize(target[1])
+            if cname not in self.vars:
+                self.vars.append(cname)
+                self.types.setdefault(cname, 'int')
+            return f'{cname} = {value}'
+        if target[0] == 'index':
+            return f'{self.expr(target[1])}[{self.expr(target[2])}] = {value}'
+        raise NativeGenError('直接原生后端暂不支持该赋值目标')
+
+    def simple_stmt(self, node: AST) -> str:
+        """for 的 init/step 这类单行语句, 返回 C 片段 (不含分号)。"""
+        if node[0] == 'decl':
+            name, typ, init, _extra = node[1][0]
+            cname = self.declare(name, typ)
+            if isinstance(typ, tuple):
+                raise NativeGenError('for 初始化里不能声明数组')
+            return f'{cname} = {self.expr(init) if init else 0}'
+        if node[0] == 'expr':
+            inner = node[1]
+            if inner[0] == 'binop' and inner[1] == '=':
+                return self.assign(inner[2], self.expr(inner[3]))
+            if inner[0] == 'call':
+                return self.call(inner[1], inner[2])
+        raise NativeGenError(f'for 的 init/step 不支持该语句: {node[0]!r}')
+
     def stmt(self, node: AST, indent: int) -> None:
         pad = '    ' * indent
         kind = node[0]
         if kind == 'decl':
             for name, typ, init, _extra in node[1]:
-                if typ not in ('int', 'bool'):
-                    raise NativeGenError(f'直接原生后端暂不支持声明类型: {typ!r}')
-                cname = self._sanitize(name)
-                if cname not in self.vars:
-                    self.vars.append(cname)
-                self.types[cname] = 'bool' if typ == 'bool' else 'int'
+                cname = self.declare(name, typ)
+                if isinstance(typ, tuple):      # 数组: 声明时已初始化
+                    if init is not None:
+                        raise NativeGenError('暂不支持数组初始化列表')
+                    continue
                 if init is None:
                     self.emit(f'{pad}{cname} = 0;')
                 else:
@@ -172,6 +243,20 @@ class _Generator:
             self.stmt(node[2], indent + 1)
             self.emit(f'{pad}}}')
             return
+        if kind == 'for':
+            init = self.simple_stmt(node[1]) if node[1] else ''
+            cond = self.expr(node[2])
+            step = self.simple_stmt(node[3]) if node[3] else ''
+            self.emit(f'{pad}for ({init}; {cond}; {step}) {{')
+            self.stmt(node[4], indent + 1)
+            self.emit(f'{pad}}}')
+            return
+        if kind == 'break':
+            self.emit(f'{pad}break;')
+            return
+        if kind == 'continue':
+            self.emit(f'{pad}continue;')
+            return
         if kind == 'return':
             value = node[1]
             self.emit(f'{pad}return {self.expr(value) if value else 0};')
@@ -182,13 +267,7 @@ class _Generator:
                 self.emit(f'{pad}{self.call(inner[1], inner[2])};')
                 return
             if inner[0] == 'binop' and inner[1] == '=':
-                target = inner[2]
-                if target[0] != 'var':
-                    raise NativeGenError('直接原生后端暂不支持非变量赋值')
-                cname = self._sanitize(target[1])
-                if cname not in self.vars:
-                    self.vars.append(cname)
-                self.emit(f'{pad}{cname} = {self.expr(inner[3])};')
+                self.emit(f'{pad}{self.assign(inner[2], self.expr(inner[3]))};')
                 return
             if inner[0] == 'call':
                 self.emit(f'{pad}{self.call(inner[1], inner[2])};')
@@ -202,14 +281,14 @@ class _Generator:
         ret = _typename(fdef.ret_type)
         params = []
         for pname, ptype in fdef.params:
-            if ptype not in ('int', 'bool'):
+            if ptype not in ('int', 'bool', 'float'):
                 raise NativeGenError(f'{fdef.name}: 参数类型 {ptype!r} 暂不支持')
-            params.append(f'int64_t {self._sanitize(pname)}')
+            ctype = 'double' if ptype == 'float' else 'int64_t'
+            params.append(f'{ctype} {self._sanitize(pname)}')
         param_names = {self._sanitize(p[0]) for p in fdef.params}
         self.vars = list(param_names)
-        self.types = {self._sanitize(p[0]):
-                      ('bool' if p[1] == 'bool' else 'int')
-                      for p in fdef.params}
+        self.arrays = {}
+        self.types = {self._sanitize(p[0]): p[1] for p in fdef.params}
         body: List[str] = []
         saved = self.lines
         self.lines = body
@@ -223,7 +302,16 @@ class _Generator:
         local = [v for v in self.vars if v not in param_names]
         decls = ''
         if local:
-            decls = '    ' + ' '.join(f'int64_t {v} = 0;' for v in local) + '\n'
+            parts = []
+            for v in local:
+                size = self.arrays.get(v)
+                if size is not None:
+                    parts.append(f'int64_t {v}[{size}] = {{0}};')
+                elif self.types.get(v) == 'float':
+                    parts.append(f'double {v} = 0.0;')
+                else:
+                    parts.append(f'int64_t {v} = 0;')
+            decls = '    ' + ' '.join(parts) + '\n'
         self.emit(head + decls + '\n'.join(body) + '\n}\n')
 
 
