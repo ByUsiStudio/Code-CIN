@@ -52,7 +52,7 @@ def test_cli_native_out_builds_only(workdir):
 def test_cli_native_reports_unsupported(workdir, capsys):
     src = os.path.join(workdir, 'bad.cin')
     with open(src, 'w', encoding='utf-8') as f:
-        f.write('function main() -> int { string s = "x" return 0 }')
+        f.write('function main() -> int { int[] a return 0 }')
     assert cli.main([src, '--native', '--log-level', 'ERROR']) == 1
     assert 'Native Build Error' in capsys.readouterr().out
 
@@ -134,6 +134,23 @@ def test_float_support(workdir):
     assert result.stdout.replace('\r\n', '\n') == '3\n6.75\n'
 
 
+@pytest.mark.skipif(_compiler() is None, reason='本机没有可用的 C 编译器')
+def test_string_variables(workdir):
+    src = ('function greet(string who) -> string { return "hi" }\n'
+           'function main() -> int {\n'
+           '    string s = "hello"\n'
+           '    println(s)\n'
+           '    s = "world"\n'
+           '    println(s)\n'
+           '    println(greet("x"))\n'
+           '    return 0\n'
+           '}\n')
+    out = nativegen.compile_native(src, os.path.join(workdir, 'strprog'))
+    result = subprocess.run([out], capture_output=True, text=True, timeout=60)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.replace('\r\n', '\n') == 'hello\nworld\nhi\n'
+
+
 def test_emit_c_contains_no_isa_artifacts():
     source = nativegen.emit_c(LOOP)
     assert '#include <stdio.h>' in source
@@ -145,11 +162,11 @@ def test_emit_c_contains_no_isa_artifacts():
 
 def test_unsupported_constructs_are_rejected():
     with pytest.raises(nativegen.NativeGenError):
-        nativegen.emit_c('function main() -> int { string s = "x" return 0 }')
+        nativegen.emit_c('function main() -> int { int[] a return 0 }')
     with pytest.raises(nativegen.NativeGenError):
         nativegen.emit_c('function helper() -> int { return 1 }')
     assert not nativegen.supports_source(
-        'function main() -> int { string s = "x" return 0 }')
+        'function main() -> int { int[] a return 0 }')
     assert nativegen.supports_source(LOOP)
 
 

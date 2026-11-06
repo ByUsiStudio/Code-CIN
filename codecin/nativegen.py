@@ -66,6 +66,8 @@ def _typename(t: Any) -> str:
         return 'int64_t'
     if t == 'float':
         return 'double'
+    if t == 'string':
+        return 'const char *'
     if t == 'void':
         return 'void'
     raise NativeGenError(f'直接原生后端暂不支持类型: {t!r}')
@@ -117,7 +119,7 @@ class _Generator:
         if kind == 'index':
             return f'{self.expr(node[1])}[{self.expr(node[2])}]'
         if kind == 'str':
-            raise NativeGenError('字符串字面量目前只能直接用于 print/println')
+            return _c_string(node[1])
         if kind == 'call':
             return self.call(node[1], node[2])
         raise NativeGenError(f'直接原生后端暂不支持表达式节点: {kind!r}')
@@ -129,7 +131,8 @@ class _Generator:
         if kind == 'num':
             return 'float' if arg[2] else 'int'
         if kind == 'var':
-            return self.types.get(arg[1], 'int')
+            t = self.types.get(arg[1], 'int')
+            return 'str' if t == 'string' else t
         if kind == 'index':
             return 'int'
         if kind == 'neg':
@@ -139,7 +142,8 @@ class _Generator:
                                            self.arg_type(arg[3])) else 'int')
         if kind == 'call':
             fn = self.functions.get(arg[1])
-            return (fn.ret_type if fn is not None else None) or 'int'
+            ret = (fn.ret_type if fn is not None else None) or 'int'
+            return 'str' if ret == 'string' else ret
         return 'int'
 
     def call(self, name: str, args: Sequence[AST]) -> str:
@@ -150,7 +154,9 @@ class _Generator:
             kind = self.arg_type(arg)
             suffix = 'ln' if name == 'println' else ''
             if kind == 'str':
-                return f'__cin_print{suffix}_str({_c_string(arg[1])})'
+                inner = _c_string(arg[1]) if arg[0] == 'str' \
+                    else self.expr(arg)
+                return f'__cin_print{suffix}_str({inner})'
             if kind == 'bool':
                 return f'__cin_print{suffix}_bool({self.expr(arg)})'
             if kind == 'float':
@@ -176,7 +182,7 @@ class _Generator:
                 raise NativeGenError('数组长度必须是整数字面量')
             self.arrays[cname] = int(size)
             self.types[cname] = 'array'
-        elif typ in ('int', 'bool', 'float'):
+        elif typ in ('int', 'bool', 'float', 'string'):
             self.types[cname] = typ
         else:
             raise NativeGenError(f'直接原生后端暂不支持声明类型: {typ!r}')
@@ -222,8 +228,12 @@ class _Generator:
                         raise NativeGenError('暂不支持数组初始化列表')
                     continue
                 if init is None:
-                    self.emit(f'{pad}{cname} = 0;')
+                    self.emit(f'{pad}{cname} = 0;') if typ != 'string' \
+                        else self.emit(f'{pad}{cname} = "";')
                 else:
+                    if typ != 'string' and init[0] == 'str':
+                        raise NativeGenError(
+                            f'{name}: 字符串字面量不能赋给 {typ!r} 变量')
                     self.emit(f'{pad}{cname} = {self.expr(init)};')
             return
         if kind == 'block':
@@ -281,9 +291,14 @@ class _Generator:
         ret = _typename(fdef.ret_type)
         params = []
         for pname, ptype in fdef.params:
-            if ptype not in ('int', 'bool', 'float'):
+            if ptype not in ('int', 'bool', 'float', 'string'):
                 raise NativeGenError(f'{fdef.name}: 参数类型 {ptype!r} 暂不支持')
-            ctype = 'double' if ptype == 'float' else 'int64_t'
+            if ptype == 'float':
+                ctype = 'double'
+            elif ptype == 'string':
+                ctype = 'const char *'
+            else:
+                ctype = 'int64_t'
             params.append(f'{ctype} {self._sanitize(pname)}')
         param_names = {self._sanitize(p[0]) for p in fdef.params}
         self.vars = list(param_names)
@@ -309,6 +324,8 @@ class _Generator:
                     parts.append(f'int64_t {v}[{size}] = {{0}};')
                 elif self.types.get(v) == 'float':
                     parts.append(f'double {v} = 0.0;')
+                elif self.types.get(v) == 'string':
+                    parts.append(f'const char *{v} = "";')
                 else:
                     parts.append(f'int64_t {v} = 0;')
             decls = '    ' + ' '.join(parts) + '\n'
