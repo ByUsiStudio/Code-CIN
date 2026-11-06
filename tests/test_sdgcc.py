@@ -47,7 +47,7 @@ def test_roundtrip_preserves_bin_bytes(workdir):
 def test_compression_roundtrip(workdir):
     cpu = _cpu(_hello(workdir))
     code = crom.dump_bin(cpu)
-    symbols = [(i, 'sym_%d_%s' % (i, 'x' * 40)) for i in range(40)]
+    symbols = [(i, f'sym_{i}_{"x" * 40}') for i in range(40)]
     data = sdgcc.build(code, multi_file=True, symbols=symbols,
                        sources=['a.cin'], compress=True)
     container = sdgcc.parse(data)

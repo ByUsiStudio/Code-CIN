@@ -2011,15 +2011,43 @@ static unsigned int rt_key_pop(void) {
 }
 
 #ifdef _WIN32
-static void rt_key_reset_state(void) { }
+static unsigned int rt_key_surrogate = 0;
+static DWORD rt_key_saved_mode = 0;
+static int rt_key_mode_valid = 0;
+
+static void rt_key_reset_state(void) { rt_key_surrogate = 0; }
+static void rt_key_restore_mode(void) {
+    if (rt_key_mode_valid) {
+        SetConsoleMode(GetStdHandle(STD_INPUT_HANDLE), rt_key_saved_mode);
+        rt_key_mode_valid = 0;
+    }
+}
+static void rt_key_apply_raw(void) {
+    DWORD raw = rt_key_saved_mode
+              & ~(ENABLE_PROCESSED_INPUT | ENABLE_LINE_INPUT
+                  | ENABLE_ECHO_INPUT | ENABLE_MOUSE_INPUT);
+    raw |= ENABLE_EXTENDED_FLAGS;
+    raw &= ~ENABLE_QUICK_EDIT_MODE;
+    SetConsoleMode(GetStdHandle(STD_INPUT_HANDLE), raw);
+}
 static void rt_key_enable(void) {
     DWORD mode;
+    HANDLE h = GetStdHandle(STD_INPUT_HANDLE);
     if (rt_key_ready) return;
-    if (!GetConsoleMode(GetStdHandle(STD_INPUT_HANDLE), &mode)) return;
+    if (!GetConsoleMode(h, &mode)) return;
+    rt_key_saved_mode = mode;
+    rt_key_mode_valid = 1;
+    atexit(rt_key_restore_mode);
+    rt_key_apply_raw();
     rt_key_ready = 1;
 }
-static void rt_key_suspend(void) { }
-static void rt_key_resume(void) { }
+static void rt_key_suspend(void) {
+    if (rt_key_mode_valid)
+        SetConsoleMode(GetStdHandle(STD_INPUT_HANDLE), rt_key_saved_mode);
+}
+static void rt_key_resume(void) {
+    if (rt_key_ready) rt_key_apply_raw();
+}
 static void rt_key_drain(void) {
     INPUT_RECORD rec;
     DWORD n = 0, avail = 0;
@@ -2060,7 +2088,20 @@ static void rt_key_drain(void) {
                 code = 1021 + (unsigned int)(vk - VK_F1);
             break;
         }
-        if (!code && ch) code = (unsigned int)ch;
+        if (!code && ch) {
+            if (ch >= 0xD800 && ch <= 0xDBFF) {
+                rt_key_surrogate = (unsigned int)ch;
+                continue;
+            }
+            if (ch >= 0xDC00 && ch <= 0xDFFF && rt_key_surrogate) {
+                code = 0x10000
+                     + ((rt_key_surrogate - 0xD800) << 10)
+                     + ((unsigned int)ch - 0xDC00);
+                rt_key_surrogate = 0;
+            } else {
+                code = (unsigned int)ch;
+            }
+        }
         if (code) rt_key_push(code);
     }
 }
@@ -2073,20 +2114,25 @@ static int rt_key_tio_valid = 0;
 static void rt_key_reset_state(void) { }
 static void rt_key_apply_raw(void) {
     struct termios t = rt_key_tio;
-    t.c_lflag &= ~(ICANON | ECHO);
+    t.c_lflag &= ~(ICANON | ECHO | ISIG);
     t.c_cc[VMIN] = 0;
     t.c_cc[VTIME] = 0;
     tcsetattr(STDIN_FILENO, TCSANOW, &t);
+}
+static void rt_key_restore_at_exit(void) {
+    if (rt_key_tio_valid)
+        tcsetattr(STDIN_FILENO, TCSANOW, &rt_key_tio);
 }
 static void rt_key_enable(void) {
     if (rt_key_ready) return;
     if (!isatty(STDIN_FILENO)) return;
     if (tcgetattr(STDIN_FILENO, &rt_key_tio) != 0) return;
     rt_key_tio_valid = 1;
+    atexit(rt_key_restore_at_exit);
     rt_key_apply_raw();
     rt_key_ready = 1;
 }
-/* 行输入前临时恢复狗模式, 结束后恢复 raw (与 VM 的 lineInputBegin/End 一致) */
+/* 行输入前临时恢复熟模式, 结束后恢复 raw (与 VM 的 lineInputBegin/End 一致) */
 static void rt_key_suspend(void) {
     if (!rt_key_ready || !rt_key_tio_valid) return;
     tcsetattr(STDIN_FILENO, TCSANOW, &rt_key_tio);

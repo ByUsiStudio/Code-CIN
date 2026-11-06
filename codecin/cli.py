@@ -425,6 +425,18 @@ def main(argv: Optional[List[str]] = None) -> int:
         except (aot.AotError, OSError) as e:
             console.print(Panel(str(e), title='Link Error', border_style='red'))
             return 1
+        if getattr(ns, 'build_verify', False):
+            from . import cbackend
+            try:
+                info = cbackend.inspect_binary(
+                    built, ns.build_target or aot.host_target())
+            except ValueError as e:
+                console.print(Panel(str(e), title='Verify Error',
+                                    border_style='red'))
+                return 1
+            console.print(Colors.colorize(
+                'Verify OK: ' + ' '.join(f'{k}={v}' for k, v in info.items()),
+                Colors.GREEN))
         console.print(Colors.colorize(f"Link 完成: {built}", Colors.GREEN))
         return 0
 
