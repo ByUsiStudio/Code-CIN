@@ -39,9 +39,9 @@ def test_emit_c_has_labels_and_runtime():
 
 def test_unsupported_syscall_is_reported_at_runtime():
     source = cbackend.emit_c(
-        [('SYS', [('imm', 59)]), ('HALT', [])],
+        [('SYS', [('imm', 39)]), ('HALT', [])],
         {}, [], 0, 1 << 20, (1 << 20) - 8, 1 << 19)
-    assert 'SYS 59 未在 C 后端实现' in source
+    assert 'SYS 39 未在 C 后端实现' in source
 
 
 def test_missing_compiler_gives_actionable_error(monkeypatch, tmp_path):
@@ -924,8 +924,8 @@ def test_supports_reports_missing_opcode_and_syscall():
     ok, reason = cbackend.supports([('MOV', [('reg', 0), ('imm', 1)]),
                                     ('HALT', [])])
     assert ok, reason
-    ok, reason = cbackend.supports([('SYS', [('imm', 47)]), ('HALT', [])])
-    assert not ok and 'SYS 47' in reason and 'CANVASTEXT' in reason
+    ok, reason = cbackend.supports([('SYS', [('imm', 39)]), ('HALT', [])])
+    assert not ok and 'SYS 39' in reason and 'AUDIOPLAY' in reason
     ok, reason = cbackend.supports([('NOP', []), ('HALT', [])])
     assert not ok and 'NOP' in reason
 
@@ -963,16 +963,32 @@ def test_aot_accepts_sdgcc_input(workdir):
 
 
 @pytest.mark.skipif(_compiler() is None, reason='本机没有可用的 C 编译器')
-def test_aot_c_backend_rejects_unsupported_program(workdir):
-    """draw_text 尚未实现: 强制 c 后端必须报出缺失的 syscall 名。"""
+def test_canvas_text_pixels(workdir):
+    """draw_text 使用内置 5x7 字库, 与 VM 的字形一致。"""
     src = os.path.join(workdir, 'text.cin')
     with open(src, 'w', encoding='utf-8') as f:
         f.write('function main() -> int {\n'
                 '    canvas(16, 16)\n'
-                '    draw_text(0, 0, "hi")\n'
+                '    set_color(0x0000FF)\n'
+                '    draw_text(1, 1, "H")\n'
+                '    println(save_png("t.png"))\n'
                 '    return 0\n'
                 '}\n')
-    with pytest.raises(aot.AotError) as info:
-        aot.build_program(src, out=os.path.join(workdir, 'textprog'),
-                          backend='c', use_cache=False)
-    assert 'SYS 47' in str(info.value) and 'CANVASTEXT' in str(info.value)
+    built = aot.build_program(src, out=os.path.join(workdir, 'textprog'),
+                              backend='c', use_cache=False)
+    result = subprocess.run([built], cwd=workdir, capture_output=True,
+                            text=True, timeout=60)
+    assert result.returncode == 0, result.stderr
+    width, height, rows = _decode_png(os.path.join(workdir, 't.png'))
+    assert (width, height) == (16, 16)
+
+    def pixel(x, y):
+        return tuple(rows[y][x * 4:x * 4 + 4])
+
+    # 'H' 第 0 行位图 10001 -> x=1,5 着色, x=3 留白; 第 3 行 11111 全着色。
+    assert pixel(1, 1) == (0, 0, 255, 255)
+    assert pixel(5, 1) == (0, 0, 255, 255)
+    assert pixel(3, 1) == (255, 255, 255, 255)
+    assert pixel(1, 4) == (0, 0, 255, 255)
+    assert pixel(5, 4) == (0, 0, 255, 255)
+    assert pixel(7, 1) == (255, 255, 255, 255)   # 字距 6px, 第二个字符在 x=7
