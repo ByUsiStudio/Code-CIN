@@ -76,6 +76,29 @@ def test_mkn_build_native(workdir, monkeypatch):
                           text=True).stdout == '42\n'
 
 
+@pytest.mark.skipif(_compiler() is None, reason='本机没有可用的 C 编译器')
+def test_if_bool_string_coverage(workdir):
+    src = ('function main() -> int {\n'
+           '    int x = 3\n'
+           '    if (x > 2) { println("big") } else { println("small") }\n'
+           '    bool ok = x == 3\n'
+           '    println(ok)\n'
+           '    return 0\n'
+           '}\n')
+    out = nativegen.compile_native(src, os.path.join(workdir, 'ifprog'))
+    result = subprocess.run([out], capture_output=True, text=True, timeout=60)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.replace('\r\n', '\n') == 'big\ntrue\n'
+
+
+def test_string_in_expression_is_rejected():
+    with pytest.raises(nativegen.NativeGenError):
+        nativegen.emit_c('function main() -> int {\n'
+                         '    int x = "s"\n'
+                         '    return 0\n'
+                         '}\n')
+
+
 def test_emit_c_contains_no_isa_artifacts():
     source = nativegen.emit_c(LOOP)
     assert '#include <stdio.h>' in source
