@@ -2987,11 +2987,16 @@ def c_target(goos: str, goarch: str = 'amd64') -> str:
     if goos == 'windows' and goarch in ('amd64', 'x86_64'):
         return 'x86_64-windows'
     if goos == 'linux':
-        return 'aarch64-linux' if goarch in ('arm64', 'aarch64') \
-            else 'x86_64-linux'
+        if goarch in ('arm64', 'aarch64'):
+            return 'aarch64-linux'
+        if goarch in ('arm', 'armv7'):
+            return 'arm-linux'
+        if goarch in ('riscv64', 'riscv'):
+            return 'riscv64-linux'
+        return 'x86_64-linux'
     raise CBackendError(
         f'C 后端暂不支持目标 {goos}/{goarch} (可选: windows/amd64, '
-        f'linux/amd64, linux/arm64)')
+        f'linux/amd64, linux/arm64, linux/arm, linux/riscv64)')
 
 
 def _syscall_name(code: int) -> str:

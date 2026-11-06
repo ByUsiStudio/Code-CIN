@@ -81,6 +81,10 @@ TARGETS: Dict[str, Target] = {
                'elf', ('linux-x86_64', 'linux', 'linux64')),
         Target('aarch64-linux', 'aarch64-linux-gnu', '', 'aarch64-linux-gnu-',
                'elf', ('linux-aarch64', 'arm64-linux', 'aarch64')),
+        Target('arm-linux', 'arm-linux-gnueabihf', '', 'arm-linux-gnueabihf-',
+               'elf', ('linux-arm', 'armv7-linux', 'arm32-linux', 'arm')),
+        Target('riscv64-linux', 'riscv64-linux-gnu', '', 'riscv64-linux-gnu-',
+               'elf', ('linux-riscv64', 'riscv64', 'riscv')),
     )
 }
 

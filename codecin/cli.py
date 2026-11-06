@@ -127,6 +127,11 @@ def build_parser() -> argparse.ArgumentParser:
                    help='链接时删除不可达函数/代码段 (默认关闭)')
 
     # AOT: 编译成独立静态可执行文件
+    p.add_argument('--native', action='store_true',
+                   help='直接用 AST→C 原生后端编译为设备本机可执行文件并运行 '
+                        '(不经过 UCPU 指令集); 超出语言子集会明确报错')
+    p.add_argument('--native-out', metavar='OUT', default=None,
+                   help='同 --native, 但只构建不运行, 产物写到 OUT')
     p.add_argument('--build-exe', nargs='?', const='', default=None,
                    metavar='OUT',
                    help='把 CIN/ASM/PL/BIN/CO 编译成独立静态可执行文件 '
@@ -188,6 +193,66 @@ def _apply_namespace(config: Config, ns: argparse.Namespace) -> None:
     # --debug 是比 --log-level 更强的开关: 与旧版一致, 始终强制 DEBUG
     if config.debug_mode:
         config.log_level = 'DEBUG'
+
+
+def _run_native(ns: argparse.Namespace, console, program_file: str,
+                config) -> int:
+    """--native / --native-out: AST→C 直接原生编译 (不经过指令集)。"""
+    import subprocess
+    import tempfile
+
+    from . import nativegen
+    from .aot import AotError, parse_target
+    from .cbackend import CBackendError, c_target
+
+    try:
+        source = open(program_file, encoding='utf-8-sig').read()
+    except OSError as e:
+        console.print(Panel(str(e), title="Load Error", border_style='red'))
+        return 1
+
+    target = None
+    if ns.build_target:
+        try:
+            goos, goarch = parse_target(ns.build_target)
+            target = c_target(goos, goarch)
+        except (AotError, CBackendError) as e:
+            console.print(Panel(str(e), title="Build Error", border_style='red'))
+            return 1
+
+    build_only = ns.native_out is not None
+    if build_only:
+        out = ns.native_out
+        if not out:
+            out = os.path.splitext(program_file)[0] + '.exe'
+    else:
+        tmpdir = tempfile.mkdtemp(prefix='.native-')
+        out = os.path.join(tmpdir, os.path.splitext(
+            os.path.basename(program_file))[0])
+
+    try:
+        built = nativegen.compile_native(source, out, target=target,
+                                         optimize=max(0, int(config.optimize)))
+    except (nativegen.NativeGenError, toolchain_error()) as e:
+        console.print(Panel(str(e), title="Native Build Error",
+                            border_style='red'))
+        return 1
+
+    if build_only:
+        console.print(Colors.colorize(f"Built native: {built}", Colors.GREEN))
+        return 0
+
+    try:
+        proc = subprocess.run([built] + list(config.program_args))
+        return int(proc.returncode)
+    except OSError as e:
+        console.print(Panel(str(e), title="Run Error", border_style='red'))
+        return 1
+
+
+def toolchain_error():
+    from .toolchain import ToolchainError
+    return ToolchainError
 
 
 def _run_aot_build(ns: argparse.Namespace, console, program_file: str,
@@ -495,6 +560,9 @@ def main(argv: Optional[List[str]] = None) -> int:
             return 1
         sys.stdout.write("\n".join(lines))
         return 0
+
+    if ns.native or ns.native_out:
+        return _run_native(ns, console, program_file, config)
 
     if ns.build_exe is not None:
         return _run_aot_build(ns, console, program_file, config)

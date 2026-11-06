@@ -498,6 +498,8 @@ def cmd_build(args) -> int:
     project = _project_from_args(args)
     if args.clean:
         shutil.rmtree(project.target_dir, ignore_errors=True)
+    if getattr(args, 'native', False):
+        return _build_native_project(project, args)
     out = build_project(project, output=args.output, release=args.release,
                         optimize=args.optimize, mem_size=args.mem_size,
                         bounds_check=args.bounds_check,
@@ -506,6 +508,26 @@ def cmd_build(args) -> int:
     if args.package:
         pkg, _ = package_project(project, bin_path=out)
         print(f'Packaged: {pkg}')
+    return 0
+
+
+def _build_native_project(project: MknManifest, args) -> int:
+    """``mkn build --native``: 直接 AST→C 原生编译, 不产生指令流/字节码。"""
+    from . import nativegen
+
+    entry = project.entry_path
+    if not entry.lower().endswith('.cin'):
+        raise MknError('mkn build --native 目前只支持 .cin 入口')
+    try:
+        with open(entry, encoding='utf-8-sig') as f:
+            source = f.read()
+    except OSError as e:
+        raise MknError(f'读取入口失败: {e}') from e
+    out = args.output or os.path.join(
+        project.target_dir, f'{project.name}-{project.version}')
+    optimize = 2 if args.release else int(args.optimize or 0)
+    built = nativegen.compile_native(source, out, optimize=optimize)
+    print(f'Built native {project.name} {project.version}: {built}')
     return 0
 
 
@@ -769,6 +791,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument('--mem-size', type=int, dest='mem_size')
     p.add_argument('--bounds-check', action='store_true', dest='bounds_check')
     p.add_argument('--no-deps', action='store_true', dest='no_deps')
+    p.add_argument('--native', action='store_true',
+                   help='直接用 AST→C 原生后端编译为设备本机可执行文件 '
+                        '(不经过 UCPU 指令集; 超出语言子集会报错)')
     p.add_argument('--clean', action='store_true')
     p.add_argument('--package', action='store_true', help='编译后同时打包')
     p.set_defaults(func=cmd_build)
