@@ -878,6 +878,9 @@ def build_from_ir(instructions,
                   debug: bool = False,
                   use_cache: bool = False,
                   cache_key: Optional[str] = None,
+                  c_static: bool = False,
+                  c_strip: bool = False,
+                  c_keep_c: bool = False,
                   logger=None) -> str:
     """从已解析的指令流/内存段构建 AOT 产物 (供 linker 复用)。"""
     from .native import encode_program
@@ -927,7 +930,9 @@ def build_from_ir(instructions,
         try:
             built = cbackend.compile_instructions(
                 instructions, labels, segments, entry_pc, mem_size, sp,
-                heap_base, out, target=cname, optimize=optimize)
+                heap_base, out, target=cname, optimize=optimize,
+                keep_c=c_keep_c, static_link=c_static,
+                strip_binary=c_strip)
         except cbackend.CBackendError as e:
             raise AotError(f'C 后端编译失败: {e}') from e
     elif effective == 'vm':
@@ -970,6 +975,9 @@ def build_program(program_file: str,
                   optimize: int = 0,
                   use_cache: bool = True,
                   debug: bool = False,
+                  c_static: bool = False,
+                  c_strip: bool = False,
+                  c_keep_c: bool = False,
                   logger=None) -> str:
     """便捷入口: 由 .cin/.asm/.pl/.bin 构建可执行文件。
 
@@ -996,6 +1004,8 @@ def build_program(program_file: str,
         out += '.exe'          # README: Windows 目标自动补 .exe
 
     cache_key = None
+    if c_static or c_strip or c_keep_c:
+        use_cache = False           # 这些选项会改变产物, 不走共享缓存
     if use_cache:
         cache_key = build_cache_key(program_file, target, backend, optimize,
                                     mem_size, max_instructions, debug=debug)
@@ -1032,6 +1042,9 @@ def build_program(program_file: str,
         program_name=os.path.basename(program_file),
         keep_temp=keep_temp,
         debug=debug,
+        c_static=c_static,
+        c_strip=c_strip,
+        c_keep_c=c_keep_c,
         logger=logger,
     )
     if cache_key:
