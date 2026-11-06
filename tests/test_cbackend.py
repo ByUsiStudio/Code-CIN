@@ -1063,3 +1063,24 @@ def test_inspect_binary_matches_host_target(workdir):
         'aarch64-linux'
     with pytest.raises(ValueError):
         cbackend.inspect_binary(built, wrong)
+
+
+@pytest.mark.parametrize('cross', ['x86_64-linux', 'aarch64-linux'])
+def test_cross_compile_structure(workdir, cross):
+    """有交叉编译器时, 校验 ELF 头部/架构/入口, 无工具链则跳过。"""
+    if _compiler() is None:
+        pytest.skip('本机没有可用的 C 编译器')
+    src = os.path.join(workdir, 'cross.cin')
+    with open(src, 'w', encoding='utf-8') as f:
+        f.write('function main() -> int {\n    return 0\n}\n')
+    try:
+        built = aot.build_program(src, out=os.path.join(workdir, 'crossprog'),
+                                  target=cross, backend='c',
+                                  use_cache=False)
+    except Exception as e:
+        pytest.skip(f'{cross} 交叉工具链不可用: {e}')
+    info = cbackend.inspect_binary(built, cross)
+    arch = cross.split('-', 1)[0]
+    assert info['format'] == 'elf'
+    assert info['machine'] == cbackend._ELF_MACHINE[arch]
+    assert info['entry'] and info['phnum']
