@@ -151,6 +151,21 @@ def test_string_variables(workdir):
     assert result.stdout.replace('\r\n', '\n') == 'hello\nworld\nhi\n'
 
 
+@pytest.mark.skipif(_compiler() is None, reason='本机没有可用的 C 编译器')
+def test_string_concat(workdir):
+    src = ('function main() -> int {\n'
+           '    string a = "foo"\n'
+           '    string b = "bar"\n'
+           '    println(a + "-" + b)\n'
+           '    println("x" + b)\n'
+           '    return 0\n'
+           '}\n')
+    out = nativegen.compile_native(src, os.path.join(workdir, 'catprog'))
+    result = subprocess.run([out], capture_output=True, text=True, timeout=60)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.replace('\r\n', '\n') == 'foo-bar\nxbar\n'
+
+
 def test_emit_c_contains_no_isa_artifacts():
     source = nativegen.emit_c(LOOP)
     assert '#include <stdio.h>' in source
