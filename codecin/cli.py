@@ -101,6 +101,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help='执行后保存 .crom 内存镜像')
     p.add_argument('--no-compress', action='store_false', dest='compress_crom',
                    help='.crom 不压缩 (默认压缩)')
+    p.add_argument('--sdgcc-compress', action='store_true', dest='sdgcc_compress',
+                   help='.sdgcc 的 META/SYMS/SRCS 段启用 zlib 压缩 (版本升为 2)')
 
     # 语言/汇编
     p.add_argument('--optimize', type=int, metavar='0-3',
@@ -136,6 +138,14 @@ def build_parser() -> argparse.ArgumentParser:
                         'darwin/amd64, darwin/arm64')
     p.add_argument('--build-keep-temp', action='store_true',
                    help='AOT 构建时保留临时目录 (排查 go build 失败)')
+    p.add_argument('--build-static', action='store_true', dest='build_static',
+                   help='C 后端产物静态链接 (macOS 目标会自动忽略)')
+    p.add_argument('--build-strip', action='store_true', dest='build_strip',
+                   help='C 后端产物去掉符号表 (体积更小)')
+    p.add_argument('--build-keep-c', action='store_true', dest='build_keep_c',
+                   help='保留 C 后端生成的 program.c (<产物>.c)')
+    p.add_argument('--build-verify', action='store_true', dest='build_verify',
+                   help='构建后校验 ELF/PE 头部与目标架构是否一致')
     p.add_argument('--build-backend', choices=['auto', 'c', 'native', 'vm'],
                    default='auto',
                    help='AOT 后端: auto = 优先 C 后端, 不支持时回退 Go/VM (默认); '
@@ -156,6 +166,7 @@ def _apply_namespace(config: Config, ns: argparse.Namespace) -> None:
     config.debug_mode = ns.debug
     config.auto_save_crom = ns.auto_save_crom
     config.compress_crom = ns.compress_crom
+    config.sdgcc_compress = ns.sdgcc_compress
     config.compile_to_bin = ns.compile_to_bin
     config.compile_only = ns.compile_only
     config.output_file = ns.output
@@ -218,7 +229,10 @@ def _run_aot_build(ns: argparse.Namespace, console, program_file: str,
                                   max_instructions=config.max_instructions,
                                   optimize=config.optimize,
                                   use_cache=ns.build_cache,
-                                  debug=ns.build_debug)
+                                  debug=ns.build_debug,
+                                  c_static=ns.build_static,
+                                  c_strip=ns.build_strip,
+                                  c_keep_c=ns.build_keep_c)
     except (aot.AotError, CPUSimulatorError) as e:
         console.print(Panel(str(e), title='Build Error', border_style='red'))
         return 1
@@ -227,6 +241,16 @@ def _run_aot_build(ns: argparse.Namespace, console, program_file: str,
         if config.debug_mode or config.log_level.upper() == 'DEBUG':
             console.print_exception()
         return 1
+    if getattr(ns, 'build_verify', False):
+        from . import cbackend
+        try:
+            info = cbackend.inspect_binary(built, target)
+        except ValueError as e:
+            console.print(Panel(str(e), title='Verify Error', border_style='red'))
+            return 1
+        console.print(Colors.colorize(
+            'Verify OK: ' + ' '.join(f'{k}={v}' for k, v in info.items()),
+            Colors.GREEN))
     console.print(Colors.colorize(f"AOT build 完成: {built}", Colors.GREEN))
     return 0
 
@@ -390,8 +414,13 @@ def main(argv: Optional[List[str]] = None) -> int:
                 program_name='linked',
                 keep_temp=ns.build_keep_temp,
                 debug=ns.build_debug,
-                use_cache=ns.build_cache,
+                use_cache=(ns.build_cache and not (ns.build_static
+                                                   or ns.build_strip
+                                                   or ns.build_keep_c)),
                 cache_key=cache_key,
+                c_static=ns.build_static,
+                c_strip=ns.build_strip,
+                c_keep_c=ns.build_keep_c,
                 logger=None)
         except (aot.AotError, OSError) as e:
             console.print(Panel(str(e), title='Link Error', border_style='red'))
@@ -498,6 +527,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             from . import sdgcc as sdgcc_mod
             sdgcc_mod.save_program(cpu, output_file, multi_file=False,
                                    sources=[program_file],
+                                   compress=bool(config.sdgcc_compress),
                                    meta={'build': {
                                        'entry': os.path.basename(program_file),
                                        'optimize': int(config.optimize),

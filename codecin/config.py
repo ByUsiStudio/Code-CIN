@@ -24,6 +24,7 @@ class Config:
     output_file: Optional[str] = None
     optimize: int = 0
     compress_crom: bool = True
+    sdgcc_compress: bool = False
     compile_to_bin: bool = False
     compile_only: bool = False
     # A2: 确定性随机种子 (None = 随机; 0 亦表示随机)

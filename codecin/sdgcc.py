@@ -14,18 +14,23 @@
 
     offset  size    field
     0       5       magic  b'SDGCC'
-    5       1       version (当前 1)
-    6       2       flags  (bit0 多文件, bit1 含符号表, bit2 含源码清单)
+    5       1       version (1 = 未压缩, 2 = 支持按段压缩)
+    6       2       flags  (bit0 多文件, bit1 符号表, bit2 源码清单,
+                            bit3 至少一个压缩段)
     8       16      target (ASCII, NUL 填充; 'host' = 构建机)
     24      4       section count N
     28      24*N    section table: name[8] | offset u64 | size u64
     ...             payload
+
+``size`` 的最高位 (bit63) 表示该段使用 zlib 压缩; 此时后 63 位是**存储长度**,
+段内容前 4 字节为原始长度。``CODE`` 段永不压缩 (保证旧 BIN 读取器兼容)。
 
 段名: ``CODE`` (必需, BIN v3), ``META`` (TOML), ``SYMS``, ``SRCS``。
 """
 
 import os
 import struct
+import zlib
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
@@ -35,9 +40,12 @@ from .isa import Constants
 __all__ = [
     'SDGCC_MAGIC',
     'SDGCC_VERSION',
+    'SDGCC_VERSION_COMPRESSED',
     'Sdgcc',
     'SdgccError',
     'build',
+    'describe',
+    'dump',
     'is_sdgcc',
     'load',
     'parse',
@@ -49,8 +57,12 @@ __all__ = [
 
 #: 容器 magic (5 字节, 与 BIN 的 ``CPUSA`` 等长, 便于魔数嗅探)。
 SDGCC_MAGIC = b'SDGCC'
-#: 容器版本。
+#: 默认容器版本 (未压缩)。
 SDGCC_VERSION = 1
+#: 支持按段压缩的容器版本。
+SDGCC_VERSION_COMPRESSED = 2
+#: 解析器接受的最大版本。
+SDGCC_MAX_VERSION = SDGCC_VERSION_COMPRESSED
 
 #: 单文件模式 / 多文件模式。
 MODE_SINGLE = 'single'
@@ -59,6 +71,10 @@ MODE_MULTI = 'multi'
 FLAG_MULTI_FILE = 0x0001
 FLAG_SYMBOLS = 0x0002
 FLAG_SOURCES = 0x0004
+FLAG_COMPRESSED = 0x0008
+
+#: 段表 size 字段最高位 = 该段已压缩。
+_ENTRY_COMPRESSED = 1 << 63
 
 TARGET_HOST = 'host'
 
@@ -88,6 +104,9 @@ class Sdgcc:
     target: str
     sections: Dict[str, bytes] = field(default_factory=dict)
     meta: Dict[str, Any] = field(default_factory=dict)
+    #: name -> (offset, stored_size, logical_size, compressed)
+    entries: Dict[str, Tuple[int, int, int, bool]] = field(
+        default_factory=dict)
 
     @property
     def multi_file(self) -> bool:
@@ -129,6 +148,7 @@ class Sdgcc:
             'mem_size': build_info.get('mem_size'),
             'bin_version': build_info.get('bin_version'),
             'bytecode_len': build_info.get('bytecode_len'),
+            'compressed': sum(1 for item in self.entries.values() if item[3]),
         }
 
 
@@ -234,7 +254,8 @@ def build(code: bytes,
           meta: Optional[Dict[str, Any]] = None,
           symbols: Optional[Iterable[Tuple[int, str]]] = None,
           sources: Optional[Sequence[str]] = None,
-          version: int = SDGCC_VERSION) -> bytes:
+          version: int = SDGCC_VERSION,
+          compress: bool = False) -> bytes:
     """把 BIN v3 字节流封装为 ``.sdgcc``。
 
     ``code`` 必须是完整 BIN v3 镜像 (以 ``CPUSA`` 开头); 传入 ``.bin`` 原始
@@ -248,12 +269,13 @@ def build(code: bytes,
     if code[5] not in (Constants.BIN_VERSION, Constants.BIN_VERSION_V2):
         raise SdgccError(f'CODE 以不支持的 BIN 版本开头: {code[5]}')
 
+    version_out = SDGCC_VERSION_COMPRESSED if compress else version
     payload: List[Tuple[str, bytes]] = [(SECTION_CODE, code)]
     info = dict(meta or _default_meta(target, multi_file))
     info.setdefault('sdgcc', {})
     if not isinstance(info.get('sdgcc'), dict):
         raise SdgccError('meta[sdgcc] 必须是表')
-    info['sdgcc'].setdefault('format', version)
+    info['sdgcc']['format'] = version_out
     info['sdgcc']['mode'] = MODE_MULTI if multi_file else MODE_SINGLE
     info['sdgcc'].setdefault('target', target)
     payload.append((SECTION_META, _dumps_meta(info)))
@@ -271,10 +293,19 @@ def build(code: bytes,
     table: List[bytes] = []
     body = bytearray()
     for name, data in payload:
-        table.append(_ENTRY.pack(_pad_name(name), offset, len(data)))
-        body += data
-        offset += len(data)
-    header = (_FIXED.pack(SDGCC_MAGIC, version, flags,
+        stored = data
+        packed = False
+        if compress and name != SECTION_CODE and len(data) >= 16:
+            blob = zlib.compress(data, 9)
+            if len(blob) + 4 < len(data):
+                stored = struct.pack('<I', len(data)) + blob
+                packed = True
+                flags |= FLAG_COMPRESSED
+        size_field = len(stored) | (_ENTRY_COMPRESSED if packed else 0)
+        table.append(_ENTRY.pack(_pad_name(name), offset, size_field))
+        body += stored
+        offset += len(stored)
+    header = (_FIXED.pack(SDGCC_MAGIC, version_out, flags,
                           target.encode('ascii', 'replace')[:16].ljust(16, b'\x00'))
               + _COUNT.pack(len(payload)))
     return header + b''.join(table) + bytes(body)
@@ -294,7 +325,7 @@ def parse(data: bytes) -> Sdgcc:
     if len(data) < HEADER_SIZE:
         raise SdgccError('.sdgcc 头部不完整')
     magic, version, flags, raw_target = _FIXED.unpack_from(data, 0)
-    if version > SDGCC_VERSION or version == 0:
+    if version > SDGCC_MAX_VERSION or version == 0:
         raise SdgccError(f'不支持的 .sdgcc 版本: {version}')
     count = _COUNT.unpack_from(data, HEADER_SIZE - _COUNT.size)[0]
     if count == 0 or count > 64:
@@ -305,19 +336,40 @@ def parse(data: bytes) -> Sdgcc:
         raise SdgccError('段表被截断')
 
     sections: Dict[str, bytes] = {}
+    entries: Dict[str, Tuple[int, int, int, bool]] = {}
     order: List[Tuple[int, int]] = []
     for index in range(count):
-        raw_name, offset, size = _ENTRY.unpack_from(
+        raw_name, offset, size_raw = _ENTRY.unpack_from(
             data, HEADER_SIZE + ENTRY_SIZE * index)
         name = raw_name.rstrip(b'\x00').decode('ascii', 'replace')
+        compressed = bool(size_raw & _ENTRY_COMPRESSED)
+        stored = size_raw & ~_ENTRY_COMPRESSED
         if not name:
             raise SdgccError(f'第 {index} 段缺少名字')
         if name in sections:
             raise SdgccError(f'重复的段名: {name}')
-        if offset < table_end or offset + size > len(data):
-            raise SdgccError(f'段 {name} 越界 (offset={offset}, size={size})')
-        sections[name] = data[offset:offset + size]
-        order.append((offset, offset + size))
+        if offset < table_end or offset + stored > len(data):
+            raise SdgccError(f'段 {name} 越界 (offset={offset}, size={stored})')
+        chunk = data[offset:offset + stored]
+        if compressed:
+            if name == SECTION_CODE:
+                raise SdgccError('CODE 段不允许压缩 (会破坏 BIN 兼容性)')
+            if stored < 4:
+                raise SdgccError(f'压缩段 {name} 缺少原始长度')
+            try:
+                original = zlib.decompress(chunk[4:])
+            except zlib.error as e:
+                raise SdgccError(f'压缩段 {name} 解压失败: {e}') from e
+            expected = struct.unpack_from('<I', chunk, 0)[0]
+            if len(original) != expected:
+                raise SdgccError(
+                    f'压缩段 {name} 长度不符: {len(original)} != {expected}')
+            sections[name] = original
+            entries[name] = (offset, stored, expected, True)
+        else:
+            sections[name] = chunk
+            entries[name] = (offset, stored, stored, False)
+        order.append((offset, offset + stored))
     order.sort()
     for (start, end), (next_start, _next_end) in zip(order, order[1:]):
         if next_start < end:
@@ -331,8 +383,10 @@ def parse(data: bytes) -> Sdgcc:
 
     meta = _loads_meta(sections[SECTION_META]) if SECTION_META in sections else {}
     target = raw_target.rstrip(b'\x00').decode('ascii', 'replace') or TARGET_HOST
+    if any(item[3] for item in entries.values()):
+        flags |= FLAG_COMPRESSED
     container = Sdgcc(version=version, flags=flags, target=target,
-                      sections=sections, meta=meta)
+                      sections=sections, meta=meta, entries=entries)
     # 段表标志与 META 不一致时以段表为准, 但 META 必须能解析 (上面已校验)。
     if not container.multi_file and container.meta.get('sdgcc', {}).get(
             'mode') == MODE_MULTI:
@@ -374,6 +428,50 @@ def read_code(path: str) -> bytes:
     return code
 
 
+# ==================== 检查 / 导出工具 ====================
+
+_SECTION_FILENAMES = {
+    SECTION_CODE: 'program.bin',
+    SECTION_META: 'meta.toml',
+    SECTION_SYMS: 'symbols.txt',
+    SECTION_SRCS: 'sources.txt',
+}
+
+
+def describe(container: Sdgcc) -> Dict[str, Any]:
+    """返回便于展示/JSON 输出的容器全量信息。"""
+    data = container.to_dict()
+    data['flags'] = container.flags
+    data['version'] = container.version
+    data['sections'] = []
+    for name, (offset, stored, logical, compressed) in sorted(
+            container.entries.items(),
+            key=lambda item: item[1][0]):
+        data['sections'].append({
+            'name': name,
+            'offset': offset,
+            'stored': stored,
+            'size': logical,
+            'compressed': compressed,
+        })
+    data['meta'] = container.meta
+    return data
+
+
+def dump(container: Sdgcc, out_dir: str) -> List[str]:
+    """把各段按语义文件名导出到 ``out_dir``, 返回写出的路径。"""
+    os.makedirs(out_dir, exist_ok=True)
+    written: List[str] = []
+    for name in sorted(container.entries,
+                       key=lambda item: container.entries[item][0]):
+        filename = _SECTION_FILENAMES.get(name, name.lower() + '.bin')
+        path = os.path.join(out_dir, filename)
+        with open(path, 'wb') as f:
+            f.write(container.sections[name])
+        written.append(os.path.abspath(path))
+    return written
+
+
 # ==================== 与 CPU 对接 ====================
 
 
@@ -382,7 +480,8 @@ def save_program(cpu: 'Any', path: str, *,
                  multi_file: bool = True,
                  meta: Optional[Dict[str, Any]] = None,
                  symbols: Optional[Iterable[Tuple[int, str]]] = None,
-                 sources: Optional[Sequence[str]] = None) -> str:
+                 sources: Optional[Sequence[str]] = None,
+                 compress: bool = False) -> str:
     """把已编译的 CPU 状态写成 ``.sdgcc`` (路径以 ``.bin`` 结尾时写裸 BIN)。"""
     from . import crom as crom_mod
     code = crom_mod.dump_bin(cpu)
@@ -391,4 +490,4 @@ def save_program(cpu: 'Any', path: str, *,
         crom_mod.save_bin(cpu, path)
         return os.path.abspath(path)
     return save(path, code, target=target, multi_file=multi_file, meta=meta,
-                symbols=symbols, sources=sources)
+                symbols=symbols, sources=sources, compress=compress)

@@ -568,6 +568,44 @@ def cmd_which(args) -> int:
     return 0
 
 
+def _open_sdgcc(path: str):
+    from . import sdgcc
+    with open(path, 'rb') as f:
+        data = f.read()
+    if not sdgcc.is_sdgcc(data):
+        raise sdgcc.SdgccError(f'不是 .sdgcc 容器: {path}')
+    return sdgcc, sdgcc.parse(data)
+
+
+def cmd_sdgcc_info(args) -> int:
+    import json
+    sdgcc, container = _open_sdgcc(args.file)
+    info = sdgcc.describe(container)
+    if args.json:
+        print(json.dumps(info, ensure_ascii=False, indent=2))
+        return 0
+    print(f'{args.file}: sdgcc v{container.version} '
+          f'target={container.target} '
+          f'mode={"multi" if container.multi_file else "single"}')
+    total_stored = total_logical = 0
+    for sec in info['sections']:
+        total_stored += sec['stored']
+        total_logical += sec['size']
+        tag = ' zlib' if sec['compressed'] else ''
+        print(f"  {sec['name']:<6} offset={sec['offset']:<8} "
+              f"size={sec['size']}({sec['stored']} stored){tag}")
+    print(f'  total: {total_stored} bytes stored, {total_logical} bytes logical')
+    return 0
+
+
+def cmd_sdgcc_dump(args) -> int:
+    sdgcc, container = _open_sdgcc(args.file)
+    out = args.out or (os.path.splitext(args.file)[0] + '.parts')
+    for path in sdgcc.dump(container, out):
+        print(path)
+    return 0
+
+
 # ==================== argparse ====================
 
 
@@ -631,6 +669,17 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser('which', help='解析模块路径')
     p.add_argument('module')
     p.set_defaults(func=cmd_which)
+
+    p = sub.add_parser('sdgcc', help='查看/导出 .sdgcc 容器')
+    sdg = p.add_subparsers(dest='sdgcc_command', required=True)
+    pi = sdg.add_parser('info', help='显示容器版本/目标/段表')
+    pi.add_argument('file')
+    pi.add_argument('--json', action='store_true')
+    pi.set_defaults(func=cmd_sdgcc_info)
+    pd = sdg.add_parser('dump', help='把各段导出为独立文件')
+    pd.add_argument('file')
+    pd.add_argument('-o', '--out', help='输出目录 (默认 <file>.parts)')
+    pd.set_defaults(func=cmd_sdgcc_dump)
     return parser
 
 
