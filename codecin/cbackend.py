@@ -41,14 +41,16 @@ SUPPORTED_OPS = frozenset({
 })
 
 #: 已实现的 SYS 功能号。
-SUPPORTED_SYS = frozenset(set(range(0, 39)) | {43, 44, 45, 46, 48, 49, 50}
-                          | set(range(51, 59))
+SUPPORTED_SYS = frozenset(set(range(0, 39)) | {43, 44, 45, 46, 47, 48, 49, 50}
+                          | set(range(51, 61))
                           | set(range(61, 68)) | {80, 81, 82, 83, 84, 85, 86,
                                                   87, 88, 89, 90, 91, 92, 93,
                                                   94, 95, 96, 97, 98, 99, 100,
-                                                  101, 102, 137, 145, 146, 147,
-                                                  148, 149, 150, 151, 152, 153,
-                                                  154, 155, 156, 157})
+                                                  101, 102, 103, 104, 105, 106,
+                                                  116, 117, 118, 131, 137,
+                                                  145, 146, 147, 148, 149, 150,
+                                                  151, 152, 153, 154, 155, 156,
+                                                  157})
 
 
 class CBackendError(RuntimeError):
@@ -78,6 +80,9 @@ _RUNTIME = r'''
 #include <direct.h>
 #else
 #include <unistd.h>
+#include <fcntl.h>
+#include <termios.h>
+#include <sys/wait.h>
 #endif
 
 #define CODECIN_UNSUPPORTED 70
@@ -1323,6 +1328,71 @@ static uint64_t rt_canvas_line(uint64_t x0, uint64_t y0, uint64_t x1,
     return 0;
 }
 
+/* 内置 5x7 点阵字库 (ASCII 32..126; 小写映射为大写, 缺失字符用 '?')。 */
+static const unsigned char FONT5X7[95][7] = {
+    {0,0,0,0,0,0,0}, {4,4,4,4,4,0,4}, {14,17,1,2,4,0,4}, {14,17,1,2,4,0,4},
+    {14,17,1,2,4,0,4}, {14,17,1,2,4,0,4}, {14,17,1,2,4,0,4}, {14,17,1,2,4,0,4},
+    {14,17,1,2,4,0,4}, {14,17,1,2,4,0,4}, {14,17,1,2,4,0,4}, {14,17,1,2,4,0,4},
+    {0,0,0,0,6,4,8}, {0,0,0,31,0,0,0}, {0,0,0,0,0,12,12}, {1,1,2,4,8,16,16},
+    {14,17,19,21,25,17,14}, {4,12,4,4,4,4,14}, {14,17,1,2,4,8,31}, {31,1,2,6,1,17,14},
+    {2,6,10,18,31,2,2}, {31,16,30,1,1,17,14}, {6,8,16,30,17,17,14}, {31,1,2,4,8,8,8},
+    {14,17,17,14,17,17,14}, {14,17,17,15,1,2,12}, {0,6,6,0,6,6,0}, {14,17,1,2,4,0,4},
+    {14,17,1,2,4,0,4}, {14,17,1,2,4,0,4}, {14,17,1,2,4,0,4}, {14,17,1,2,4,0,4},
+    {14,17,1,2,4,0,4}, {14,17,17,31,17,17,17}, {30,17,17,30,17,17,30}, {14,17,16,16,16,17,14},
+    {30,17,17,17,17,17,30}, {31,16,16,30,16,16,31}, {31,16,16,30,16,16,16}, {14,17,16,23,17,17,15},
+    {17,17,17,31,17,17,17}, {14,4,4,4,4,4,14}, {1,1,1,1,17,17,14}, {17,18,20,24,20,18,17},
+    {16,16,16,16,16,16,31}, {17,27,21,21,17,17,17}, {17,25,21,19,17,17,17}, {14,17,17,17,17,17,14},
+    {30,17,17,30,16,16,16}, {14,17,17,17,21,18,13}, {30,17,17,30,20,18,17}, {15,16,16,14,1,1,30},
+    {31,4,4,4,4,4,4}, {17,17,17,17,17,17,14}, {17,17,17,17,17,10,4}, {17,17,17,21,21,27,17},
+    {17,17,10,4,10,17,17}, {17,17,10,4,4,4,4}, {31,1,2,4,8,16,31}, {14,17,1,2,4,0,4},
+    {14,17,1,2,4,0,4}, {14,17,1,2,4,0,4}, {14,17,1,2,4,0,4}, {14,17,1,2,4,0,4},
+    {14,17,1,2,4,0,4}, {14,17,17,31,17,17,17}, {30,17,17,30,17,17,30}, {14,17,16,16,16,17,14},
+    {30,17,17,17,17,17,30}, {31,16,16,30,16,16,31}, {31,16,16,30,16,16,16}, {14,17,16,23,17,17,15},
+    {17,17,17,31,17,17,17}, {14,4,4,4,4,4,14}, {1,1,1,1,17,17,14}, {17,18,20,24,20,18,17},
+    {16,16,16,16,16,16,31}, {17,27,21,21,17,17,17}, {17,25,21,19,17,17,17}, {14,17,17,17,17,17,14},
+    {30,17,17,30,16,16,16}, {14,17,17,17,21,18,13}, {30,17,17,30,20,18,17}, {15,16,16,14,1,1,30},
+    {31,4,4,4,4,4,4}, {17,17,17,17,17,17,14}, {17,17,17,17,17,10,4}, {17,17,17,21,21,27,17},
+    {17,17,10,4,10,17,17}, {17,17,10,4,4,4,4}, {31,1,2,4,8,16,31}, {14,17,1,2,4,0,4},
+    {14,17,1,2,4,0,4}, {14,17,1,2,4,0,4}, {14,17,1,2,4,0,4},
+};
+
+static const unsigned char *rt_font_glyph(int ch) {
+    if (ch >= 'a' && ch <= 'z') ch = ch - 'a' + 'A';
+    if (ch < 32 || ch > 126) ch = '?';
+    return FONT5X7[ch - 32];
+}
+
+static uint64_t rt_canvas_text(uint64_t x, uint64_t y, uint64_t addr) {
+    const char *s;
+    int ox, oy, px;
+    if (!CANVAS) return (uint64_t)-1;
+    ox = rt_clamp_coord(x);
+    oy = rt_clamp_coord(y);
+    s = rt_cstr(addr);
+    px = ox;
+    while (s && *s) {
+        const unsigned char *g = rt_font_glyph((unsigned char)*s++);
+        int row, col;
+        for (row = 0; row < 7; row++) {
+            unsigned char bits = g[row];
+            for (col = 0; col < 5; col++) {
+                if (bits & (1u << (4 - col))) {
+                    int cx = px + col, cy = oy + row;
+                    if (cx >= 0 && cx < CW && cy >= 0 && cy < CH) {
+                        unsigned char *p = CANVAS + ((size_t)cy * CW + cx) * 4;
+                        p[0] = (unsigned char)COL_R;
+                        p[1] = (unsigned char)COL_G;
+                        p[2] = (unsigned char)COL_B;
+                        p[3] = 255;
+                    }
+                }
+            }
+        }
+        px += 6;
+    }
+    return 0;
+}
+
 static uint32_t rt_crc32(const unsigned char *data, size_t n) {
     uint32_t crc = 0xFFFFFFFFu;
     size_t i;
@@ -1673,6 +1743,532 @@ static uint64_t rt_meminfo(void) {
 static uint64_t rt_is_android(void) {
     struct stat st;
     return stat("/system/build.prop", &st) == 0 ? 1 : 0;
+}
+
+/* ---------------- 进程执行 (SYS 59/60) ---------------- */
+
+#ifdef _WIN32
+#define rt_popen _popen
+#define rt_pclose _pclose
+#else
+#define rt_popen popen
+#define rt_pclose pclose
+#endif
+
+static uint64_t rt_exec_cmd(const char *cmd) {
+    int status = system(cmd);
+    if (status == -1) return (uint64_t)-1;
+#ifdef _WIN32
+    return (uint64_t)status;
+#else
+    if (WIFEXITED(status)) return (uint64_t)WEXITSTATUS(status);
+    if (WIFSIGNALED(status)) return (uint64_t)(128 + WTERMSIG(status));
+    return (uint64_t)-1;
+#endif
+}
+
+static uint64_t rt_exec_output(const char *cmd) {
+    FILE *p = rt_popen(cmd, "r");
+    char *buf = NULL;
+    size_t cap = 0, len = 0, n;
+    uint64_t result;
+    if (!p) return rt_empty();
+    for (;;) {
+        if (len + 4096 + 1 > cap) {
+            size_t ncap = cap ? cap * 2 : 8192;
+            char *nb;
+            while (ncap < len + 4096 + 1) ncap *= 2;
+            nb = (char *)realloc(buf, ncap);
+            if (!nb) break;
+            buf = nb;
+            cap = ncap;
+        }
+        n = fread(buf + len, 1, cap - len - 1, p);
+        if (n == 0) break;
+        len += n;
+    }
+    rt_pclose(p);
+    if (!buf) return rt_empty();
+    buf[len] = 0;
+    result = rt_dupstr(buf);
+    free(buf);
+    return result;
+}
+
+/* ---------------- 桌面集成 (SYS 103-106) ---------------- */
+
+static void rt_shell_sq(const char *in, char *out, size_t cap) {
+    size_t o = 0;
+    for (; *in && o + 5 < cap; in++) {
+        if (*in == '\'') {
+            out[o++] = '\'';
+            out[o++] = '\\';
+            out[o++] = '\'';
+            out[o++] = '\'';
+        } else {
+            out[o++] = *in;
+        }
+    }
+    out[o] = 0;
+}
+
+#ifdef _WIN32
+static void rt_ps_sq(const char *in, char *out, size_t cap) {
+    size_t o = 0;
+    for (; *in && o + 3 < cap; in++) {
+        if (*in == '\'') out[o++] = '\'';
+        out[o++] = *in;
+    }
+    out[o] = 0;
+}
+
+static void rt_win_dq(const char *in, char *out, size_t cap) {
+    size_t o = 0;
+    for (; *in && o + 3 < cap; in++) {
+        if (*in == '"') { out[o++] = '"'; out[o++] = '"'; }
+        else out[o++] = *in;
+    }
+    out[o] = 0;
+}
+
+static uint64_t rt_clip_get(void) {
+    HANDLE h;
+    char *utf8 = NULL;
+    wchar_t *w;
+    int n;
+    if (!OpenClipboard(NULL)) return rt_empty();
+    h = GetClipboardData(CF_UNICODETEXT);
+    if (h) {
+        w = (wchar_t *)GlobalLock(h);
+        if (w) {
+            n = WideCharToMultiByte(CP_UTF8, 0, w, -1, NULL, 0, NULL, NULL);
+            if (n > 0) utf8 = (char *)malloc((size_t)n);
+            if (utf8) WideCharToMultiByte(CP_UTF8, 0, w, -1, utf8, n, NULL,
+                                          NULL);
+            GlobalUnlock(h);
+        }
+        CloseClipboard();
+    } else {
+        CloseClipboard();
+    }
+    if (utf8) {
+        size_t len = strlen(utf8);
+        uint64_t r;
+        while (len > 0 && (utf8[len - 1] == '\r' || utf8[len - 1] == '\n'))
+            utf8[--len] = 0;
+        r = rt_dupstr(utf8);
+        free(utf8);
+        return r;
+    }
+    return rt_empty();
+}
+
+static uint64_t rt_clip_set(const char *text) {
+    int n = MultiByteToWideChar(CP_UTF8, 0, text, -1, NULL, 0);
+    HGLOBAL mem;
+    wchar_t *dst;
+    if (n <= 0) return (uint64_t)-1;
+    mem = GlobalAlloc(GMEM_MOVEABLE, (SIZE_T)n * sizeof(wchar_t));
+    if (!mem) return (uint64_t)-1;
+    dst = (wchar_t *)GlobalLock(mem);
+    if (!dst) { GlobalFree(mem); return (uint64_t)-1; }
+    MultiByteToWideChar(CP_UTF8, 0, text, -1, dst, n);
+    GlobalUnlock(mem);
+    if (!OpenClipboard(NULL)) { GlobalFree(mem); return (uint64_t)-1; }
+    EmptyClipboard();
+    if (!SetClipboardData(CF_UNICODETEXT, mem)) {
+        CloseClipboard();
+        GlobalFree(mem);
+        return (uint64_t)-1;
+    }
+    CloseClipboard();
+    return 0;
+}
+#else
+static uint64_t rt_clip_get(void) {
+    static const char *cmds[] = {
+        "wl-paste --no-newline 2>/dev/null",
+        "xclip -selection clipboard -o 2>/dev/null",
+        "xsel -b 2>/dev/null",
+    };
+    size_t ci;
+    for (ci = 0; ci < sizeof(cmds) / sizeof(cmds[0]); ci++) {
+        FILE *p = popen(cmds[ci], "r");
+        char *buf = NULL;
+        size_t cap = 0, len = 0, n;
+        int rc;
+        if (!p) continue;
+        for (;;) {
+            if (len + 4096 + 1 > cap) {
+                size_t ncap = cap ? cap * 2 : 8192;
+                char *nb;
+                while (ncap < len + 4096 + 1) ncap *= 2;
+                nb = (char *)realloc(buf, ncap);
+                if (!nb) break;
+                buf = nb;
+                cap = ncap;
+            }
+            n = fread(buf + len, 1, cap - len - 1, p);
+            if (n == 0) break;
+            len += n;
+        }
+        rc = pclose(p);
+        if (rc == 0 && buf && len > 0) {
+            uint64_t r;
+            while (len > 0 && (buf[len - 1] == '\r' || buf[len - 1] == '\n'))
+                buf[--len] = 0;
+            r = rt_dupstr(buf);
+            free(buf);
+            return r;
+        }
+        free(buf);
+    }
+    return rt_empty();
+}
+
+static uint64_t rt_clip_set(const char *text) {
+    static const char *cmds[] = {
+        "wl-copy 2>/dev/null",
+        "xclip -selection clipboard -i 2>/dev/null",
+        "xsel -b -i 2>/dev/null",
+    };
+    size_t ci;
+    for (ci = 0; ci < sizeof(cmds) / sizeof(cmds[0]); ci++) {
+        FILE *p = popen(cmds[ci], "w");
+        if (!p) continue;
+        fwrite(text, 1, strlen(text), p);
+        if (pclose(p) == 0) return 0;
+    }
+    return (uint64_t)-1;
+}
+#endif
+
+static uint64_t rt_notify(const char *title, const char *body) {
+    char cmd[4096];
+#ifdef _WIN32
+    char t[1024], b[2048];
+    rt_ps_sq(title, t, sizeof(t));
+    rt_ps_sq(body, b, sizeof(b));
+    snprintf(cmd, sizeof(cmd),
+             "powershell -NoProfile -Command \"(New-Object -ComObject "
+             "Wscript.Shell).Popup('%s',10,'%s',64)\"", b, t);
+#else
+    char t[1024], b[2048];
+    rt_shell_sq(title, t, sizeof(t));
+    rt_shell_sq(body, b, sizeof(b));
+#ifdef __APPLE__
+    snprintf(cmd, sizeof(cmd),
+             "osascript -e 'display notification \"%s\" with title \"%s\"'",
+             b, t);
+#else
+    snprintf(cmd, sizeof(cmd), "notify-send '%s' '%s'", t, b);
+#endif
+#endif
+    return system(cmd) == 0 ? 0 : (uint64_t)-1;
+}
+
+static uint64_t rt_open_url(const char *url) {
+    char cmd[4096];
+#ifdef _WIN32
+    char q[2048];
+    rt_win_dq(url, q, sizeof(q));
+    snprintf(cmd, sizeof(cmd), "cmd /c start \"\" \"%s\"", q);
+#else
+    char q[2048];
+    rt_shell_sq(url, q, sizeof(q));
+#ifdef __APPLE__
+    snprintf(cmd, sizeof(cmd), "open '%s'", q);
+#else
+    snprintf(cmd, sizeof(cmd), "xdg-open '%s' 2>/dev/null", q);
+#endif
+#endif
+    return system(cmd) == 0 ? 0 : (uint64_t)-1;
+}
+
+/* ---------------- 键盘监听 / 行输入 (SYS 116-118, 131) ---------------- */
+
+#define RT_KEYQ 256
+
+static unsigned int rt_keyq[RT_KEYQ];
+static int rt_keyq_head = 0;
+static int rt_keyq_tail = 0;
+static int rt_key_ready = 0;
+
+static void rt_key_push(unsigned int code) {
+    int next = (rt_keyq_tail + 1) % RT_KEYQ;
+    if (next == rt_keyq_head) return;
+    rt_keyq[rt_keyq_tail] = code;
+    rt_keyq_tail = next;
+}
+
+static int rt_key_empty(void) { return rt_keyq_head == rt_keyq_tail; }
+
+static unsigned int rt_key_pop(void) {
+    unsigned int code;
+    if (rt_key_empty()) return 0;
+    code = rt_keyq[rt_keyq_head];
+    rt_keyq_head = (rt_keyq_head + 1) % RT_KEYQ;
+    return code;
+}
+
+#ifdef _WIN32
+static void rt_key_reset_state(void) { }
+static void rt_key_enable(void) {
+    DWORD mode;
+    if (rt_key_ready) return;
+    if (!GetConsoleMode(GetStdHandle(STD_INPUT_HANDLE), &mode)) return;
+    rt_key_ready = 1;
+}
+static void rt_key_suspend(void) { }
+static void rt_key_resume(void) { }
+static void rt_key_drain(void) {
+    INPUT_RECORD rec;
+    DWORD n = 0, avail = 0;
+    HANDLE h;
+    if (!rt_key_ready) return;
+    h = GetStdHandle(STD_INPUT_HANDLE);
+    if (!GetNumberOfConsoleInputEvents(h, &avail)) return;
+    while (avail > 0) {
+        DWORD vk, st;
+        wchar_t ch;
+        unsigned int code = 0;
+        int ctrl, shift;
+        avail--;
+        if (!ReadConsoleInputW(h, &rec, 1, &n) || n == 0) break;
+        if (rec.EventType != KEY_EVENT) continue;
+        if (!rec.Event.KeyEvent.bKeyDown) continue;
+        vk = rec.Event.KeyEvent.wVirtualKeyCode;
+        st = rec.Event.KeyEvent.dwControlKeyState;
+        ch = rec.Event.KeyEvent.uChar.UnicodeChar;
+        ctrl = (st & (LEFT_CTRL_PRESSED | RIGHT_CTRL_PRESSED)) != 0;
+        shift = (st & SHIFT_PRESSED) != 0;
+        switch (vk) {
+        case VK_UP:    code = ctrl ? 1101 : (shift ? 1105 : 1001); break;
+        case VK_DOWN:  code = ctrl ? 1102 : (shift ? 1106 : 1002); break;
+        case VK_LEFT:  code = ctrl ? 1103 : (shift ? 1107 : 1003); break;
+        case VK_RIGHT: code = ctrl ? 1104 : (shift ? 1108 : 1004); break;
+        case VK_HOME:  code = 1005; break;
+        case VK_END:   code = 1006; break;
+        case VK_PRIOR: code = 1007; break;
+        case VK_NEXT:  code = 1008; break;
+        case VK_INSERT: code = 1009; break;
+        case VK_DELETE: code = 1010; break;
+        case VK_TAB:
+            if (shift) code = 1109;
+            break;
+        default:
+            if (vk >= VK_F1 && vk <= VK_F12)
+                code = 1021 + (unsigned int)(vk - VK_F1);
+            break;
+        }
+        if (!code && ch) code = (unsigned int)ch;
+        if (code) rt_key_push(code);
+    }
+}
+static void rt_key_flush_platform(void) {
+    FlushConsoleInputBuffer(GetStdHandle(STD_INPUT_HANDLE));
+}
+#else
+static struct termios rt_key_tio;
+static int rt_key_tio_valid = 0;
+static void rt_key_reset_state(void) { }
+static void rt_key_apply_raw(void) {
+    struct termios t = rt_key_tio;
+    t.c_lflag &= ~(ICANON | ECHO);
+    t.c_cc[VMIN] = 0;
+    t.c_cc[VTIME] = 0;
+    tcsetattr(STDIN_FILENO, TCSANOW, &t);
+}
+static void rt_key_enable(void) {
+    if (rt_key_ready) return;
+    if (!isatty(STDIN_FILENO)) return;
+    if (tcgetattr(STDIN_FILENO, &rt_key_tio) != 0) return;
+    rt_key_tio_valid = 1;
+    rt_key_apply_raw();
+    rt_key_ready = 1;
+}
+/* 行输入前临时恢复狗模式, 结束后恢复 raw (与 VM 的 lineInputBegin/End 一致) */
+static void rt_key_suspend(void) {
+    if (!rt_key_ready || !rt_key_tio_valid) return;
+    tcsetattr(STDIN_FILENO, TCSANOW, &rt_key_tio);
+}
+static void rt_key_resume(void) {
+    if (!rt_key_ready || !rt_key_tio_valid) return;
+    rt_key_apply_raw();
+}
+static int rt_key_esc = 0;
+static char rt_key_escnum[16];
+static int rt_key_escn = 0;
+static int rt_key_u8n = 0;
+static unsigned int rt_key_u8acc = 0;
+
+static int rt_key_mod(void) {
+    int start = -1, i, n = 0;
+    for (i = 0; i < rt_key_escn; i++) {
+        if (rt_key_escnum[i] == ';') start = i + 1;
+        else if (rt_key_escnum[i] < '0' || rt_key_escnum[i] > '9') return 1;
+    }
+    if (start < 0 || start >= rt_key_escn) return 1;
+    for (i = start; i < rt_key_escn; i++)
+        n = n * 10 + (rt_key_escnum[i] - '0');
+    return n < 2 ? 1 : n;
+}
+
+static unsigned int rt_key_tilde(void) {
+    int i, n = 0;
+    for (i = 0; i < rt_key_escn; i++) {
+        if (rt_key_escnum[i] == ';') break;
+        if (rt_key_escnum[i] < '0' || rt_key_escnum[i] > '9') return 0;
+        n = n * 10 + (rt_key_escnum[i] - '0');
+    }
+    switch (n) {
+    case 1: return 1005; case 2: return 1009; case 3: return 1010;
+    case 4: return 1006; case 5: return 1007; case 6: return 1008;
+    case 11: return 1021; case 12: return 1022; case 13: return 1023;
+    case 14: return 1024; case 15: return 1025; case 17: return 1026;
+    case 18: return 1027; case 19: return 1028; case 20: return 1029;
+    case 21: return 1030; case 23: return 1031; case 24: return 1032;
+    }
+    return 0;
+}
+
+static unsigned int rt_key_feed_plain(unsigned char b) {
+    if (rt_key_u8n > 0) {
+        if ((b & 0xC0) != 0x80) {
+            rt_key_u8n = 0;
+            rt_key_u8acc = 0;
+            return rt_key_feed_plain(b);
+        }
+        rt_key_u8acc = (rt_key_u8acc << 6) | (unsigned int)(b & 0x3F);
+        rt_key_u8n--;
+        if (rt_key_u8n > 0) return 0;
+        {
+            unsigned int cp = rt_key_u8acc;
+            rt_key_u8acc = 0;
+            if (cp > 0x10FFFF || (cp >= 0xD800 && cp <= 0xDFFF))
+                return 0xFFFD;
+            return cp;
+        }
+    }
+    if (b == 0x1B) { rt_key_esc = 1; return 0; }
+    if (b >= 0xC2 && b <= 0xDF) {
+        rt_key_u8n = 1; rt_key_u8acc = b & 0x1F; return 0;
+    }
+    if (b >= 0xE0 && b <= 0xEF) {
+        rt_key_u8n = 2; rt_key_u8acc = b & 0x0F; return 0;
+    }
+    if (b >= 0xF0 && b <= 0xF4) {
+        rt_key_u8n = 3; rt_key_u8acc = b & 0x07; return 0;
+    }
+    return (unsigned int)b;
+}
+
+static unsigned int rt_key_feed(unsigned char b) {
+    unsigned int base = 0;
+    if (rt_key_esc == 1) {
+        if (b == '[') { rt_key_esc = 2; rt_key_escn = 0; return 0; }
+        if (b == 'O') { rt_key_esc = 3; return 0; }
+        if (b == 0x1B) { rt_key_esc = 1; return 0x1B; }
+        rt_key_esc = 0;
+        rt_key_push((unsigned int)b);
+        return 0x1B;
+    }
+    if (rt_key_esc == 2) {
+        if ((b >= '0' && b <= '9') || b == ';') {
+            if (rt_key_escn < 15) rt_key_escnum[rt_key_escn++] = (char)b;
+            return 0;
+        }
+        rt_key_esc = 0;
+        if (b == '~') return rt_key_tilde();
+        if (b == 'Z') return 1109;
+        switch (b) {
+        case 'A': base = 1001; break;
+        case 'B': base = 1002; break;
+        case 'C': base = 1003; break;
+        case 'D': base = 1004; break;
+        case 'H': base = 1005; break;
+        case 'F': base = 1006; break;
+        }
+        if (base) {
+            int mod = rt_key_mod();
+            if (mod > 1) {
+                int m = mod - 1;
+                if (m & 4) return base - 1001 + 1101;
+                if (m & 1) return base - 1001 + 1105;
+            }
+            return base;
+        }
+        return 0;
+    }
+    if (rt_key_esc == 3) {
+        rt_key_esc = 0;
+        switch (b) {
+        case 'A': return 1001;
+        case 'B': return 1002;
+        case 'C': return 1003;
+        case 'D': return 1004;
+        case 'H': return 1005;
+        case 'F': return 1006;
+        case 'P': return 1021;
+        case 'Q': return 1022;
+        case 'R': return 1023;
+        case 'S': return 1024;
+        }
+        return 0;
+    }
+    return rt_key_feed_plain(b);
+}
+
+static void rt_key_drain(void) {
+    unsigned char b;
+    if (!rt_key_ready) return;
+    while (read(STDIN_FILENO, &b, 1) == 1) {
+        unsigned int code = rt_key_feed(b);
+        if (code) rt_key_push(code);
+    }
+}
+static void rt_key_flush_platform(void) {
+    tcflush(STDIN_FILENO, TCIFLUSH);
+}
+#endif
+
+static uint64_t rt_key_hit(void) {
+    rt_key_enable();
+    if (rt_key_empty()) rt_key_drain();
+    return rt_key_empty() ? 0 : 1;
+}
+
+static uint64_t rt_key_get(void) {
+    rt_key_enable();
+    if (rt_key_empty()) rt_key_drain();
+    return rt_key_empty() ? (uint64_t)-1 : (uint64_t)rt_key_pop();
+}
+
+static uint64_t rt_key_flush(void) {
+    rt_keyq_head = rt_keyq_tail = 0;
+    rt_key_reset_state();
+#ifndef _WIN32
+    rt_key_esc = 0;
+    rt_key_escn = 0;
+    rt_key_u8n = 0;
+    rt_key_u8acc = 0;
+#endif
+    if (rt_key_ready) rt_key_flush_platform();
+    return 0;
+}
+
+static uint64_t rt_readline(void) {
+    char buf[4096];
+    size_t n;
+    rt_key_suspend();
+    if (!fgets(buf, sizeof(buf), stdin)) {
+        rt_key_resume();
+        return rt_empty();
+    }
+    n = strlen(buf);
+    while (n > 0 && (buf[n - 1] == '\n' || buf[n - 1] == '\r')) buf[--n] = 0;
+    rt_key_resume();
+    return rt_dupstr(buf);
 }
 
 static double rt_bits2f(uint64_t bits) {    double d;
@@ -2026,6 +2622,7 @@ class _Emitter:
                 44: 'R[0] = rt_canvas_set(R[0]);',                     # CANVAS_SET
                 45: 'R[0] = rt_canvas_rect(R[0], R[1], R[2], R[3]);',  # RECT
                 46: 'R[0] = rt_canvas_circle(R[0], R[1], R[2]);',      # CIRCLE
+                47: 'R[0] = rt_canvas_text(R[0], R[1], R[2]);',        # CANVASTEXT
                 48: 'R[0] = rt_canvas_line(R[0], R[1], R[2], R[3]);',  # LINE
                 49: 'R[0] = rt_canvas_save(rt_cstr(R[0]));',           # SAVE
                 50: 'R[0] = (uint64_t)-1;  /* 无窗口环境: show_canvas 不支持 */',
@@ -2039,6 +2636,8 @@ class _Emitter:
                 56: 'R[0] = rt_filesize(rt_cstr(R[0]));',              # SIZE
                 57: 'R[0] = rt_mkdirs(rt_cstr(R[0]));',                # MKDIR
                 58: 'R[0] = rt_dirlist(rt_cstr(R[0]));',               # DIRLIST
+                59: 'R[0] = rt_exec_cmd(rt_cstr(R[0]));',              # EXEC
+                60: 'R[0] = rt_exec_output(rt_cstr(R[0]));',           # EXECOUTPUT
                 61: 'R[0] = rt_getenv(rt_cstr(R[0]));',                # GETENV
                 62: 'R[0] = rt_setenv(rt_cstr(R[0]), rt_cstr(R[1]));', # SETENV
                 63: 'R[0] = rt_osname();',                             # OSNAME
@@ -2071,6 +2670,14 @@ class _Emitter:
                 100: 'R[0] = rt_sha256_hex(R[0]);',                      # SHA256
                 101: 'R[0] = rt_b64enc(R[0]);',                         # B64_ENC
                 102: 'R[0] = rt_b64dec(R[0]);',                         # B64_DEC
+                103: 'R[0] = rt_clip_get();',                          # CLIPGET
+                104: 'R[0] = rt_clip_set(rt_cstr(R[0]));',             # CLIPSET
+                105: 'R[0] = rt_notify(rt_cstr(R[0]), rt_cstr(R[1]));',  # NOTIFY
+                106: 'R[0] = rt_open_url(rt_cstr(R[0]));',             # OPENURL
+                116: 'R[0] = rt_key_hit();',                           # KEYHIT
+                117: 'R[0] = rt_key_get();',                           # KEYGET
+                118: 'R[0] = rt_key_flush();',                         # KEYFLUSH
+                131: 'R[0] = rt_readline();',                          # READLINE
                 145: 'R[0] = rt_http(rt_cstr(R[0]), rt_cstr(R[1]), '
                      'rt_cstr(R[2]), rt_cstr(R[3]));',                  # HTTP_REQ
                 146: 'R[0] = (uint64_t)LASTHTTPST;',                    # HTTP_CODE
@@ -2174,6 +2781,76 @@ def emit_c(instructions: Sequence[Instruction], labels: Dict[str, int],
                     heap_base).generate()
 
 
+_ELF_MACHINE = {'x86_64': 62, 'aarch64': 183, 'arm64': 183}
+_PE_MACHINE = {'x86_64': 0x8664, 'aarch64': 0xAA64, 'arm64': 0xAA64}
+
+
+def inspect_binary(path: str, target: str,
+                   ) -> Dict[str, object]:
+    """校验产物的文件格式与目标架构 (ELF/PE), 返回可展示的结构摘要。
+
+    Raises:
+        ValueError: 格式、架构或关键头部字段与 ``target`` 不符。
+    """
+    spec = toolchain.get_target(target)
+    size = os.path.getsize(path)
+    with open(path, 'rb') as f:
+        data = f.read(65536)
+    if not data:
+        raise ValueError(f'产物为空: {path}')
+    arch = spec.triple.split('-', 1)[0].lower()
+
+    if data[:4] == b'\x7fELF':
+        if spec.fmt != 'elf':
+            raise ValueError(f'目标 {target} 应生成 {spec.fmt}, 实际是 ELF')
+        if len(data) < 64:
+            raise ValueError('ELF 头部被截断')
+        cls, endian = data[4], data[5]
+        if cls != 2 or endian != 1:
+            raise ValueError(
+                f'ELF 应为 64 位小端 (class=2, data=1), 实际 {cls}/{endian}')
+        e_type, = struct.unpack_from('<H', data, 16)
+        machine, = struct.unpack_from('<H', data, 18)
+        entry, = struct.unpack_from('<Q', data, 24)
+        phoff, = struct.unpack_from('<Q', data, 32)
+        phnum, = struct.unpack_from('<H', data, 56)
+        if machine != _ELF_MACHINE.get(arch):
+            raise ValueError(
+                f'ELF machine 不匹配: 期望 {_ELF_MACHINE.get(arch)}, 实际 {machine}')
+        if e_type not in (2, 3):
+            raise ValueError(f'ELF 类型异常: {e_type} (期望 EXEC/DYN)')
+        if entry == 0 or phoff == 0 or phnum == 0:
+            raise ValueError('ELF 缺少入口或程序头')
+        return {'format': 'elf', 'target': target, 'size': size,
+                'bits': 64, 'endian': 'little', 'type': e_type,
+                'machine': machine, 'entry': entry, 'phnum': phnum}
+
+    if data[:2] == b'MZ':
+        if spec.fmt != 'pe':
+            raise ValueError(f'目标 {target} 应生成 ELF, 实际是 PE')
+        if len(data) < 0x40:
+            raise ValueError('PE 头部被截断')
+        pe_off, = struct.unpack_from('<I', data, 0x3C)
+        if pe_off + 24 + 68 > len(data) or data[pe_off:pe_off + 4] != b'PE\x00\x00':
+            raise ValueError('缺少 PE 签名')
+        machine, = struct.unpack_from('<H', data, pe_off + 4)
+        sections, = struct.unpack_from('<H', data, pe_off + 6)
+        magic, = struct.unpack_from('<H', data, pe_off + 24)
+        subsystem, = struct.unpack_from('<H', data, pe_off + 92)
+        if machine != _PE_MACHINE.get(arch):
+            raise ValueError(
+                f'PE machine 不匹配: 期望 {_PE_MACHINE.get(arch)}, 实际 {machine}')
+        if magic != 0x20B:
+            raise ValueError(f'PE 应为 PE32+ (0x20B), 实际 0x{magic:X}')
+        if subsystem != 3:
+            raise ValueError(f'PE subsystem 应为控制台 (3), 实际 {subsystem}')
+        return {'format': 'pe', 'target': target, 'size': size,
+                'bits': 64, 'machine': machine, 'sections': sections,
+                'subsystem': subsystem}
+
+    raise ValueError(f'无法识别的产物格式: {path}')
+
+
 def compile_instructions(instructions: Sequence[Instruction],
                          labels: Dict[str, int],
                          segments: Segments,
@@ -2184,7 +2861,9 @@ def compile_instructions(instructions: Sequence[Instruction],
                          out: str,
                          target: Optional[str] = None,
                          optimize: int = 2,
-                         keep_c: bool = False) -> str:
+                         keep_c: bool = False,
+                         static_link: bool = False,
+                         strip_binary: bool = False) -> str:
     """把指令流编译成独立可执行文件, 返回产物路径。"""
     target_name = target or _host_target_name()
     spec = toolchain.get_target(target_name)
@@ -2218,6 +2897,10 @@ def compile_instructions(instructions: Sequence[Instruction],
                    '-D_POSIX_C_SOURCE=200809L',
                    f'-O{max(0, min(3, int(optimize)))}',
                    '-std=c11', '-o', out, c_path]
+        if static_link and spec.fmt != 'macho':
+            cmd.append('-static')      # macOS 不支持静态链接 libSystem
+        if strip_binary:
+            cmd.append('-s')           # 去掉符号表, 减小体积
         if spec.fmt != 'pe':
             cmd.append('-lm')          # Linux/ELF 的 libm 需显式链接
         else:
