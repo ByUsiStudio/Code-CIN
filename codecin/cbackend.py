@@ -1762,8 +1762,7 @@ static uint64_t rt_exec_cmd(const char *cmd) {
     return (uint64_t)status;
 #else
     if (WIFEXITED(status)) return (uint64_t)WEXITSTATUS(status);
-    if (WIFSIGNALED(status)) return (uint64_t)(128 + WTERMSIG(status));
-    return (uint64_t)-1;
+    return (uint64_t)-1;   /* 被信号终止: Go 侧 ExitCode() 同样返回 -1 */
 #endif
 }
 

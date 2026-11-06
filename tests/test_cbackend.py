@@ -1019,7 +1019,7 @@ def test_c_backend_keyboard_without_tty(workdir):
     with open(src, 'w', encoding='utf-8') as f:
         f.write('function main() -> int {\n'
                 '    println(key_hit())\n'
-                '    key_flush()\n'
+                '    println(key_flush())\n'
                 '    println(get_key())\n'
                 '    return 0\n'
                 '}\n')
