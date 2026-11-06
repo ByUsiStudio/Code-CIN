@@ -2792,7 +2792,11 @@ def inspect_binary(path: str, target: str,
     Raises:
         ValueError: 格式、架构或关键头部字段与 ``target`` 不符。
     """
-    spec = toolchain.get_target(target)
+    try:
+        spec = toolchain.get_target(target)
+    except toolchain.ToolchainError:
+        goos, goarch = (target.split('/', 1) + ['amd64'])[:2]
+        spec = toolchain.get_target(c_target(goos, goarch))
     size = os.path.getsize(path)
     with open(path, 'rb') as f:
         data = f.read(65536)

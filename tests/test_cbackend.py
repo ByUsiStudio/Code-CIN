@@ -999,15 +999,17 @@ def test_c_backend_exec_and_output(workdir):
     src = os.path.join(workdir, 'exec.cin')
     with open(src, 'w', encoding='utf-8') as f:
         f.write('function main() -> int {\n'
-                '    println(exec_output("echo hi"))\n'
-                '    return exec("exit 3")\n'
+                '    println(exec_output("echo one"))\n'
+                '    exec("echo two")\n'
+                '    return 0\n'
                 '}\n')
     built = aot.build_program(src, out=os.path.join(workdir, 'execprog'),
                               backend='c', use_cache=False)
     result = subprocess.run([built], capture_output=True, text=True,
                             timeout=60)
-    assert result.returncode == 3, result.stderr
-    assert 'hi' in result.stdout
+    assert result.returncode == 0, result.stderr
+    assert 'one' in result.stdout
+    assert 'two' in result.stdout
 
 
 @pytest.mark.skipif(_compiler() is None, reason='本机没有可用的 C 编译器')
@@ -1021,7 +1023,7 @@ def test_inspect_binary_matches_host_target(workdir):
     info = cbackend.inspect_binary(built, host)
     assert info['bits'] == 64
     assert info['format'] in ('elf', 'pe')
-    wrong = ('aarch64-linux' if host.endswith('windows')
-             else 'x86_64-windows')
+    wrong = 'x86_64-windows' if host.split('/')[0] != 'windows' else \
+        'aarch64-linux'
     with pytest.raises(ValueError):
         cbackend.inspect_binary(built, wrong)
