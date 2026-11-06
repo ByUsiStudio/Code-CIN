@@ -216,6 +216,26 @@ def test_struct_parameter(workdir):
     assert result.stdout.strip() == '3'
 
 
+@pytest.mark.skipif(_compiler() is None, reason='本机没有可用的 C 编译器')
+def test_struct_return_value(workdir):
+    src = ('struct P { int x int y }\n'
+           'function mk() -> P {\n'
+           '    P p\n'
+           '    p.x = 2\n'
+           '    p.y = 5\n'
+           '    return p\n'
+           '}\n'
+           'function main() -> int {\n'
+           '    P q = mk()\n'
+           '    println(q.x + q.y)\n'
+           '    return 0\n'
+           '}\n')
+    out = nativegen.compile_native(src, os.path.join(workdir, 'structret'))
+    result = subprocess.run([out], capture_output=True, text=True, timeout=60)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == '7'
+
+
 def test_emit_c_contains_no_isa_artifacts():
     source = nativegen.emit_c(LOOP)
     assert '#include <stdio.h>' in source

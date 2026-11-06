@@ -212,6 +212,8 @@ class _Generator:
         if kind == 'call':
             fn = self.functions.get(arg[1])
             ret = (fn.ret_type if fn is not None else None) or 'int'
+            if isinstance(ret, tuple) and ret[0] == 'struct':
+                return 'struct:' + ret[1]
             return 'str' if ret == 'string' else ret
         return 'int'
 
@@ -298,13 +300,17 @@ class _Generator:
         if kind == 'decl':
             for name, typ, init, _extra in node[1]:
                 cname = self.declare(name, typ)
-                if isinstance(typ, tuple):      # 数组: 声明时已初始化
+                if isinstance(typ, tuple) and typ[0] == 'array':
                     if init is not None:
                         raise NativeGenError('暂不支持数组初始化列表')
                     continue
                 if init is None:
-                    self.emit(f'{pad}{cname} = 0;') if typ != 'string' \
-                        else self.emit(f'{pad}{cname} = "";')
+                    if isinstance(typ, tuple) and typ[0] == 'struct':
+                        continue            # 已在 hoist 处零初始化
+                    if typ == 'string':
+                        self.emit(f'{pad}{cname} = "";')
+                    else:
+                        self.emit(f'{pad}{cname} = 0;')
                 else:
                     if typ != 'string' and init[0] == 'str':
                         raise NativeGenError(
