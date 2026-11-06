@@ -119,6 +119,21 @@ def test_arrays_and_for_loop(workdir):
     assert result.stdout.replace('\r\n', '\n') == '0\n2\n4\n'
 
 
+@pytest.mark.skipif(_compiler() is None, reason='本机没有可用的 C 编译器')
+def test_float_support(workdir):
+    src = ('function area(float r) -> float { return 3.0 * r * r }\n'
+           'function main() -> int {\n'
+           '    float x = 1.5\n'
+           '    println(x * 2.0)\n'
+           '    println(area(x))\n'
+           '    return 0\n'
+           '}\n')
+    out = nativegen.compile_native(src, os.path.join(workdir, 'floatprog'))
+    result = subprocess.run([out], capture_output=True, text=True, timeout=60)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.replace('\r\n', '\n') == '3\n6.75\n'
+
+
 def test_emit_c_contains_no_isa_artifacts():
     source = nativegen.emit_c(LOOP)
     assert '#include <stdio.h>' in source
