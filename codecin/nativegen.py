@@ -27,7 +27,8 @@ __all__ = ['NativeGenError', 'emit_c', 'compile_native', 'supports_source']
 AST = Any
 
 _BINOPS = {'+': '+', '-': '-', '*': '*', '/': '/', '%': '%',
-           '<': '<', '<=': '<=', '>': '>', '>=': '>=', '==': '==', '!=': '!='}
+           '<': '<', '<=': '<=', '>': '>', '>=': '>=', '==': '==', '!=': '!=',
+           '&&': '&&', '||': '||'}
 _PREAMBLE = ('#include <stdint.h>\n#include <stdio.h>\n#include <string.h>\n\n'
              'static void __cin_print_int(int64_t v) { printf("%lld", '
              '(long long)v); }\n'
@@ -75,6 +76,8 @@ class NativeGenError(RuntimeError):
 
 
 def _typename(t: Any) -> str:
+    if isinstance(t, tuple) and t[0] == 'struct':
+        return f'cin_{t[1]}'
     if t == 'int':
         return 'int64_t'
     if t == 'float':
@@ -86,9 +89,23 @@ def _typename(t: Any) -> str:
     raise NativeGenError(f'直接原生后端暂不支持类型: {t!r}')
 
 
+def _field_ctype(t: Any) -> str:
+    if t == 'int':
+        return 'int64_t'
+    if t == 'bool':
+        return 'int64_t'
+    if t == 'float':
+        return 'double'
+    if t == 'string':
+        return 'const char *'
+    raise NativeGenError(f'struct 字段类型 {t!r} 暂不支持')
+
+
 class _Generator:
-    def __init__(self, functions: Dict[str, Any]):
+    def __init__(self, functions: Dict[str, Any],
+                 structs: Optional[Dict[str, Any]] = None):
         self.functions = functions
+        self.structs = structs or {}
         self.lines: List[str] = []
         self.vars: List[str] = []
         self.types: Dict[str, str] = {}
@@ -121,20 +138,35 @@ class _Generator:
             return f'INT64_C({int(value)})'
         if kind == 'var':
             return self._sanitize(node[1])
+        if kind == 'bool':
+            return '1' if node[1] else '0'
+        if kind == 'not':
+            return f'(!{self.expr(node[1])})'
         if kind == 'neg':
             return f'(-{self.expr(node[1])})'
         if kind == 'binop':
             op = node[1]
-            if op == '+' and 'str' in (self.arg_type(node[2]),
-                                       self.arg_type(node[3])):
-                return (f'__cin_concat({self.expr(node[2])}, '
-                        f'{self.expr(node[3])})')
+            lt, rt = self.arg_type(node[2]), self.arg_type(node[3])
+            if 'str' in (lt, rt):
+                if op in ('==', '!='):
+                    cmp = '==' if op == '==' else '!='
+                    return (f'(strcmp({self.expr(node[2])}, '
+                            f'{self.expr(node[3])}) {cmp} 0)')
+                if op == '+':
+                    return (f'__cin_concat({self.expr(node[2])}, '
+                            f'{self.expr(node[3])})')
+                raise NativeGenError(f'字符串不支持运算符: {op!r}')
             if op in _BINOPS:
                 return (f'({self.expr(node[2])} {_BINOPS[op]} '
                         f'{self.expr(node[3])})')
             raise NativeGenError(f'直接原生后端暂不支持运算符: {op!r}')
         if kind == 'index':
             return f'{self.expr(node[1])}[{self.expr(node[2])}]'
+        if kind == 'member':
+            if node[1][0] != 'var':
+                raise NativeGenError('暂不支持嵌套 struct 成员访问')
+            base = self._sanitize(node[1][1])
+            return f'{base}.{node[2]}'
         if kind == 'str':
             return _c_string(node[1])
         if kind == 'call':
@@ -152,12 +184,30 @@ class _Generator:
             return 'str' if t == 'string' else t
         if kind == 'index':
             return 'int'
+        if kind == 'member':
+            if arg[1][0] != 'var':
+                return 'int'
+            t = str(self.types.get(arg[1][1], ''))
+            if not t.startswith('struct:'):
+                return 'int'
+            sd = self.structs.get(t.split(':', 1)[1])
+            if sd is not None:
+                for fname, ftype in sd.fields:
+                    if fname == arg[2]:
+                        return 'str' if ftype == 'string' else ftype
+            return 'int'
         if kind == 'neg':
             return self.arg_type(arg[1])
+        if kind == 'not':
+            return 'bool'
+        if kind == 'bool':
+            return 'bool'
         if kind == 'binop':
             lt, rt = self.arg_type(arg[2]), self.arg_type(arg[3])
+            if arg[1] in ('==', '!=', '<', '<=', '>', '>=', '&&', '||'):
+                return 'bool'
             if 'str' in (lt, rt):
-                return 'str' if arg[1] == '+' else 'bool'
+                return 'str'
             return 'float' if 'float' in (lt, rt) else 'int'
         if kind == 'call':
             fn = self.functions.get(arg[1])
@@ -201,6 +251,10 @@ class _Generator:
                 raise NativeGenError('数组长度必须是整数字面量')
             self.arrays[cname] = int(size)
             self.types[cname] = 'array'
+        elif isinstance(typ, tuple) and typ[0] == 'struct':
+            if typ[1] not in self.structs:
+                raise NativeGenError(f'未知 struct 类型: {typ[1]!r}')
+            self.types[cname] = 'struct:' + typ[1]
         elif typ in ('int', 'bool', 'float', 'string'):
             self.types[cname] = typ
         else:
@@ -218,6 +272,8 @@ class _Generator:
             return f'{cname} = {value}'
         if target[0] == 'index':
             return f'{self.expr(target[1])}[{self.expr(target[2])}] = {value}'
+        if target[0] == 'member':
+            return f'{self.expr(target)} = {value}'
         raise NativeGenError('直接原生后端暂不支持该赋值目标')
 
     def simple_stmt(self, node: AST) -> str:
@@ -310,19 +366,31 @@ class _Generator:
         ret = _typename(fdef.ret_type)
         params = []
         for pname, ptype in fdef.params:
-            if ptype not in ('int', 'bool', 'float', 'string'):
-                raise NativeGenError(f'{fdef.name}: 参数类型 {ptype!r} 暂不支持')
-            if ptype == 'float':
-                ctype = 'double'
-            elif ptype == 'string':
-                ctype = 'const char *'
+            if isinstance(ptype, tuple) and ptype[0] == 'struct':
+                if ptype[1] not in self.structs:
+                    raise NativeGenError(f'未知 struct 类型: {ptype[1]!r}')
+                ctype = f'cin_{ptype[1]}'
+            elif ptype in ('int', 'bool', 'float', 'string'):
+                if ptype == 'float':
+                    ctype = 'double'
+                elif ptype == 'string':
+                    ctype = 'const char *'
+                else:
+                    ctype = 'int64_t'
             else:
-                ctype = 'int64_t'
+                raise NativeGenError(
+                    f'{fdef.name}: 参数类型 {ptype!r} 暂不支持')
             params.append(f'{ctype} {self._sanitize(pname)}')
         param_names = {self._sanitize(p[0]) for p in fdef.params}
         self.vars = list(param_names)
         self.arrays = {}
-        self.types = {self._sanitize(p[0]): p[1] for p in fdef.params}
+        self.types = {}
+        for _pname, _ptype in fdef.params:
+            _key = self._sanitize(_pname)
+            if isinstance(_ptype, tuple) and _ptype[0] == 'struct':
+                self.types[_key] = 'struct:' + _ptype[1]
+            else:
+                self.types[_key] = _ptype
         body: List[str] = []
         saved = self.lines
         self.lines = body
@@ -345,6 +413,9 @@ class _Generator:
                     parts.append(f'double {v} = 0.0;')
                 elif self.types.get(v) == 'string':
                     parts.append(f'const char *{v} = "";')
+                elif str(self.types.get(v, '')).startswith('struct:'):
+                    name = self.types[v].split(':', 1)[1]
+                    parts.append(f'cin_{name} {v} = {{0}};')
                 else:
                     parts.append(f'int64_t {v} = 0;')
             decls = '    ' + ' '.join(parts) + '\n'
@@ -376,8 +447,13 @@ def emit_c(source: str) -> str:
     if main_fn.ret_type not in (None, 'int', 'void'):
         raise NativeGenError('main 必须返回 int 或 void')
 
-    gen = _Generator(functions)
+    gen = _Generator(functions, _structs)
     gen.emit(_PREAMBLE)
+    for sd in (_structs or {}).values():
+        fields = ' '.join(f'{_field_ctype(t)} {n};' for n, t in sd.fields)
+        gen.emit(f'typedef struct {{ {fields} }} cin_{sd.name};')
+    if _structs:
+        gen.emit('')
     for fdef in functions.values():
         gen.function(fdef)
     gen.emit('int main(void) {')

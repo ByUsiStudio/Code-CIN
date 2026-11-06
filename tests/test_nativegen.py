@@ -166,6 +166,56 @@ def test_string_concat(workdir):
     assert result.stdout.replace('\r\n', '\n') == 'foo-bar\nxbar\n'
 
 
+@pytest.mark.skipif(_compiler() is None, reason='本机没有可用的 C 编译器')
+def test_logical_ops_and_string_compare(workdir):
+    src = ('function main() -> int {\n'
+           '    bool a = true\n'
+           '    bool b = false\n'
+           '    if (!a || (a && !b)) { println("ok") }\n'
+           '    string s = "x"\n'
+           '    if (s == "x") { println("eq") }\n'
+           '    if (s != "y") { println("ne") }\n'
+           '    return 0\n'
+           '}\n')
+    out = nativegen.compile_native(src, os.path.join(workdir, 'logicprog'))
+    result = subprocess.run([out], capture_output=True, text=True, timeout=60)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.replace('\r\n', '\n') == 'ok\neq\nne\n'
+
+
+@pytest.mark.skipif(_compiler() is None, reason='本机没有可用的 C 编译器')
+def test_struct_fields(workdir):
+    src = ('struct Point { int x int y }\n'
+           'function main() -> int {\n'
+           '    Point p\n'
+           '    p.x = 3\n'
+           '    p.y = 4\n'
+           '    println(p.x + p.y)\n'
+           '    return 0\n'
+           '}\n')
+    out = nativegen.compile_native(src, os.path.join(workdir, 'structprog'))
+    result = subprocess.run([out], capture_output=True, text=True, timeout=60)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == '7'
+
+
+@pytest.mark.skipif(_compiler() is None, reason='本机没有可用的 C 编译器')
+def test_struct_parameter(workdir):
+    src = ('struct P { int x int y }\n'
+           'function sum(P p) -> int { return p.x + p.y }\n'
+           'function main() -> int {\n'
+           '    P p\n'
+           '    p.x = 1\n'
+           '    p.y = 2\n'
+           '    println(sum(p))\n'
+           '    return 0\n'
+           '}\n')
+    out = nativegen.compile_native(src, os.path.join(workdir, 'structarg'))
+    result = subprocess.run([out], capture_output=True, text=True, timeout=60)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == '3'
+
+
 def test_emit_c_contains_no_isa_artifacts():
     source = nativegen.emit_c(LOOP)
     assert '#include <stdio.h>' in source
