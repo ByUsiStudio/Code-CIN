@@ -44,6 +44,38 @@ def test_roundtrip_preserves_bin_bytes(workdir):
     assert container.meta['sdgcc']['format'] == sdgcc.SDGCC_VERSION
 
 
+def test_compression_roundtrip(workdir):
+    cpu = _cpu(_hello(workdir))
+    code = crom.dump_bin(cpu)
+    symbols = [(i, 'sym_%d_%s' % (i, 'x' * 40)) for i in range(40)]
+    data = sdgcc.build(code, multi_file=True, symbols=symbols,
+                       sources=['a.cin'], compress=True)
+    container = sdgcc.parse(data)
+    assert container.version == sdgcc.SDGCC_VERSION_COMPRESSED
+    assert container.code == code                     # CODE 段永不压缩
+    assert container.symbols == symbols
+    assert container.entries['CODE'][3] is False
+    assert container.entries['SYMS'][3] is True
+    assert container.flags & sdgcc.FLAG_COMPRESSED
+
+
+def test_describe_and_dump(workdir):
+    cpu = _cpu(_hello(workdir))
+    data = sdgcc.build(crom.dump_bin(cpu), sources=['a.cin'], compress=True)
+    container = sdgcc.parse(data)
+    info = sdgcc.describe(container)
+    names = [sec['name'] for sec in info['sections']]
+    assert names[:2] == ['CODE', 'META']
+    assert info['version'] == sdgcc.SDGCC_VERSION_COMPRESSED
+    out = os.path.join(workdir, 'parts')
+    paths = sdgcc.dump(container, out)
+    assert os.path.isfile(os.path.join(out, 'program.bin'))
+    assert os.path.isfile(os.path.join(out, 'meta.toml'))
+    with open(os.path.join(out, 'program.bin'), 'rb') as f:
+        assert f.read() == container.code
+    assert all(os.path.isabs(p) for p in paths)
+
+
 def test_single_file_flag(workdir):
     cpu = _cpu(_hello(workdir))
     data = sdgcc.build(crom.dump_bin(cpu), multi_file=False)

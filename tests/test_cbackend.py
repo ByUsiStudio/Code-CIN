@@ -992,3 +992,36 @@ def test_canvas_text_pixels(workdir):
     assert pixel(1, 4) == (0, 0, 255, 255)
     assert pixel(5, 4) == (0, 0, 255, 255)
     assert pixel(7, 1) == (255, 255, 255, 255)   # 字距 6px, 第二个字符在 x=7
+
+
+@pytest.mark.skipif(_compiler() is None, reason='本机没有可用的 C 编译器')
+def test_c_backend_exec_and_output(workdir):
+    src = os.path.join(workdir, 'exec.cin')
+    with open(src, 'w', encoding='utf-8') as f:
+        f.write('function main() -> int {\n'
+                '    println(exec_output("echo hi"))\n'
+                '    return exec("exit 3")\n'
+                '}\n')
+    built = aot.build_program(src, out=os.path.join(workdir, 'execprog'),
+                              backend='c', use_cache=False)
+    result = subprocess.run([built], capture_output=True, text=True,
+                            timeout=60)
+    assert result.returncode == 3, result.stderr
+    assert 'hi' in result.stdout
+
+
+@pytest.mark.skipif(_compiler() is None, reason='本机没有可用的 C 编译器')
+def test_inspect_binary_matches_host_target(workdir):
+    host = aot.host_target()
+    src = os.path.join(workdir, 'fmt.cin')
+    with open(src, 'w', encoding='utf-8') as f:
+        f.write('function main() -> int {\n    return 7\n}\n')
+    built = aot.build_program(src, out=os.path.join(workdir, 'fmtprog'),
+                              target=host, backend='c', use_cache=False)
+    info = cbackend.inspect_binary(built, host)
+    assert info['bits'] == 64
+    assert info['format'] in ('elf', 'pe')
+    wrong = ('aarch64-linux' if host.endswith('windows')
+             else 'x86_64-windows')
+    with pytest.raises(ValueError):
+        cbackend.inspect_binary(built, wrong)
