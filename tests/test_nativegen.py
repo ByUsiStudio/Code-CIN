@@ -52,7 +52,7 @@ def test_cli_native_out_builds_only(workdir):
 def test_cli_native_reports_unsupported(workdir, capsys):
     src = os.path.join(workdir, 'bad.cin')
     with open(src, 'w', encoding='utf-8') as f:
-        f.write('function main() -> int { float f = 1.5 return 0 }')
+        f.write('function main() -> int { string s = "x" return 0 }')
     assert cli.main([src, '--native', '--log-level', 'ERROR']) == 1
     assert 'Native Build Error' in capsys.readouterr().out
 
@@ -147,10 +147,9 @@ def test_unsupported_constructs_are_rejected():
     with pytest.raises(nativegen.NativeGenError):
         nativegen.emit_c('function main() -> int { string s = "x" return 0 }')
     with pytest.raises(nativegen.NativeGenError):
-        nativegen.emit_c('function main() -> int { float f = 1.5 return 0 }')
-    with pytest.raises(nativegen.NativeGenError):
         nativegen.emit_c('function helper() -> int { return 1 }')
-    assert not nativegen.supports_source('function main() -> int { float f = 1.5 return 0 }')
+    assert not nativegen.supports_source(
+        'function main() -> int { string s = "x" return 0 }')
     assert nativegen.supports_source(LOOP)
 
 
