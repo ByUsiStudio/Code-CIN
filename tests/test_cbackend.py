@@ -1013,6 +1013,41 @@ def test_c_backend_exec_and_output(workdir):
 
 
 @pytest.mark.skipif(_compiler() is None, reason='本机没有可用的 C 编译器')
+def test_c_backend_keyboard_without_tty(workdir):
+    """无 tty 时 key_hit=0 / get_key=-1, 不阻塞。"""
+    src = os.path.join(workdir, 'key.cin')
+    with open(src, 'w', encoding='utf-8') as f:
+        f.write('function main() -> int {\n'
+                '    int n = key_hit()\n'
+                '    key_flush()\n'
+                '    int k = get_key()\n'
+                '    return n * 100 + (k == -1 ? 1 : 0)\n'
+                '}\n')
+    built = aot.build_program(src, out=os.path.join(workdir, 'keyprog'),
+                              backend='c', use_cache=False)
+    result = subprocess.run([built], capture_output=True, text=True,
+                            timeout=60)
+    assert result.returncode == 1, result.stderr
+
+
+@pytest.mark.skipif(_compiler() is None, reason='本机没有可用的 C 编译器')
+def test_c_backend_readline_from_pipe(workdir):
+    src = os.path.join(workdir, 'line.cin')
+    with open(src, 'w', encoding='utf-8') as f:
+        f.write('function main() -> int {\n'
+                '    string s = input_str()\n'
+                '    println(s)\n'
+                '    return 0\n'
+                '}\n')
+    built = aot.build_program(src, out=os.path.join(workdir, 'lineprog'),
+                              backend='c', use_cache=False)
+    result = subprocess.run([built], input='neo\n', capture_output=True,
+                            text=True, timeout=60)
+    assert result.returncode == 0, result.stderr
+    assert 'neo' in result.stdout
+
+
+@pytest.mark.skipif(_compiler() is None, reason='本机没有可用的 C 编译器')
 def test_inspect_binary_matches_host_target(workdir):
     host = aot.host_target()
     src = os.path.join(workdir, 'fmt.cin')
