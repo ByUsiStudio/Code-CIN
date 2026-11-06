@@ -28,7 +28,7 @@ AST = Any
 
 _BINOPS = {'+': '+', '-': '-', '*': '*', '/': '/', '%': '%',
            '<': '<', '<=': '<=', '>': '>', '>=': '>=', '==': '==', '!=': '!='}
-_PREAMBLE = ('#include <stdint.h>\n#include <stdio.h>\n\n'
+_PREAMBLE = ('#include <stdint.h>\n#include <stdio.h>\n#include <string.h>\n\n'
              'static void __cin_print_int(int64_t v) { printf("%lld", '
              '(long long)v); }\n'
              'static void __cin_println_int(int64_t v) { '
