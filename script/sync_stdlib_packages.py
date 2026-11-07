@@ -21,6 +21,7 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import re
 import sys
 from pathlib import Path
@@ -34,6 +35,19 @@ sys.path.insert(0, str(ROOT))
 from codecin.packaging.toml import dumps as toml_dumps  # noqa: E402
 
 HEADER = "# 由 script/sync_stdlib_packages.py 生成，请勿手工编辑。\n"
+
+
+def configure_stdio() -> None:
+    """强制 UTF-8 输出。
+
+    Windows runner 的 ANSI 代码页是 cp1252; Python 把 stdout 重定向到日志管道
+    时默认按该代码页编码, 本脚本的中文输出会直接抛 UnicodeEncodeError。
+    Linux/macOS 本来就是 UTF-8, 这里只是显式固定, 不改变行为。
+    """
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            with contextlib.suppress(ValueError, OSError):
+                stream.reconfigure(encoding="utf-8", errors="replace")
 
 
 def read_version() -> str:
@@ -185,6 +199,7 @@ def build() -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    configure_stdio()
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--check", action="store_true", help="只校验，不写文件"

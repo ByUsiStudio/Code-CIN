@@ -34,6 +34,13 @@ permissions:
   contents: read
   packages: write
 
+# Windows runner 的 ANSI 代码页是 cp1252: Python 把 stdout 重定向到 Actions 日志
+# 管道时默认按该代码页编码, 本工作流多处步骤会打印中文 (pic 结构校验、wheel 内容
+# 校验), 不强制 UTF-8 就会抛 UnicodeEncodeError。这里统一开启 Python UTF-8 模式,
+# 与 Linux/macOS runner 的默认行为保持一致。
+env:
+  PYTHONUTF8: "1"
+
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true

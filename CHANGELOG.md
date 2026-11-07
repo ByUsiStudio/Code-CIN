@@ -225,6 +225,10 @@
   `ci.yml` 的 `python script/sync_stdlib_packages.py --check` 全线路失败。
   现已按真源重新生成全部 41 个清单，并让 `script/bump_version.py` 在提升
   版本时自动重写它们，避免下次发布再次漂移。
+- **Windows 构建日志编码**：Windows runner 的 ANSI 代码页是 cp1252，
+  Python 输出被重定向到 Actions 日志时打印中文会抛 `UnicodeEncodeError`。
+  `pypi-packages.yml` 现全局设置 `PYTHONUTF8=1`，`sync_stdlib_packages.py`
+  自身也强制 UTF-8 输出，本地与 CI 行为一致。
 
 ### 待办 (Roadmap)
 
