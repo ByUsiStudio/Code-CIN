@@ -229,6 +229,10 @@
   Python 输出被重定向到 Actions 日志时打印中文会抛 `UnicodeEncodeError`。
   `pypi-packages.yml` 现全局设置 `PYTHONUTF8=1`，`sync_stdlib_packages.py`
   自身也强制 UTF-8 输出，本地与 CI 行为一致。
+- **发布工作流幂等化**：PyPI / TestPyPI 改为逐个文件上传，已存在的文件用
+  `--skip-existing` 跳过，单个文件失败不中断其余文件；版本与最新 Release
+  一致时，把含预编译原生库的平台 wheel 逐个追加为 Release 资产，不覆盖同名
+  资产，单个失败只告警。
 
 ### 待办 (Roadmap)
 

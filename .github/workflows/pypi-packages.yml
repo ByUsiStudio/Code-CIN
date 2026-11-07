@@ -14,6 +14,13 @@ name: PyPI Packages
 #     (GitHub 托管的 Linux runner 仅原生提供这两种架构; 若需 i686/ppc64le/
 #      s390x 等, 需用 QEMU + manylinux 容器另行扩展)
 #
+# 发布策略 (手动触发):
+#   * PyPI / TestPyPI: 逐个文件上传, 已存在的文件自动跳过 (--skip-existing),
+#     单个文件失败只记警告, 继续处理其余文件 (不会因为一个 400 中断整批);
+#   * GitHub Release: 若最新 Release 的 tag 版本与本次构建版本一致, 则把含预编译
+#     原生库的 wheel 逐个追加为 Release 资产; 同名资产不替换 (不加 --clobber),
+#     单个失败只记警告。版本不一致时整体跳过。
+#
 # 触发条件: 仅手动触发 (workflow_dispatch)。
 #   * registry: 发布目标 —— pypi (正式) / testpypi (发布前演练)。
 
@@ -253,7 +260,11 @@ jobs:
     name: 发布 (${{ inputs.registry }})
     needs: [build-wheel, build-sdist]
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
+    permissions:
+      # gh release upload 需要写 Release 资产; download-artifact 读取本次运行的产物。
+      contents: write
+      actions: read
     steps:
       # 合并所有 wheel + sdist 到 dist/
       - uses: actions/download-artifact@v7
@@ -274,20 +285,105 @@ jobs:
       - name: twine 检查 (元数据完整性)
         run: python -m twine check dist/*
 
-      - name: 发布到 TestPyPI (演练)
-        if: ${{ inputs.registry == 'testpypi' }}
-        # 正式发布前先用 TestPyPI 验证元数据与安装链路。
-        # 需在仓库 Secrets 中配置 TESTPYPI_API_TOKEN (test.pypi.org 的 API Token)。
-        run: python -m twine upload --repository-url https://test.pypi.org/legacy/ dist/*
+      - name: 发布到 PyPI / TestPyPI (逐个上传, 单个失败不中断)
+        # 逐个文件上传: 任何单个文件失败 (例如服务端拒绝) 都不会中断其余文件。
+        # --skip-existing: 版本已发布过时跳过同名文件, 让重跑幂等
+        #   (PyPI 不允许复用文件名, 重跑只能跳过已存在的产物)。
+        # --verbose: 失败时打印服务端响应正文, 便于定位 400 的具体原因。
+        shell: bash
         env:
-          TWINE_USERNAME: __token__
-          TWINE_PASSWORD: ${{ secrets.TESTPYPI_API_TOKEN }}
+          REGISTRY: ${{ inputs.registry }}
+          PYPI_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
+          TESTPYPI_TOKEN: ${{ secrets.TESTPYPI_API_TOKEN }}
+        run: |
+          set -uo pipefail
+          if [ "$REGISTRY" = "testpypi" ]; then
+            repository_url="https://test.pypi.org/legacy/"
+            token="$TESTPYPI_TOKEN"
+          else
+            repository_url=""
+            token="$PYPI_TOKEN"
+          fi
 
-      - name: 发布到 PyPI
-        if: ${{ inputs.registry == 'pypi' }}
-        # 正式 PyPI 上传: 用户名固定为 __token__, 密码为 PyPI API Token。
-        # 需在仓库 Secrets 中配置 PYPI_API_TOKEN。
-        run: python -m twine upload dist/*
+          if [ -n "$repository_url" ]; then
+            upload=(python -m twine upload --skip-existing --verbose
+                    --repository-url "$repository_url")
+          else
+            upload=(python -m twine upload --skip-existing --verbose)
+          fi
+
+          failed=0
+          for file in dist/*; do
+            echo "::group::上传 $(basename "$file")"
+            if TWINE_USERNAME=__token__ TWINE_PASSWORD="$token" \
+                "${upload[@]}" "$file"; then
+              echo "成功 (或已存在已跳过): $(basename "$file")"
+            else
+              status=$?
+              echo "::warning::上传失败 (退出码 $status): $(basename "$file")"
+              failed=$((failed + 1))
+            fi
+            echo "::endgroup::"
+          done
+
+          echo "上传结束: 失败 $failed 个文件"
+          if [ "$failed" -ne 0 ]; then
+            # 已经尝试完全部文件; 这里仍标记失败, 避免真实错误被静默吞掉。
+            echo "::error::$failed 个文件未能上传, 其余文件已尝试完毕"
+            exit 1
+          fi
+
+      - name: 追加 wheel 到最新 GitHub Release (版本匹配才添加)
+        # 只添加不替换: gh release upload 默认对同名资产报错, 不加 --clobber。
+        # 报错不停止: 逐个上传, 单个失败只告警; 该步骤失败也不影响发布结果。
+        # 版本核验: 最新 Release 的 tag 版本必须与 wheel 版本一致, 否则整体跳过。
+        if: ${{ always() && inputs.registry == 'pypi' }}
+        continue-on-error: true
+        shell: bash
         env:
-          TWINE_USERNAME: __token__
-          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -uo pipefail
+
+          # 从 wheel 文件名解析版本; 所有 wheel 必须同版本。
+          version="$(python - <<'PY'
+          import glob
+          import os
+          import sys
+
+          from packaging.utils import parse_wheel_filename
+
+          versions = {str(parse_wheel_filename(os.path.basename(path))[1])
+                      for path in glob.glob('dist/*.whl')}
+          if len(versions) != 1:
+              print(f'::warning::无法唯一确定 wheel 版本: {sorted(versions)}',
+                    file=sys.stderr)
+              sys.exit(0)
+          print(versions.pop())
+          PY
+          )"
+          if [ -z "$version" ]; then
+            echo "::warning::未找到可用 wheel, 跳过 Release 资产上传"
+            exit 0
+          fi
+
+          tag="$(gh release view --json tagName --jq .tagName 2>/dev/null || true)"
+          if [ -z "$tag" ]; then
+            echo "::warning::没有找到最新 Release, 跳过资产上传"
+            exit 0
+          fi
+
+          release_version="${tag#v}"
+          if [ "$release_version" != "$version" ]; then
+            echo "::warning::最新 Release ($tag) 与包版本 ($version) 不一致, 不添加资产"
+            exit 0
+          fi
+
+          for wheel in dist/*.whl; do
+            if gh release upload "$tag" "$wheel"; then
+              echo "已添加到 Release $tag: $(basename "$wheel")"
+            else
+              echo "::warning::Release 资产添加失败 (可能已存在): $(basename "$wheel")"
+            fi
+          done
