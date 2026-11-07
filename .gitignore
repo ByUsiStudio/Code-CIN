@@ -80,7 +80,6 @@ aotout/
 
 # ====================== 其他临时 ======================
 /.*/
-!.github/*
+!/.github/*
 /更新计划.md
 *.exe
-!.github/workflows/pypi-packages.yml
