@@ -231,7 +231,8 @@ def _run_native(ns: argparse.Namespace, console, program_file: str,
             os.path.basename(program_file))[0])
 
     try:
-        built = nativegen.compile_native(source, out, target=target,
+        built = nativegen.compile_native(source, out, filename=program_file,
+                                         target=target,
                                          optimize=max(0, int(config.optimize)))
     except (nativegen.NativeGenError, toolchain_error()) as e:
         console.print(Panel(str(e), title="Native Build Error",

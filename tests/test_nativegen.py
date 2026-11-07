@@ -52,7 +52,7 @@ def test_cli_native_out_builds_only(workdir):
 def test_cli_native_reports_unsupported(workdir, capsys):
     src = os.path.join(workdir, 'bad.cin')
     with open(src, 'w', encoding='utf-8') as f:
-        f.write('function main() -> int { int[] a return 0 }')
+        f.write('function main() -> int { int[][] m return 0 }')
     assert cli.main([src, '--native', '--log-level', 'ERROR']) == 1
     assert 'Native Build Error' in capsys.readouterr().out
 
@@ -236,6 +236,116 @@ def test_struct_return_value(workdir):
     assert result.stdout.strip() == '7'
 
 
+@pytest.mark.skipif(_compiler() is None, reason='本机没有可用的 C 编译器')
+def test_import_closure_multi_file(workdir, capfd):
+    with open(os.path.join(workdir, 'util.cin'), 'w', encoding='utf-8') as f:
+        f.write('function double_it(int x) -> int { return x * 2 }\n')
+    src = os.path.join(workdir, 'main.cin')
+    with open(src, 'w', encoding='utf-8') as f:
+        f.write('import "./util.cin"\n'
+                'function main() -> int {\n'
+                '    println(double_it(21))\n'
+                '    return 0\n'
+                '}\n')
+    assert cli.main([src, '--native', '--log-level', 'ERROR']) == 0
+    assert capfd.readouterr().out.replace('\r\n', '\n') == '42\n'
+
+
+@pytest.mark.skipif(_compiler() is None, reason='本机没有可用的 C 编译器')
+def test_global_variables(workdir):
+    src = ('int counter = 10\n'
+           'string label = "n="\n'
+           'function inc() -> int { counter = counter + 1 return counter }\n'
+           'function main() -> int {\n'
+           '    println(label + "x")\n'
+           '    println(inc())\n'
+           '    println(inc())\n'
+           '    return 0\n'
+           '}\n')
+    out = nativegen.compile_native(src, os.path.join(workdir, 'globprog'))
+    result = subprocess.run([out], capture_output=True, text=True, timeout=60)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.replace('\r\n', '\n') == 'n=x\n11\n12\n'
+
+
+@pytest.mark.skipif(_compiler() is None, reason='本机没有可用的 C 编译器')
+def test_builtins_and_bitwise(workdir):
+    src = ('function main() -> int {\n'
+           '    println(strlen("hello"))\n'
+           '    println(abs(-7))\n'
+           '    println(indexof("hello world", "world"))\n'
+           '    println(1 << 4)\n'
+           '    println(6 & 3)\n'
+           '    println(6 | 3)\n'
+           '    println(6 ^ 3)\n'
+           '    return 0\n'
+           '}\n')
+    out = nativegen.compile_native(src, os.path.join(workdir, 'builtinprog'))
+    result = subprocess.run([out], capture_output=True, text=True, timeout=60)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.replace('\r\n', '\n') == '5\n7\n6\n16\n2\n7\n5\n'
+
+
+@pytest.mark.skipif(_compiler() is None, reason='本机没有可用的 C 编译器')
+def test_array_parameter(workdir):
+    src = ('function sum(int[] a, int n) -> int {\n'
+           '    int s = 0\n'
+           '    for (int i = 0; i < n; i = i + 1) { s = s + a[i] }\n'
+           '    return s\n'
+           '}\n'
+           'function main() -> int {\n'
+           '    int a[4]\n'
+           '    a[0] = 1\n'
+           '    a[1] = 2\n'
+           '    a[2] = 3\n'
+           '    a[3] = 4\n'
+           '    println(sum(a, 4))\n'
+           '    return 0\n'
+           '}\n')
+    out = nativegen.compile_native(src, os.path.join(workdir, 'arrparam'))
+    result = subprocess.run([out], capture_output=True, text=True, timeout=60)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == '10'
+
+
+@pytest.mark.skipif(_compiler() is None, reason='本机没有可用的 C 编译器')
+def test_string_builtins(workdir):
+    src = ('function main() -> int {\n'
+           '    println(substr("hello world", 0, 5))\n'
+           '    println(upper("abc"))\n'
+           '    println(lower("ABC"))\n'
+           '    println(int_to_str(42))\n'
+           '    println(strcmp("a", "b") < 0)\n'
+           '    println(trim("  x  "))\n'
+           '    return 0\n'
+           '}\n')
+    out = nativegen.compile_native(src, os.path.join(workdir, 'strbuiltin'))
+    result = subprocess.run([out], capture_output=True, text=True, timeout=60)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.replace('\r\n', '\n') == \
+        'hello\nABC\nabc\n42\ntrue\nx\n'
+
+
+@pytest.mark.skipif(_compiler() is None, reason='本机没有可用的 C 编译器')
+def test_math_and_typed_arrays(workdir):
+    src = ('function main() -> int {\n'
+           '    println(pow(2.0, 3.0))\n'
+           '    println(floor(3.7))\n'
+           '    float xs[2]\n'
+           '    xs[0] = 1.5\n'
+           '    xs[1] = 2.5\n'
+           '    string names[2]\n'
+           '    names[0] = "a"\n'
+           '    println(xs[1])\n'
+           '    println(names[0])\n'
+           '    return 0\n'
+           '}\n')
+    out = nativegen.compile_native(src, os.path.join(workdir, 'matharr'))
+    result = subprocess.run([out], capture_output=True, text=True, timeout=60)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.replace('\r\n', '\n') == '8\n3\n2.5\na\n'
+
+
 def test_emit_c_contains_no_isa_artifacts():
     source = nativegen.emit_c(LOOP)
     assert '#include <stdio.h>' in source
@@ -247,11 +357,11 @@ def test_emit_c_contains_no_isa_artifacts():
 
 def test_unsupported_constructs_are_rejected():
     with pytest.raises(nativegen.NativeGenError):
-        nativegen.emit_c('function main() -> int { int[] a return 0 }')
+        nativegen.emit_c('function main() -> int { int[][] m return 0 }')
     with pytest.raises(nativegen.NativeGenError):
         nativegen.emit_c('function helper() -> int { return 1 }')
     assert not nativegen.supports_source(
-        'function main() -> int { int[] a return 0 }')
+        'function main() -> int { int[][] m return 0 }')
     assert nativegen.supports_source(LOOP)
 
 

@@ -526,7 +526,8 @@ def _build_native_project(project: MknManifest, args) -> int:
     out = args.output or os.path.join(
         project.target_dir, f'{project.name}-{project.version}')
     optimize = 2 if args.release else int(args.optimize or 0)
-    built = nativegen.compile_native(source, out, optimize=optimize)
+    built = nativegen.compile_native(source, out, filename=entry,
+                                     optimize=optimize)
     print(f'Built native {project.name} {project.version}: {built}')
     return 0
 

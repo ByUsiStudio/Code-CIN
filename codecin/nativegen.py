@@ -28,8 +28,59 @@ AST = Any
 
 _BINOPS = {'+': '+', '-': '-', '*': '*', '/': '/', '%': '%',
            '<': '<', '<=': '<=', '>': '>', '>=': '>=', '==': '==', '!=': '!=',
-           '&&': '&&', '||': '||'}
-_PREAMBLE = ('#include <stdint.h>\n#include <stdio.h>\n#include <string.h>\n\n'
+           '&&': '&&', '||': '||', '&': '&', '|': '|', '^': '^',
+           '<<': '<<', '>>': '>>'}
+_BUILTINS = {
+    'strlen': ('__cin_strlen', 1, 'int'),
+    'abs': ('__cin_abs', 1, 'int'),
+    'indexof': ('__cin_indexof', 2, 'int'),
+    'atoi': ('__cin_atoi', 1, 'int'),
+    'idiv': ('__cin_idiv', 2, 'int'),
+    'min': ('__cin_min', 2, 'int'),
+    'max': ('__cin_max', 2, 'int'),
+    'substr': ('__cin_substr', 3, 'str'),
+    'upper': ('__cin_case', 1, 'str'),
+    'lower': ('__cin_case', 1, 'str'),
+    'int_to_str': ('__cin_itoa', 1, 'str'),
+    'strcmp': ('__cin_strcmp', 2, 'int'),
+    'trim': ('__cin_trim', 1, 'str'),
+    'sqrt': ('__cin_sqrt', 1, 'float'),
+    'pow': ('pow', 2, 'float'),
+    'floor': ('floor', 1, 'float'),
+    'ceil': ('ceil', 1, 'float'),
+    'round': ('round', 1, 'float'),
+    'sin': ('sin', 1, 'float'),
+    'cos': ('cos', 1, 'float'),
+    'tan': ('tan', 1, 'float'),
+    'fabs': ('fabs', 1, 'float'),
+    'float_to_str': ('__cin_ftoa', 1, 'str'),
+    'time': ('__cin_time', 0, 'int'),
+    'rand': ('__cin_rand', 0, 'int'),
+    'srand': ('__cin_srand', 1, 'int'),
+}
+
+_PREAMBLE = ('#include <stdint.h>\n#include <stdio.h>\n#include <string.h>\n'
+             '#include <stdlib.h>\n#include <math.h>\n#include <time.h>\n\n'
+             'static double __cin_sqrt(double x) { return sqrt(x); }\n'
+             'static int64_t __cin_time(void) { return (int64_t)time(NULL); }\n'
+             'static int64_t __cin_rand(void) { return (int64_t)rand(); }\n'
+             'static int64_t __cin_srand(int64_t seed) { '
+             'srand((unsigned)seed); return 0; }\n'
+             'static int64_t __cin_strlen(const char *s) { '
+             'return (int64_t)strlen(s); }\n'
+             'static int64_t __cin_abs(int64_t v) { return v < 0 ? -v : v; }\n'
+             'static int64_t __cin_indexof(const char *h, const char *n) {\n'
+             '    const char *p = strstr(h, n);\n'
+             '    return p ? (int64_t)(p - h) : -1;\n'
+             '}\n'
+             'static int64_t __cin_atoi(const char *s) { '
+             'return (int64_t)strtoll(s, NULL, 10); }\n'
+             'static int64_t __cin_idiv(int64_t a, int64_t b) { '
+             'return b ? a / b : 0; }\n'
+             'static int64_t __cin_min(int64_t a, int64_t b) { '
+             'return a < b ? a : b; }\n'
+             'static int64_t __cin_max(int64_t a, int64_t b) { '
+             'return a > b ? a : b; }\n'
              'static void __cin_print_int(int64_t v) { printf("%lld", '
              '(long long)v); }\n'
              'static void __cin_println_int(int64_t v) { '
@@ -46,6 +97,69 @@ _PREAMBLE = ('#include <stdint.h>\n#include <stdio.h>\n#include <string.h>\n\n'
              'printf("%g\\n", v); }\n'
              'static char __cin_arena[65536];\n'
              'static size_t __cin_arena_used = 0;\n'
+             'static char *__cin_alloc(size_t n) {\n'
+             '    char *p;\n'
+             '    if (__cin_arena_used + n > sizeof(__cin_arena)) return NULL;\n'
+             '    p = __cin_arena + __cin_arena_used;\n'
+             '    __cin_arena_used += n;\n'
+             '    return p;\n'
+             '}\n'
+             'static const char *__cin_substr(const char *s, int64_t start, '
+             'int64_t len) {\n'
+             '    int64_t n = (int64_t)strlen(s), e;\n'
+             '    char *p;\n'
+             '    if (start < 0) start = 0;\n'
+             '    if (start > n) start = n;\n'
+             '    if (len < 0) len = 0;\n'
+             '    e = start + len;\n'
+             '    if (e > n) e = n;\n'
+             '    p = __cin_alloc((size_t)(e - start) + 1);\n'
+             '    if (!p) return "";\n'
+             '    memcpy(p, s + start, (size_t)(e - start));\n'
+             '    p[e - start] = 0;\n'
+             '    return p;\n'
+             '}\n'
+             'static const char *__cin_case(const char *s, int up) {\n'
+             '    size_t n = strlen(s), i;\n'
+             '    char *p = __cin_alloc(n + 1);\n'
+             '    if (!p) return "";\n'
+             '    for (i = 0; i < n; i++) {\n'
+             '        char c = s[i];\n'
+             '        if (up && c >= 97 && c <= 122) c -= 32;\n'
+             '        if (!up && c >= 65 && c <= 90) c += 32;\n'
+             '        p[i] = c;\n'
+             '    }\n'
+             '    p[n] = 0;\n'
+             '    return p;\n'
+             '}\n'
+             'static const char *__cin_itoa(int64_t v) {\n'
+             '    char *p = __cin_alloc(32);\n'
+             '    if (!p) return "";\n'
+             '    snprintf(p, 32, "%lld", (long long)v);\n'
+             '    return p;\n'
+             '}\n'
+             'static int64_t __cin_strcmp(const char *a, const char *b) {\n'
+             '    return (int64_t)strcmp(a, b);\n'
+             '}\n'
+             'static const char *__cin_ftoa(double v) {\n'
+             '    char *p = __cin_alloc(64);\n'
+             '    if (!p) return "";\n'
+             '    snprintf(p, 64, "%g", v);\n'
+             '    return p;\n'
+             '}\n'
+             'static const char *__cin_trim(const char *s) {\n'
+             '    size_t b = 0, e = strlen(s);\n'
+             '    char *p;\n'
+             '    while (s[b] == 32 || s[b] == 9 || s[b] == 10 || s[b] == 13)\n'
+             '        b++;\n'
+             '    while (e > b && (s[e-1] == 32 || s[e-1] == 9 || '
+             's[e-1] == 10 || s[e-1] == 13)) e--;\n'
+             '    p = __cin_alloc(e - b + 1);\n'
+             '    if (!p) return "";\n'
+             '    memcpy(p, s + b, e - b);\n'
+             '    p[e - b] = 0;\n'
+             '    return p;\n'
+             '}\n'
              'static const char *__cin_concat(const char *a, const char *b) {\n'
              '    size_t na = strlen(a), nb = strlen(b);\n'
              '    char *p;\n'
@@ -78,7 +192,11 @@ class NativeGenError(RuntimeError):
 def _typename(t: Any) -> str:
     if isinstance(t, tuple) and t[0] == 'struct':
         return f'cin_{t[1]}'
+    if isinstance(t, tuple) and t[0] == 'ptrarray':
+        return 'int64_t *'
     if t == 'int':
+        return 'int64_t'
+    if t == 'bool':
         return 'int64_t'
     if t == 'float':
         return 'double'
@@ -103,9 +221,12 @@ def _field_ctype(t: Any) -> str:
 
 class _Generator:
     def __init__(self, functions: Dict[str, Any],
-                 structs: Optional[Dict[str, Any]] = None):
+                 structs: Optional[Dict[str, Any]] = None,
+                 globals_: Optional[List[Any]] = None):
         self.functions = functions
         self.structs = structs or {}
+        self.globals = globals_ or []
+        self.global_names = {self._sanitize(g.name) for g in self.globals}
         self.lines: List[str] = []
         self.vars: List[str] = []
         self.types: Dict[str, str] = {}
@@ -142,6 +263,8 @@ class _Generator:
             return '1' if node[1] else '0'
         if kind == 'not':
             return f'(!{self.expr(node[1])})'
+        if kind == 'bitnot':
+            return f'(~{self.expr(node[1])})'
         if kind == 'neg':
             return f'(-{self.expr(node[1])})'
         if kind == 'binop':
@@ -183,6 +306,12 @@ class _Generator:
             t = self.types.get(arg[1], 'int')
             return 'str' if t == 'string' else t
         if kind == 'index':
+            base = arg[1]
+            if base[0] == 'var':
+                t = str(self.types.get(base[1], ''))
+                if t.startswith('array:') or t.startswith('ptrarray:'):
+                    elem = t.split(':', 1)[1]
+                    return 'str' if elem == 'string' else elem
             return 'int'
         if kind == 'member':
             if arg[1][0] != 'var':
@@ -210,6 +339,8 @@ class _Generator:
                 return 'str'
             return 'float' if 'float' in (lt, rt) else 'int'
         if kind == 'call':
+            if arg[1] in _BUILTINS:
+                return _BUILTINS[arg[1]][2]
             fn = self.functions.get(arg[1])
             ret = (fn.ret_type if fn is not None else None) or 'int'
             if isinstance(ret, tuple) and ret[0] == 'struct':
@@ -233,6 +364,14 @@ class _Generator:
             if kind == 'float':
                 return f'__cin_print{suffix}_float({self.expr(arg)})'
             return f'__cin_print{suffix}_int({self.expr(arg)})'
+        if name in _BUILTINS:
+            fn, arity, _ret = _BUILTINS[name]
+            if len(args) != arity:
+                raise NativeGenError(f'{name}() 需要 {arity} 个参数')
+            if name in ('upper', 'lower'):
+                flag = 1 if name == 'upper' else 0
+                return f'{fn}({self.expr(args[0])}, {flag})'
+            return f'{fn}({", ".join(self.expr(a) for a in args)})'
         if name not in self.functions:
             raise NativeGenError(f'直接原生后端暂不支持内建/外部函数: {name!r}')
         callee = self.functions[name]
@@ -247,12 +386,16 @@ class _Generator:
         cname = self._sanitize(name)
         if isinstance(typ, tuple) and typ[0] == 'array':
             base, size = typ[1], typ[2]
-            if base != 'int':
+            if base not in ('int', 'float', 'string', 'bool'):
                 raise NativeGenError(f'数组元素类型 {base!r} 暂不支持')
             if not isinstance(size, int):
                 raise NativeGenError('数组长度必须是整数字面量')
             self.arrays[cname] = int(size)
-            self.types[cname] = 'array'
+            self.types[cname] = 'array:' + base
+        elif isinstance(typ, tuple) and typ[0] == 'ptrarray':
+            if typ[1] != 'int':
+                raise NativeGenError(f'数组类型 {typ[1]!r} 暂不支持')
+            self.types[cname] = 'ptrarray'
         elif isinstance(typ, tuple) and typ[0] == 'struct':
             if typ[1] not in self.structs:
                 raise NativeGenError(f'未知 struct 类型: {typ[1]!r}')
@@ -268,7 +411,7 @@ class _Generator:
     def assign(self, target: AST, value: str) -> str:
         if target[0] == 'var':
             cname = self._sanitize(target[1])
-            if cname not in self.vars:
+            if cname not in self.vars and cname not in self.global_names:
                 self.vars.append(cname)
                 self.types.setdefault(cname, 'int')
             return f'{cname} = {value}'
@@ -368,25 +511,79 @@ class _Generator:
 
     # ---------- 函数 ----------
 
-    def function(self, fdef: Any) -> None:
-        ret = _typename(fdef.ret_type)
-        params = []
+    def globals_block(self) -> None:
+        for gv in self.globals:
+            name = self._sanitize(gv.name)
+            vtype = gv.vtype
+            if isinstance(vtype, tuple) and vtype[0] == 'array':
+                self.emit(f'static int64_t {name}[{vtype[2]}];')
+            elif vtype == 'float':
+                self.emit(f'static double {name} = 0.0;')
+            elif vtype == 'string':
+                self.emit(f'static const char *{name} = "";')
+            elif isinstance(vtype, tuple) and vtype[0] == 'struct':
+                self.emit(f'static cin_{vtype[1]} {name};')
+            else:
+                self.emit(f'static int64_t {name} = 0;')
+        if self.globals:
+            self.emit('')
+
+    def globals_init(self) -> None:
+        for gv in self.globals:
+            vtype = gv.vtype
+            key = self._sanitize(gv.name)
+            if isinstance(vtype, tuple) and vtype[0] == 'struct':
+                self.types[key] = 'struct:' + vtype[1]
+            elif isinstance(vtype, tuple):
+                self.types[key] = 'array'
+            else:
+                self.types[key] = vtype
+        assigns: List[str] = []
+        for gv in self.globals:
+            if gv.init is None or gv.array_lit is not None:
+                continue
+            name = self._sanitize(gv.name)
+            assigns.append(f'    {name} = {self.expr(gv.init)};')
+        self.emit('static void __cin_init_globals(void) {')
+        for line in assigns:
+            self.emit(line)
+        self.emit('}')
+        self.emit('')
+
+    def params_of(self, fdef: Any) -> List[str]:
+        params: List[str] = []
         for pname, ptype in fdef.params:
             if isinstance(ptype, tuple) and ptype[0] == 'struct':
                 if ptype[1] not in self.structs:
                     raise NativeGenError(f'未知 struct 类型: {ptype[1]!r}')
                 ctype = f'cin_{ptype[1]}'
-            elif ptype in ('int', 'bool', 'float', 'string'):
-                if ptype == 'float':
-                    ctype = 'double'
-                elif ptype == 'string':
-                    ctype = 'const char *'
+            elif isinstance(ptype, tuple) and ptype[0] == 'ptrarray':
+                if ptype[1] == 'int':
+                    ctype = 'int64_t *'
+                elif ptype[1] == 'float':
+                    ctype = 'double *'
+                elif ptype[1] == 'string':
+                    ctype = 'const char **'
                 else:
-                    ctype = 'int64_t'
+                    raise NativeGenError(
+                        f'数组参数元素类型 {ptype[1]!r} 暂不支持')
+            elif ptype in ('int', 'bool', 'float', 'string'):
+                ctype = 'double' if ptype == 'float' else (
+                    'const char *' if ptype == 'string' else 'int64_t')
             else:
                 raise NativeGenError(
                     f'{fdef.name}: 参数类型 {ptype!r} 暂不支持')
             params.append(f'{ctype} {self._sanitize(pname)}')
+        return params
+
+    def signature(self, fdef: Any) -> str:
+        ret = _typename(fdef.ret_type)
+        params = self.params_of(fdef)
+        return (f'static {ret} {self._fname(fdef.name)}('
+                f'{", ".join(params) if params else "void"})')
+
+    def function(self, fdef: Any) -> None:
+        ret = _typename(fdef.ret_type)
         param_names = {self._sanitize(p[0]) for p in fdef.params}
         self.vars = list(param_names)
         self.arrays = {}
@@ -395,6 +592,8 @@ class _Generator:
             _key = self._sanitize(_pname)
             if isinstance(_ptype, tuple) and _ptype[0] == 'struct':
                 self.types[_key] = 'struct:' + _ptype[1]
+            elif isinstance(_ptype, tuple) and _ptype[0] == 'ptrarray':
+                self.types[_key] = 'ptrarray:' + str(_ptype[1])
             else:
                 self.types[_key] = _ptype
         body: List[str] = []
@@ -405,8 +604,7 @@ class _Generator:
                 self.stmt(stmt, 1)
         finally:
             self.lines = saved
-        head = (f'static {ret} {self._fname(fdef.name)}('
-                f'{", ".join(params) if params else "void"}) {{\n')
+        head = self.signature(fdef) + ' {\n'
         local = [v for v in self.vars if v not in param_names]
         decls = ''
         if local:
@@ -414,11 +612,16 @@ class _Generator:
             for v in local:
                 size = self.arrays.get(v)
                 if size is not None:
-                    parts.append(f'int64_t {v}[{size}] = {{0}};')
+                    base = str(self.types.get(v, 'array:int')).split(':', 1)[-1]
+                    ctype = {'float': 'double', 'string': 'const char *',
+                             'bool': 'int64_t'}.get(base, 'int64_t')
+                    parts.append(f'{ctype} {v}[{size}] = {{0}};')
                 elif self.types.get(v) == 'float':
                     parts.append(f'double {v} = 0.0;')
                 elif self.types.get(v) == 'string':
                     parts.append(f'const char *{v} = "";')
+                elif self.types.get(v) == 'ptrarray':
+                    parts.append(f'int64_t *{v} = 0;')
                 elif str(self.types.get(v, '')).startswith('struct:'):
                     name = self.types[v].split(':', 1)[1]
                     parts.append(f'cin_{name} {v} = {{0}};')
@@ -437,50 +640,116 @@ def supports_source(source: str) -> bool:
         return False
 
 
-def emit_c(source: str) -> str:
-    """把 CIN 源码编译成 C 源码（不经过任何指令集）。"""
-    from .cin import Parser, tokenize
+def _strip_imports(text: str) -> str:
+    """去掉 ``import`` 行（Parser 不认 import, 由调用方先展开闭包）。"""
+    import re
+    return re.sub(r'(?m)^[ \t]*import[ \t]+[^\n]*\n?', '', text)
 
-    try:
-        _structs, _globals, functions, _enums = Parser(
-            tokenize(source)).parse_program()
-    except Exception as e:  # noqa: BLE001 - 统一转换为 NativeGenError
-        raise NativeGenError(f'解析失败: {e}') from e
+
+def _parse_one(source: str):
+    from .cin import Parser, tokenize
+    return Parser(tokenize(_strip_imports(source))).parse_program()
+
+
+def _merge(parsed_list):
+    structs: Dict[str, Any] = {}
+    functions: Dict[str, Any] = {}
+    globals_: List[Any] = []
+    seen_globals = set()
+    for structs_i, globals_i, functions_i, _enums_i in parsed_list:
+        for name, sd in structs_i.items():
+            if name in structs:
+                raise NativeGenError(f'struct 重复定义: {name}')
+            structs[name] = sd
+        for name, fd in functions_i.items():
+            if name in functions:
+                raise NativeGenError(f'函数重复定义: {name}')
+            functions[name] = fd
+        for gv in globals_i:
+            if gv.extern:
+                continue
+            if gv.name in seen_globals:
+                raise NativeGenError(f'全局变量重复定义: {gv.name}')
+            seen_globals.add(gv.name)
+            globals_.append(gv)
+    return structs, functions, globals_
+
+
+def emit_c(source: str, filename: Optional[str] = None,
+           require_main: bool = True) -> str:
+    """把 CIN 源码编译成 C 源码（不经过任何指令集）。
+
+    ``filename`` 给出时会解析其 ``import`` 闭包并合并为同一编译单元。
+    """
+    from .cin import collect_imported_files
+
+    parsed = []
+    if filename:
+        for path in collect_imported_files(filename):
+            try:
+                with open(path, encoding='utf-8-sig') as f:
+                    text = f.read()
+                parsed.append(_parse_one(text))
+            except NativeGenError:
+                raise
+            except Exception as e:  # noqa: BLE001
+                raise NativeGenError(f'{path}: 解析失败: {e}') from e
+    if not parsed:
+        try:
+            parsed = [_parse_one(source)]
+        except Exception as e:  # noqa: BLE001 - 统一转换为 NativeGenError
+            raise NativeGenError(f'解析失败: {e}') from e
+
+    structs, functions, globals_ = _merge(parsed)
 
     if 'main' not in functions:
-        raise NativeGenError('缺少 main 函数')
-    main_fn = functions['main']
-    if main_fn.ret_type not in (None, 'int', 'void'):
-        raise NativeGenError('main 必须返回 int 或 void')
+        if require_main:
+            raise NativeGenError('缺少 main 函数')
+        main_fn = None
+    else:
+        main_fn = functions['main']
+        if main_fn.ret_type not in (None, 'int', 'void'):
+            raise NativeGenError('main 必须返回 int 或 void')
 
-    gen = _Generator(functions, _structs)
+    gen = _Generator(functions, structs, globals_)
     gen.emit(_PREAMBLE)
-    for sd in (_structs or {}).values():
+    for sd in (structs or {}).values():
         fields = ' '.join(f'{_field_ctype(t)} {n};' for n, t in sd.fields)
         gen.emit(f'typedef struct {{ {fields} }} cin_{sd.name};')
-    if _structs:
+    if structs:
         gen.emit('')
+    gen.globals_block()
+    for fdef in functions.values():
+        gen.emit(gen.signature(fdef) + ';')
+    gen.emit('')
+    gen.globals_init()
     for fdef in functions.values():
         gen.function(fdef)
-    gen.emit('int main(void) {')
-    if main_fn.ret_type == 'void':
-        gen.emit(f'    {_Generator._fname("main")}();')
-        gen.emit('    return 0;')
-    else:
-        gen.emit(f'    int64_t rc = {_Generator._fname("main")}();')
-        gen.emit('    return (int)rc;')
-    gen.emit('}')
+    if main_fn is not None:
+        gen.emit('int main(void) {')
+        gen.emit('    __cin_init_globals();')
+        if main_fn.ret_type == 'void':
+            gen.emit(f'    {_Generator._fname("main")}();')
+            gen.emit('    return 0;')
+        else:
+            gen.emit(f'    int64_t rc = {_Generator._fname("main")}();')
+            gen.emit('    return (int)rc;')
+        gen.emit('}')
     return '\n'.join(gen.lines) + '\n'
 
 
 def compile_native(source: str, out: str, *,
+                   filename: Optional[str] = None,
                    target: Optional[str] = None,
                    optimize: int = 2,
                    keep_c: bool = False) -> str:
-    """源码 → C → 设备本机可执行文件; 返回产物路径。"""
+    """源码 → C → 设备本机可执行文件; 返回产物路径。
+
+    ``filename`` 给出时会编译其 ``import`` 闭包（多文件项目）。
+    """
     from .cbackend import CBackendError, c_target, _host_target_name
 
-    c_source = emit_c(source)
+    c_source = emit_c(source, filename=filename)
     target_name = target or _host_target_name()
     spec = toolchain.get_target(target_name)
     info = toolchain.find_compiler(spec)
