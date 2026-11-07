@@ -122,6 +122,16 @@ def sync() -> int:
     return 0
 
 
+def _drift_hint(actual: bytes, expected: bytes) -> str:
+    """给出第一处不同的行 (版本号漂移最常见), 便于直接定位问题。"""
+    got = actual.decode("utf-8", "replace").splitlines()
+    want = expected.decode("utf-8", "replace").splitlines()
+    for index, (left, right) in enumerate(zip(got, want), 1):
+        if left != right:
+            return f"第 {index} 行 {left.strip()!r} 应为 {right.strip()!r}"
+    return f"行数 {len(got)} 应为 {len(want)}"
+
+
 def check() -> int:
     files = expected_files()
     problems: list[str] = []
@@ -130,7 +140,8 @@ def check() -> int:
         if not path.is_file():
             problems.append(f"缺少 {relative}")
         elif path.read_bytes() != data:
-            problems.append(f"内容漂移 {relative}")
+            hint = _drift_hint(path.read_bytes(), data)
+            problems.append(f"内容漂移 {relative}（{hint}）")
 
     sources = package_sources()
     if LIB_DIR.is_dir():
@@ -150,8 +161,9 @@ def check() -> int:
         for problem in problems:
             print(problem, file=sys.stderr)
         print(
-            "请修改 codecin/lib/<name>/src/ 后运行 "
-            "python script/sync_stdlib_packages.py 重新生成。",
+            f"请运行 python script/sync_stdlib_packages.py 重新生成并提交 "
+            f"（共 {len(files)} 个内置库）；改了 codecin/lib/<name>/src/ "
+            f"或升级了 codecin/__init__.py 的版本号, 都要重新生成。",
             file=sys.stderr,
         )
         return 1

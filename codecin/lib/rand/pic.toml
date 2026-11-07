@@ -1,7 +1,7 @@
 # 由 script/sync_stdlib_packages.py 生成，请勿手工编辑。
 [package]
 name = "rand"
-version = "6.4.2"
+version = "7.22.10"
 description = "Code CIN 官方标准库: 随机工具"
 license = "MIT"
 authors = ["ByUsi Studio"]

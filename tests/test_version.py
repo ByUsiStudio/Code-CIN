@@ -10,10 +10,12 @@ workstream C 把版本号从"一个字符串"升级为可编程/可自检/可发
   * codecin/version.py: version_info() / version_tuple() / compare() 纯函数 +
     build_info() 环境自检 (绝不抛异常);
   * CLI: --build-info 与 --build-info --json;
-  * script/bump_version.py: 一条命令走完 真源 -> Go 常量 -> CHANGELOG 骨架;
+  * script/bump_version.py: 一条命令走完 真源 -> Go 常量 -> 内置库 pic 清单
+    -> CHANGELOG 骨架;
   * CHANGELOG.md 必须存在当前版本小节 (发布链路门禁, 由 bump_version 保证)。
 """
 
+import glob
 import hashlib
 import json
 import os
@@ -295,8 +297,9 @@ def _make_repo_copy(dst):
         shutil.copytree(os.path.join(ROOT, 'codecin'), os.path.join(dst, 'codecin'),
                         ignore=ignore)
         os.makedirs(os.path.join(dst, 'script'), exist_ok=True)
-        shutil.copy(os.path.join(ROOT, 'script', 'gen_native_isa.py'),
-                    os.path.join(dst, 'script', 'gen_native_isa.py'))
+        for name in ('gen_native_isa.py', 'sync_stdlib_packages.py'):
+            shutil.copy(os.path.join(ROOT, 'script', name),
+                        os.path.join(dst, 'script', name))
         shutil.copy(os.path.join(ROOT, 'CHANGELOG.md'),
                     os.path.join(dst, 'CHANGELOG.md'))
     except OSError as e:                    # 并行编辑 (文件增删) 导致复制失败
@@ -318,11 +321,18 @@ def test_bump_version_dry_run_on_repo_copy(workdir):
     target = f'{cur[0]}.{cur[1]}.{cur[2] + 1}'
     repo = _make_repo_copy(os.path.join(workdir, 'copy'))
     before = _snapshot(repo)
+    manifests = sorted(glob.glob(os.path.join(repo, 'codecin', 'lib', '*',
+                                              'pic.toml')))
+    assert manifests, '副本里应有内置库 pic.toml'
+    before_mtime = {p: os.stat(p).st_mtime_ns for p in manifests}
     r = _bump('--root', repo, '--dry-run', target)
     assert r.returncode == 0, r.stdout + r.stderr
     assert f'## [{target}]' in r.stdout
     assert '### 新增 (Added)' in r.stdout
+    assert 'sync_stdlib_packages.py' in r.stdout
     assert _snapshot(repo) == before, '--dry-run 不允许改动副本文件'
+    assert {p: os.stat(p).st_mtime_ns for p in manifests} == before_mtime, \
+        '--dry-run 不允许重写内置库 pic.toml'
 
 @pytest.mark.parametrize('bad', ['abc', '5.6', '1.2.3.4', '5.6.0-rc1', 'v5.7.0'])
 def test_bump_version_rejects_invalid_version_arguments(bad):
@@ -382,6 +392,21 @@ def test_bump_version_full_run_in_repo_copy(workdir):
     assert f'## [{target}] - 2030-01-02' in changelog
     assert '### 修复 (Fixed)' in changelog
     assert changelog.index(f'[{target}]') < changelog.index(f'[{codecin.__version__}]')
+
+    # 内置库 pic.toml 的 version 也必须随真源更新 (否则 sync --check 会失败)
+    manifests = sorted(glob.glob(os.path.join(repo, 'codecin', 'lib', '*',
+                                              'pic.toml')))
+    assert manifests, '副本里应有内置库 pic.toml'
+    for path in manifests:
+        with open(path, encoding='utf-8') as f:
+            assert f'version = "{target}"' in f.read(), \
+                f'{path} 未随版本更新'
+    stdlib_check = subprocess.run(
+        [sys.executable, os.path.join(repo, 'script', 'sync_stdlib_packages.py'),
+         '--check'], cwd=repo, capture_output=True, text=True,
+        encoding='utf-8', errors='replace')
+    assert stdlib_check.returncode == 0, \
+        stdlib_check.stdout + stdlib_check.stderr
 
     # 副本里的 Go 生成物必须仍然自洽 (CI 的 --check 门禁)
     check = subprocess.run(

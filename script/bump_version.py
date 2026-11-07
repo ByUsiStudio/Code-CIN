@@ -9,7 +9,7 @@
 `--root DIR` 可指向另一棵完整的仓库副本 (含 script/ 与 codecin/), 便于在临时
 目录里演练真实落盘流程; 默认操作本脚本所在仓库。
 
-一次完成四件事 (全部成功才算成功, 失败会回滚已写的文件):
+一次完成五件事 (全部成功才算成功, 失败会回滚已写的文件):
 
   1. 校验入参: 必须严格 `x.y.z`, 且**必须大于**当前版本 (否则非 0 退出, 不动文件);
   2. 改写 `codecin/__init__.py` 的 `__version__` (全项目唯一真源,
@@ -17,7 +17,10 @@
   3. 调用 `script/gen_native_isa.py` 重新生成 Go 侧版本常量
      (`codecin/native/engine/version_gen.go` 的 `engine.BuildVersion`),
      保证 `python script/gen_native_isa.py --check` 仍然通过;
-  4. 在 `CHANGELOG.md` 顶部插入新版本小节骨架 (保持 Keep a Changelog 格式,
+  4. 调用 `script/sync_stdlib_packages.py` 重写全部内置库
+     `codecin/lib/<name>/pic.toml` 的 version, 保证 CI 的
+     `python script/sync_stdlib_packages.py --check` 不会因版本漂移失败;
+  5. 在 `CHANGELOG.md` 顶部插入新版本小节骨架 (保持 Keep a Changelog 格式,
      小节内容留 `_待补充_` 占位)。
 
 文本一律按 UTF-8 读写, 并**保持文件原有换行风格** (LF/CRLF); `CHANGELOG.md`
@@ -29,6 +32,7 @@
 import argparse
 import contextlib
 import datetime
+import glob
 import os
 import re
 import subprocess
@@ -48,11 +52,13 @@ INIT_REL = os.path.join('codecin', '__init__.py')
 CHANGELOG_REL = 'CHANGELOG.md'
 VERSION_GO_REL = os.path.join('codecin', 'native', 'engine', 'version_gen.go')
 GEN_ISA_REL = os.path.join('script', 'gen_native_isa.py')
+SYNC_STDLIB_REL = os.path.join('script', 'sync_stdlib_packages.py')
 
 _VERSION_LINE_RE = re.compile(
     r'^__version__[ \t]*=[ \t]*(["\'])([^"\'\r\n]*)\1', re.MULTILINE)
 _BUILD_VERSION_RE = re.compile(r'^const BuildVersion = "([^"]*)"', re.MULTILINE)
 _CHANGELOG_HEADING_RE = re.compile(r'^## \[', re.MULTILINE)
+_MANIFEST_VERSION_RE = re.compile(r'^version = "([^"]*)"', re.MULTILINE)
 
 # 扫描"其他仍含旧版本号的文件"时跳过的目录 (docs/ 属于独立文档仓库)
 _SKIP_DIRS = frozenset({
@@ -153,6 +159,54 @@ def detect_newline(text: str) -> str:
     return '\r\n' if '\r\n' in text else '\n'
 
 
+# ============ 内置库 pic 清单 (由 script/sync_stdlib_packages.py 生成) ============
+
+
+def list_stdlib_manifests(root: str) -> list:
+    """有 ``src/<name>.cin`` 的内置库的 pic.toml 路径 (可能尚不存在)。
+
+    与 ``sync_stdlib_packages.py`` 的 ``package_sources()`` 同口径; 返回尚不
+    存在的路径是为了让失败回滚能删掉本次新生成的清单。
+    """
+    paths = []
+    for package in sorted(glob.glob(os.path.join(root, 'codecin', 'lib', '*'))):
+        name = os.path.basename(package)
+        if os.path.isfile(os.path.join(package, 'src', f'{name}.cin')):
+            paths.append(os.path.join(package, 'pic.toml'))
+    return paths
+
+
+def _snapshot_files(paths: list) -> dict:
+    """字节快照 (``None`` 表示原本不存在), 供失败回滚。"""
+    return {
+        path: _read_bytes(path) if os.path.isfile(path) else None
+        for path in paths
+    }
+
+
+def _restore_files(snapshot: dict) -> None:
+    for path, data in snapshot.items():
+        if data is None:
+            with contextlib.suppress(OSError):
+                os.remove(path)
+        else:
+            _write_bytes(path, data)
+
+
+def stale_manifests(root: str, version: str) -> list:
+    """``version`` 与给定版本不一致的 pic.toml (相对路径, 供自检)。"""
+    stale = []
+    for path in list_stdlib_manifests(root):
+        rel = os.path.relpath(path, root).replace('\\', '/')
+        if not os.path.isfile(path):
+            stale.append(rel)
+            continue
+        m = _MANIFEST_VERSION_RE.search(_read_text(path))
+        if m is None or m.group(1) != version:
+            stale.append(rel)
+    return stale
+
+
 # ==================== 其他仍含旧版本号的文件 (提示用) ====================
 
 
@@ -172,6 +226,8 @@ def find_old_version_files(root: str, old_version: str) -> list:
                        INIT_REL.replace('\\', '/'),
                        VERSION_GO_REL.replace('\\', '/')):
                 continue                      # 这三个由本脚本负责
+            if rel.startswith('codecin/lib/') and rel.endswith('/pic.toml'):
+                continue                      # 由 sync_stdlib_packages 重写
             try:
                 if os.path.getsize(path) > 2 * 1024 * 1024:
                     continue
@@ -244,6 +300,12 @@ def run(args: argparse.Namespace) -> int:
         m = _BUILD_VERSION_RE.search(_read_text(version_go_path))
         old_build_version = m.group(1) if m else None
 
+    # 内置库 pic.toml 的 version 也来自唯一真源, 必须随版本一起重写,
+    # 否则 CI 的 `sync_stdlib_packages.py --check` 会报"内容漂移"。
+    manifest_paths = list_stdlib_manifests(root)
+    sync_script = os.path.join(root, SYNC_STDLIB_REL)
+    sync_available = bool(manifest_paths) and os.path.isfile(sync_script)
+
     # ---------------- dry-run: 只打印 ----------------
     if args.dry_run:
         out = sys.stdout
@@ -255,7 +317,14 @@ def run(args: argparse.Namespace) -> int:
         out.write(f'       {VERSION_GO_REL}: BuildVersion = '
                   f'"{old_build_version if old_build_version is not None else "?"}"'
                   f' -> "{new_version}"\n')
-        out.write(f'  3) {CHANGELOG_REL}: 顶部插入新版本小节:\n')
+        if sync_available:
+            out.write('  3) 调用 python script/sync_stdlib_packages.py 重写内置库:\n')
+            out.write(f'       {len(manifest_paths)} 个 codecin/lib/<name>/pic.toml 的 '
+                      f'version -> "{new_version}"\n')
+        else:
+            out.write('  3) (跳过) 未找到内置库 pic.toml 或 '
+                      f'{SYNC_STDLIB_REL}\n')
+        out.write(f'  4) {CHANGELOG_REL}: 顶部插入新版本小节:\n')
         for line in section.split(nl):
             out.write(f'       {line}\n' if line else '\n')
         hints = find_old_version_files(root, current_version)
@@ -269,6 +338,7 @@ def run(args: argparse.Namespace) -> int:
     # ---------------- 落盘 (失败回滚) ----------------
     init_backup = _read_bytes(init_path)
     changelog_backup = _read_bytes(changelog_path)
+    manifest_backup = _snapshot_files(manifest_paths)
     _write_text(init_path, new_init_text)
     _write_text(changelog_path, new_changelog_text)
     sys.stdout.write(f'[bump_version] {INIT_REL}: __version__ = "{new_version}"\n')
@@ -281,6 +351,7 @@ def run(args: argparse.Namespace) -> int:
     if proc.returncode != 0:
         _write_bytes(init_path, init_backup)
         _write_bytes(changelog_path, changelog_backup)
+        _restore_files(manifest_backup)
         sys.stderr.write(f'[bump_version] 错误: {GEN_ISA_REL} 执行失败 '
                          f'(rc={proc.returncode}), 已回滚 {INIT_REL} 与 '
                          f'{CHANGELOG_REL}\n')
@@ -290,7 +361,25 @@ def run(args: argparse.Namespace) -> int:
     for line in (proc.stdout or '').splitlines():
         sys.stdout.write(f'[bump_version]   {line}\n')
 
-    # ---------------- 自检: 三处都必须体现新版本 ----------------
+    # 内置库 pic.toml 必须在真源改写之后重新生成 (脚本从 __init__.py 读版本)。
+    if sync_available:
+        proc = subprocess.run(
+            [sys.executable, sync_script], cwd=root,
+            capture_output=True, text=True, encoding='utf-8', errors='replace')
+        if proc.returncode != 0:
+            _write_bytes(init_path, init_backup)
+            _write_bytes(changelog_path, changelog_backup)
+            _restore_files(manifest_backup)
+            sys.stderr.write(f'[bump_version] 错误: {SYNC_STDLIB_REL} 执行失败 '
+                             f'(rc={proc.returncode}), 已回滚 {INIT_REL}、'
+                             f'{CHANGELOG_REL} 与内置库 pic.toml\n')
+            sys.stderr.write(proc.stdout or '')
+            sys.stderr.write(proc.stderr or '')
+            return proc.returncode or 1
+        for line in (proc.stdout or '').splitlines():
+            sys.stdout.write(f'[bump_version]   {line}\n')
+
+    # ---------------- 自检: 各处都必须体现新版本 ----------------
     problems = []
     if read_source_version(_read_text(init_path)) != new_version:
         problems.append(f'{INIT_REL} 未写入新版本')
@@ -298,12 +387,19 @@ def run(args: argparse.Namespace) -> int:
         if os.path.isfile(version_go_path) else None
     if m is None or m.group(1) != new_version:
         problems.append(f'{VERSION_GO_REL} 的 BuildVersion 不是 {new_version}')
+    if sync_available:
+        stale = stale_manifests(root, new_version)
+        if stale:
+            problems.append(
+                f'{len(stale)} 个内置库 pic.toml 的 version 不是 {new_version} '
+                f'(例如 {stale[0]})')
     if f'[{new_version}]' not in _read_text(changelog_path):
         problems.append(f'{CHANGELOG_REL} 未出现 [{new_version}]')
 
     if problems:
         _write_bytes(init_path, init_backup)
         _write_bytes(changelog_path, changelog_backup)
+        _restore_files(manifest_backup)
         sys.stderr.write('[bump_version] 错误: 自检失败, 已回滚文本改动 '
                          '(注意 Go 生成物可能已更新):\n')
         for p in problems:
@@ -312,7 +408,8 @@ def run(args: argparse.Namespace) -> int:
 
     sys.stdout.write(f'[bump_version] 完成: {current_version} -> {new_version}\n')
     sys.stdout.write('[bump_version] 下一步: 填写 CHANGELOG 小节内容, '
-                     '运行 python script/gen_native_isa.py --check 与 '
+                     '运行 python script/gen_native_isa.py --check、'
+                     'python script/sync_stdlib_packages.py --check 与 '
                      'python -m pytest tests/test_version.py\n')
     return 0
 
@@ -320,7 +417,8 @@ def run(args: argparse.Namespace) -> int:
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog='bump_version.py',
-        description='版本提升: codecin/__init__.py -> Go version_gen.go -> CHANGELOG.md')
+        description='版本提升: codecin/__init__.py -> Go version_gen.go '
+                    '-> 内置库 pic.toml -> CHANGELOG.md')
     p.add_argument('version', help='新版本号 (严格 x.y.z, 且必须大于当前版本)')
     p.add_argument('--dry-run', action='store_true',
                    help='只打印将要做的改动, 不写任何文件')
