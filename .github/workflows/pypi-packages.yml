@@ -1,0 +1,216 @@
+name: PyPI Packages
+
+# 构建并发布 codecin 到 GitHub Packages (仓库级 PyPI 注册表)。
+#
+# 与 release.yml 的区别:
+#   * release.yml 产出 GitHub Release 资产 (原生库以独立文件附带平台后缀);
+#   * 本工作流产出 *平台专用的 wheel*: 每个平台的 wheel 内部已打包对应架构的
+#     预编译原生库, 用户 `pip install` 后无需安装 Go 即可直接运行。
+#
+# 平台覆盖:
+#   * Windows x64
+#   * macOS ARM64 (Apple Silicon) + x64 (Intel)
+#   * Linux x64 + ARM64
+#     (GitHub 托管的 Linux runner 仅原生提供这两种架构; 若需 i686/ppc64le/
+#      s390x 等, 需用 QEMU + manylinux 容器另行扩展)
+#
+# 触发条件: 推送 v* tag / 发布 Release / 手动触发。
+
+on:
+  push:
+    tags: ['v*']
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-wheel:
+    name: 构建平台 wheel (${{ matrix.slug }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # 资产名 = wheel 平台标签 (plat-name), 必须与构建环境一致,
+          # 否则 pip 会拒绝在不匹配的平台上安装。
+          - os: windows-latest
+            slug: windows-x64
+            plat-name: win_amd64
+          - os: macos-15
+            slug: macos-arm64
+            plat-name: macosx_11_0_arm64
+          - os: macos-15-intel
+            slug: macos-x64
+            plat-name: macosx_11_0_x86_64
+          - os: ubuntu-latest
+            slug: linux-x64
+            plat-name: manylinux_2_17_x86_64.manylinux2014_x86_64
+          - os: ubuntu-24.04-arm
+            slug: linux-arm64
+            plat-name: manylinux_2_17_aarch64.manylinux2014_aarch64
+    steps:
+      # 本仓库无子模块 (文档站已迁至独立仓库 Code-CIN-Docs): 不要加 submodules。
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: codecin/native/go.mod
+          cache: true
+          # Go 模块在 codecin/native/ 下 (仓库根没有 go.mod), 不指定这一项时
+          # setup-go 会在仓库根找不到依赖文件并跳过缓存。
+          cache-dependency-path: codecin/native/go.mod
+
+      - name: 安装构建依赖
+        run: python -m pip install --upgrade pip setuptools wheel
+
+      - name: 校验内置标准库 pic 包结构
+        run: python script/sync_stdlib_packages.py --check
+
+      - name: 构建原生库
+        shell: bash
+        run: |
+          cd codecin/native
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            powershell -NoProfile -ExecutionPolicy Bypass -File build.ps1
+          else
+            sh build.sh
+          fi
+
+      - name: 清理旧产物
+        shell: bash
+        run: rm -rf dist build *.egg-info
+
+      - name: 构建平台 wheel (含预编译原生库)
+        env:
+          # 原生库已在上一步构建, 让 setup.py 的 build_py 直接复用,
+          # 不再重复调用 go build。
+          CODECIN_FORCE_REBUILD: "0"
+        run: python setup.py bdist_wheel --plat-name ${{ matrix.plat-name }}
+
+      - name: 校验 wheel 内容 (标准库 + 原生库)
+        shell: bash
+        run: |
+          python - <<'PY'
+          import glob
+          import sys
+          import zipfile
+
+          whl = sorted(glob.glob('dist/codecin-*.whl'))[-1]
+          names = zipfile.ZipFile(whl).namelist()
+          libs = [n for n in names
+                  if n.startswith('codecin/lib/') and n.endswith('.cin')]
+          bins = [n for n in names
+                  if n.endswith(('.so', '.dylib', '.dll'))]
+          print(f'wheel: {whl}')
+          print(f'内置标准库模块: {len(libs)} 个')
+          print(f'预编译原生库: {bins}')
+          assert len(libs) >= 19, f'{whl} 缺少内置标准库'
+          assert len(bins) == 1, \
+              f'{whl} 应恰好含一个预编译原生库, 实际: {bins}'
+          print('校验通过: 含内置标准库 + 预编译原生库')
+          PY
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: wheel-${{ matrix.slug }}
+          path: dist/*.whl
+          if-no-files-found: error
+
+  build-sdist:
+    name: 构建 sdist
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      # 本仓库无子模块: 不要加 submodules。
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+
+      - run: python -m pip install --upgrade pip build
+
+      - name: 校验内置标准库 pic 包结构
+        run: python script/sync_stdlib_packages.py --check
+
+      - name: 清理旧产物
+        run: rm -rf dist build *.egg-info
+
+      - name: 构建 sdist (不含预编译原生库)
+        # sdist 是源码包, 用户 `pip install` 时由 setup.py 现场编译原生库,
+        # 因此这里不打包任何预编译库。
+        env:
+          CODECIN_SKIP_NATIVE: "1"
+        run: python -m build --sdist
+
+      - name: 校验 sdist 内容
+        run: |
+          python - <<'PY'
+          import glob
+          import sys
+          import tarfile
+
+          sdist = sorted(glob.glob('dist/*.tar.gz'))[-1]
+          names = tarfile.open(sdist).getnames()
+          libs = [n for n in names
+                  if '/codecin/lib/' in n and n.endswith('.cin')]
+          bins = [n for n in names
+                  if n.endswith(('.so', '.dylib', '.dll'))]
+          print(f'sdist: {sdist}')
+          print(f'内置标准库模块: {len(libs)} 个')
+          assert len(libs) >= 19, f'{sdist} 缺少内置标准库'
+          assert not bins, f'{sdist} 不应携带预编译原生库: {bins}'
+          print('校验通过: 含内置标准库, 无预编译原生库')
+          PY
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: sdist
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  publish:
+    name: 发布到 GitHub Packages
+    needs: [build-wheel, build-sdist]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      packages: write
+    steps:
+      # 合并所有 wheel + sdist 到 dist/
+      - uses: actions/download-artifact@v7
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: 列出待发布产物
+        run: ls -lh dist/
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+
+      - name: 安装 twine
+        run: python -m pip install --upgrade twine
+
+      - name: twine 检查 (元数据完整性)
+        run: python -m twine check dist/*
+
+      - name: 发布到 GitHub Packages
+        run: python -m twine upload --repository-url https://upload.pkg.github.com/ dist/*
+        env:
+          TWINE_USERNAME: ${{ github.actor }}
+          TWINE_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
