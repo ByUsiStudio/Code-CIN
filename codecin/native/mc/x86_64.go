@@ -621,6 +621,9 @@ func Encode(p *ir.Program) ([]byte, error) {
 			if len(ins.Args) != 1 || ins.Args[0].Kind != "imm" {
 				return nil, fmt.Errorf("SYS: 需要立即数功能号")
 			}
+			if v := ins.Args[0].V; v >= 153 && v <= 156 {
+				return nil, ErrUnsupported{Op: fmt.Sprintf("SYS %d (UDP 未验证)", v)}
+			}
 			switch ins.Args[0].V {
 			case 24: // PRINT_STR: x0 指向 VM 内存里的 NUL 结尾字符串
 				e.raw(0x48, 0x8B, 0x34, 0x25); e.imm32(regAddr(0))
@@ -1173,9 +1176,8 @@ func Encode(p *ir.Program) ([]byte, error) {
 				e.raw(0x48, 0x03, 0x34, 0x25); e.imm32(regAddr(8))
 				e.loadReg(9); e.raw(0x48, 0x89, 0xC2)   // rdx = len
 				e.raw(0x45, 0x31, 0xD2)                 // r10 = 0
-				e.raw(0x4C, 0x89, 0xFF)                 // r8 = r15
-				e.raw(0x48, 0x03, 0x04, 0x25); e.imm32(regAddr(10))
-				e.raw(0x49, 0x89, 0xC0)                 // r8 += sa
+				e.raw(0x4D, 0x89, 0xF8)                 // r8 = r15
+				e.raw(0x4D, 0x03, 0x04, 0x25); e.imm32(regAddr(10)) // r8 += sa
 				e.raw(0x41, 0xB9); e.imm32(16)          // r9 = 16
 				e.raw(0xB8); e.imm32(44)                // sendto
 				e.raw(0x0F, 0x05)
