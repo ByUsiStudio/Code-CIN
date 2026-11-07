@@ -22,7 +22,7 @@
 
 **已知限制（后续目标）**
 - 未移除自带指令集：`.asm` / BIN / UCBC / `.crom` / VM / 内部 opcode IR 仍在。
-- Windows PE 直出未实现；AArch64 仅骨架（WSL 无 `qemu-aarch64`，只做结构校验）。
+- Windows PE 直出未实现；AArch64 仅骨架（只做结构校验）。
 - GUI / 音频 / 画布运行时未实现；HTTP / DNS 未实现。
 - 收尾发布不改变上述范围，后续按新目标继续。
 
