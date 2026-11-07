@@ -59,7 +59,7 @@ jobs:
           python script/gen_native_isa.py --check
           python script/sync_stdlib_packages.py --check
       - name: Lint (ruff, 项目统一使用 ruff 而非 flake8)
-        run: ruff check codecin cpu.py script tests registry
+        run: ruff check codecin script tests registry
       - name: 断言原生引擎确实可加载
         run: |
           python -c "from codecin import native; assert native.get_engine() is not None, \

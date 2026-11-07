@@ -82,6 +82,5 @@ aotout/
 /.*/
 !.github/*
 /更新计划.md
-
-# ====================== 其他 ======================
 *.exe
+!.github/workflows/pypi-packages.yml
