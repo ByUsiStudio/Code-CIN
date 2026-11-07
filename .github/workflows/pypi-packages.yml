@@ -135,12 +135,27 @@ jobs:
         shell: bash
         run: rm -rf dist build *.egg-info
 
-      - name: 构建平台 wheel (含预编译原生库)
+      - name: 构建 wheel (含预编译原生库)
         env:
           # 原生库已在上一步构建, 让 setup.py 的 build_py 直接复用,
           # 不再重复调用 go build。
           CODECIN_FORCE_REBUILD: "0"
-        run: python setup.py bdist_wheel --plat-name ${{ matrix.plat-name }}
+        # 使用 python -m build (PEP 517) 而非已弃用的 setup.py bdist_wheel。
+        # --no-isolation: 复用当前环境已安装的 setuptools/wheel, 加速构建。
+        run: python -m build --wheel --no-isolation
+
+      - name: 打上平台标签 (wheel tags)
+        # python -m build 产出的是 py3-none-any 通用 wheel;
+        # 这里用 wheel tags 把平台标签改成当前构建平台, 否则 pip 会在
+        # 不匹配的平台上拒绝安装。--remove 删除原始通用 wheel。
+        shell: bash
+        run: |
+          python -m wheel tags \
+            --platform-tag ${{ matrix.plat-name }} \
+            --python-tag py3 \
+            --abi-tag none \
+            --remove \
+            dist/codecin-*.whl
 
       - name: 校验 wheel 内容 (标准库 + 原生库)
         shell: bash
