@@ -195,59 +195,84 @@ def _apply_namespace(config: Config, ns: argparse.Namespace) -> None:
         config.log_level = 'DEBUG'
 
 
+def _find_cincc():
+    """定位 Go 原生编译器 cincc (Python 只负责调用)。"""
+    import shutil
+    explicit = os.environ.get("CODECIN_CINCC")
+    if explicit and os.path.isfile(explicit):
+        return explicit
+    here = os.path.dirname(os.path.abspath(__file__))
+    for name in ("cincc.exe", "cincc"):
+        candidate = os.path.join(here, "native", name)
+        if os.path.isfile(candidate):
+            return candidate
+    return shutil.which("cincc")
+
+
 def _run_native(ns: argparse.Namespace, console, program_file: str,
                 config) -> int:
-    """--native / --native-out: AST→C 直接原生编译 (不经过指令集)。"""
+    """--native / --native-out: 调用 Go 编译器 cincc 直接出机器码。"""
     import subprocess
     import tempfile
 
-    from . import nativegen
-    from .aot import AotError, parse_target
-    from .cbackend import CBackendError, c_target
-
-    try:
-        source = open(program_file, encoding='utf-8-sig').read()
-    except OSError as e:
-        console.print(Panel(str(e), title="Load Error", border_style='red'))
+    cincc = _find_cincc()
+    if cincc is None:
+        console.print(Panel(
+            "未找到 cincc (Go 机器码编译器)。先构建：\n"
+            "  cd codecin/native && go build -o cincc ./cmd/cincc",
+            title="Native Build Error", border_style="red"))
         return 1
 
     target = None
     if ns.build_target:
-        try:
-            goos, goarch = parse_target(ns.build_target)
-            target = c_target(goos, goarch)
-        except (AotError, CBackendError) as e:
-            console.print(Panel(str(e), title="Build Error", border_style='red'))
+        mapping = {"linux/amd64": "x86_64-linux",
+                   "linux/x86_64": "x86_64-linux"}
+        target = mapping.get(ns.build_target)
+        if target is None:
+            console.print(Panel(f"cincc 暂不支持目标 {ns.build_target}",
+                                title="Build Error", border_style="red"))
             return 1
 
     build_only = ns.native_out is not None
     if build_only:
-        out = ns.native_out
-        if not out:
-            out = os.path.splitext(program_file)[0] + '.exe'
+        out = ns.native_out or (os.path.splitext(program_file)[0] + ".exe")
     else:
-        tmpdir = tempfile.mkdtemp(prefix='.native-')
+        tmpdir = tempfile.mkdtemp(prefix=".native-")
         out = os.path.join(tmpdir, os.path.splitext(
             os.path.basename(program_file))[0])
 
-    try:
-        built = nativegen.compile_native(source, out, filename=program_file,
-                                         target=target,
-                                         optimize=max(0, int(config.optimize)))
-    except (nativegen.NativeGenError, toolchain_error()) as e:
-        console.print(Panel(str(e), title="Native Build Error",
-                            border_style='red'))
+    cmd = [cincc, "-o", out, program_file]
+    if target:
+        cmd += ["-target", target]
+    proc = subprocess.run(cmd, capture_output=True, text=True,
+                           encoding="utf-8", errors="replace")
+    if proc.returncode != 0:
+        console.print(Panel((proc.stderr or proc.stdout).strip(),
+                            title="Native Build Error", border_style="red"))
         return 1
 
     if build_only:
-        console.print(Colors.colorize(f"Built native: {built}", Colors.GREEN))
+        console.print(Colors.colorize(f"Built native: {out}", Colors.GREEN))
         return 0
 
+    argv = [out] + list(config.program_args)
+    if os.name == "nt" and target != "x86_64-windows":
+        import shutil as _shutil
+        wsl = _shutil.which("wsl")
+        if not wsl:
+            console.print(Panel(
+                "产物是 Linux ELF，Windows 无法直接运行。\n"
+                "用 --native-out 保留产物并在 WSL/Linux 中执行，或安装 WSL。",
+                title="Run Error", border_style="red"))
+            return 1
+        drive = out[0].lower()
+        wsl_path = "/mnt/" + drive + out[2:].replace("\\", "/")
+        argv = [wsl, "-e", wsl_path] + list(config.program_args)
     try:
-        proc = subprocess.run([built] + list(config.program_args))
-        return int(proc.returncode)
+        run = subprocess.run(argv)
+        return int(run.returncode)
     except OSError as e:
-        console.print(Panel(str(e), title="Run Error", border_style='red'))
+        console.print(Panel(str(e), title="Run Error", border_style="red"))
         return 1
 
 

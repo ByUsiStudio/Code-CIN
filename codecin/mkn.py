@@ -511,24 +511,43 @@ def cmd_build(args) -> int:
     return 0
 
 
+def _cincc_path() -> str:
+    """定位 Go 机器码编译器 cincc。"""
+    explicit = os.environ.get("CODECIN_CINCC")
+    if explicit and os.path.isfile(explicit):
+        return explicit
+    here = os.path.dirname(os.path.abspath(__file__))
+    for name in ("cincc.exe", "cincc"):
+        candidate = os.path.join(here, "native", name)
+        if os.path.isfile(candidate):
+            return candidate
+    found = shutil.which("cincc")
+    if found:
+        return found
+    raise MknError(
+        "未找到 cincc (Go 机器码编译器)。先构建：\n"
+        "  cd codecin/native && go build -o cincc ./cmd/cincc")
+
+
 def _build_native_project(project: MknManifest, args) -> int:
-    """``mkn build --native``: 直接 AST→C 原生编译, 不产生指令流/字节码。"""
-    from . import nativegen
+    """``mkn build --native``: 调用 cincc 直接出机器码 (不经 C/字节码)。"""
+    import subprocess
 
     entry = project.entry_path
     if not entry.lower().endswith('.cin'):
         raise MknError('mkn build --native 目前只支持 .cin 入口')
-    try:
-        with open(entry, encoding='utf-8-sig') as f:
-            source = f.read()
-    except OSError as e:
-        raise MknError(f'读取入口失败: {e}') from e
     out = args.output or os.path.join(
         project.target_dir, f'{project.name}-{project.version}')
-    optimize = 2 if args.release else int(args.optimize or 0)
-    built = nativegen.compile_native(source, out, filename=entry,
-                                     optimize=optimize)
-    print(f'Built native {project.name} {project.version}: {built}')
+    os.makedirs(os.path.dirname(out) or '.', exist_ok=True)
+    cmd = [_cincc_path(), '-o', out, entry]
+    target = getattr(args, 'build_target', None)
+    if target:
+        cmd += ['-target', target]
+    proc = subprocess.run(cmd, capture_output=True, text=True,
+                          encoding='utf-8', errors='replace')
+    if proc.returncode != 0:
+        raise MknError((proc.stderr or proc.stdout).strip())
+    print(f'Built native {project.name} {project.version}: {out}')
     return 0
 
 

@@ -1,3 +1,5 @@
+"""LEGACY: CIN AST -> C 的后端。编译器入口已切到 Go 的 cincc（直接出机器码），
+本模块仅保留给 --build-backend 的 C 路径与历史测试，不再由 CLI/mkn 调用。"""
 """直接 AST → C 的原生代码生成（不经过 UCPU 指令集）。
 
 这是「移除自带指令集」迁移的第 0 阶段：把 CIN 源码解析成 AST 后，直接生成 C
