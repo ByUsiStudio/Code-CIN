@@ -21,7 +21,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, "用法: cincc -o <out> <prog.cin>")
 		os.Exit(2)
 	}
-	if *target != "x86_64-linux" {
+	if *target != "x86_64-linux" && *target != "aarch64-linux" {
 		fmt.Fprintf(os.Stderr, "cincc: 暂不支持目标 %s\n", *target)
 		os.Exit(2)
 	}
@@ -30,22 +30,33 @@ func main() {
 		fmt.Fprintf(os.Stderr, "cincc: %v\n", err)
 		os.Exit(1)
 	}
-	prog, err := compiler.Compile(string(src), flag.Arg(0), false)
+	prog, err := compiler.CompileFile(flag.Arg(0), "")
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "cincc: 编译失败: %v\n", err)
-		os.Exit(1)
+		prog, err = compiler.Compile(string(src), flag.Arg(0), false)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "cincc: 编译失败: %v\n", err)
+			os.Exit(1)
+		}
 	}
 	if *verbose {
 		for i, ins := range prog.Instructions {
 			fmt.Printf("%3d %-6s %v\n", i, ins.Op, ins.Args)
 		}
 	}
-	code, err := mc.Encode(prog)
+	var code []byte
+	if *target == "aarch64-linux" {
+		code, err = mc.EncodeAArch64(prog)
+	} else {
+		code, err = mc.Encode(prog)
+	}
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "cincc: %v\n", err)
 		os.Exit(1)
 	}
 	img := mc.WrapELF(prog, code)
+	if *target == "aarch64-linux" {
+		img = mc.WrapAArch64ELF(prog, code)
+	}
 	if err := os.WriteFile(*out, img, 0o755); err != nil {
 		fmt.Fprintf(os.Stderr, "cincc: 写出失败: %v\n", err)
 		os.Exit(1)

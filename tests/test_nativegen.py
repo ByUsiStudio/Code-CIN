@@ -35,6 +35,196 @@ SIMPLE = ('function main() -> int {\n'
           '}\n')
 
 
+CASE = ('function main() -> int {\n'
+        '    println(upper("ab cd"))\n'
+        '    println(lower("XY Z"))\n'
+        '    return 0\n'
+        '}\n')
+
+
+CONV = ('function main() -> int {\n'
+        '    println(atoi("123") + 1)\n'
+        '    println(atoi("-45"))\n'
+        '    println(true)\n'
+        '    return 0\n'
+        '}\n')
+
+
+IDX = ('function main() -> int {\n'
+       '    println(indexof("hello world", "world"))\n'
+       '    println(indexof("hello", "zz"))\n'
+       '    return 0\n'
+       '}\n')
+
+
+RAND = ('function main() -> int {\n'
+        '    srand(7)\n'
+        '    println(rand())\n'
+        '    srand(7)\n'
+        '    println(rand())\n'
+        '    println(time() > 0)\n'
+        '    return 0\n'
+        '}\n')
+
+
+TRIM = ('function main() -> int {\n'
+        '    println("[" + trim("  x  ") + "]")\n'
+        '    println("[" + ltrim("  y  ") + "]")\n'
+        '    println("[" + rtrim("  z  ") + "]")\n'
+        '    return 0\n'
+        '}\n')
+
+
+FILEIO = ('function main() -> int {\n'
+          '    file_write("/tmp/cin_io_test.txt", "hello")\n'
+          '    println(file_read("/tmp/cin_io_test.txt"))\n'
+          '    return 0\n'
+          '}\n')
+
+
+FS = ('function main() -> int {\n'
+      '    file_write("/tmp/cin_fs_test.txt", "abc")\n'
+      '    println(file_exists("/tmp/cin_fs_test.txt"))\n'
+      '    println(file_size("/tmp/cin_fs_test.txt"))\n'
+      '    file_delete("/tmp/cin_fs_test.txt")\n'
+      '    println(file_exists("/tmp/cin_fs_test.txt"))\n'
+      '    return 0\n'
+      '}\n')
+
+
+NET = ('function main() -> int {\n'
+      '    int fd = tcp_dial("127.0.0.1", 46123)\n'
+      '    tcp_send(fd, "ping", 4)\n'
+      '    int buf[64]\n'
+      '    int n = tcp_recv(fd, buf, 64)\n'
+      '    println(n)\n'
+      '    println(buf[0])\n'
+      '    tcp_close(fd)\n'
+      '    return 0\n'
+      '}\n')
+
+SRV = ('import socket\n'
+       's = socket.socket()\n'
+       's.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)\n'
+       's.bind(("127.0.0.1", 46123))\n'
+       's.listen(1)\n'
+       'c, _ = s.accept()\n'
+       'd = c.recv(64)\n'
+       'c.sendall(d.upper())\n'
+       'c.close()\n'
+       's.close()\n')
+
+
+@pytest.mark.skipif(os.name != "nt", reason="需要 WSL 运行 ELF")
+def test_cincc_tcp_against_echo_server(workdir):
+    import shutil
+    import subprocess
+
+    wsl = shutil.which("wsl")
+    if not wsl:
+        pytest.skip("WSL 不可用")
+    src = os.path.join(workdir, "net.cin")
+    with open(src, "w", encoding="utf-8") as f:
+        f.write(NET)
+    with open(os.path.join(workdir, "srv.py"), "w", encoding="utf-8") as f:
+        f.write(SRV)
+    built = os.path.join(workdir, "netapp")
+    assert cli.main([src, "--native-out", built, "--log-level", "ERROR"]) == 0
+    base = "/mnt/" + built[0].lower() + built[2:].replace("\\", "/")
+    d = base.rsplit("/", 1)[0]
+    script = (f"cd '{d}' && (python3 srv.py &) ; sleep 1; "
+              f"'{base}'; echo rc=$?")
+    out = subprocess.run([wsl, "-e", "sh", "-c", script],
+                         capture_output=True, text=True)
+    assert "4" in out.stdout
+    assert "1196312912" in out.stdout
+
+
+SYSCALLS = ('function main() -> int {\n'
+            '    int t0 = time_ms()\n'
+            '    sleep_ms(120)\n'
+            '    println(time_ms() - t0 >= 100)\n'
+            '    chdir("/tmp")\n'
+            '    println(cwd() == "/tmp")\n'
+            '    return 0\n'
+            '}\n')
+
+
+@pytest.mark.skipif(_compiler() is None, reason='本机没有可用的 C 编译器')
+def test_cincc_time_and_dir_syscalls(workdir, capfd):
+    src = os.path.join(workdir, 'sys.cin')
+    with open(src, 'w', encoding='utf-8') as f:
+        f.write(SYSCALLS)
+    assert cli.main([src, '--native', '--log-level', 'ERROR']) == 0
+    assert capfd.readouterr().out.replace('\r\n', '\n') == 'true\ntrue\n'
+
+
+@pytest.mark.skipif(_compiler() is None, reason='本机没有可用的 C 编译器')
+def test_cincc_file_metadata(workdir, capfd):
+    src = os.path.join(workdir, 'fs.cin')
+    with open(src, 'w', encoding='utf-8') as f:
+        f.write(FS)
+    assert cli.main([src, '--native', '--log-level', 'ERROR']) == 0
+    assert capfd.readouterr().out.replace('\r\n', '\n') == '1\n3\n0\n'
+
+
+@pytest.mark.skipif(_compiler() is None, reason='本机没有可用的 C 编译器')
+def test_cincc_file_io(workdir, capfd):
+    src = os.path.join(workdir, 'fio.cin')
+    with open(src, 'w', encoding='utf-8') as f:
+        f.write(FILEIO)
+    assert cli.main([src, '--native', '--log-level', 'ERROR']) == 0
+    assert capfd.readouterr().out.replace('\r\n', '\n') == 'hello\n'
+
+
+@pytest.mark.skipif(_compiler() is None, reason='本机没有可用的 C 编译器')
+def test_cincc_trim_family(workdir, capfd):
+    src = os.path.join(workdir, 'trim.cin')
+    with open(src, 'w', encoding='utf-8') as f:
+        f.write(TRIM)
+    assert cli.main([src, '--native', '--log-level', 'ERROR']) == 0
+    assert capfd.readouterr().out.replace('\r\n', '\n') == '[x]\n[y  ]\n[  z]\n'
+
+
+@pytest.mark.skipif(_compiler() is None, reason='本机没有可用的 C 编译器')
+def test_cincc_time_and_rand(workdir, capfd):
+    src = os.path.join(workdir, 'rnd.cin')
+    with open(src, 'w', encoding='utf-8') as f:
+        f.write(RAND)
+    assert cli.main([src, '--native', '--log-level', 'ERROR']) == 0
+    lines = capfd.readouterr().out.replace('\r\n', '\n').split('\n')
+    assert lines[0] == lines[1]
+    assert int(lines[0]) >= 0
+    assert lines[2] == 'true'
+
+
+@pytest.mark.skipif(_compiler() is None, reason='本机没有可用的 C 编译器')
+def test_cincc_indexof(workdir, capfd):
+    src = os.path.join(workdir, 'idx.cin')
+    with open(src, 'w', encoding='utf-8') as f:
+        f.write(IDX)
+    assert cli.main([src, '--native', '--log-level', 'ERROR']) == 0
+    assert capfd.readouterr().out.replace('\r\n', '\n') == '6\n-1\n'
+
+
+@pytest.mark.skipif(_compiler() is None, reason='本机没有可用的 C 编译器')
+def test_cincc_atoi_and_bool(workdir, capfd):
+    src = os.path.join(workdir, 'conv.cin')
+    with open(src, 'w', encoding='utf-8') as f:
+        f.write(CONV)
+    assert cli.main([src, '--native', '--log-level', 'ERROR']) == 0
+    assert capfd.readouterr().out.replace('\r\n', '\n') == '124\n-45\ntrue\n'
+
+
+@pytest.mark.skipif(_compiler() is None, reason='本机没有可用的 C 编译器')
+def test_cincc_case_conversion(workdir, capfd):
+    src = os.path.join(workdir, 'case.cin')
+    with open(src, 'w', encoding='utf-8') as f:
+        f.write(CASE)
+    assert cli.main([src, '--native', '--log-level', 'ERROR']) == 0
+    assert capfd.readouterr().out.replace('\r\n', '\n') == 'AB CD\nxy z\n'
+
+
 @pytest.mark.skipif(_compiler() is None, reason='本机没有可用的 C 编译器')
 def test_cli_native_runs_via_cincc(workdir, capfd):
     src = os.path.join(workdir, 'simple.cin')
@@ -83,7 +273,62 @@ def test_mkn_build_native_via_cincc(workdir, monkeypatch):
         assert out.stdout.strip() == '42'
 
 
-@pytest.mark.skip(reason="cincc 多文件/import 路径尚未验证")
+FUNCS = ('function add(int x, int y) -> int { return x + y }\n'
+         'function main() -> int {\n'
+         '    int s = 0\n'
+         '    for (int i = 1; i <= 5; i = i + 1) { s = s + i }\n'
+         '    if (s > 10) { println(add(s, 0)) } else { println(0) }\n'
+         '    return 0\n'
+         '}\n')
+
+
+@pytest.mark.skipif(_compiler() is None, reason='本机没有可用的 C 编译器')
+def test_cincc_functions_and_loops(workdir, capfd):
+    src = os.path.join(workdir, 'funcs.cin')
+    with open(src, 'w', encoding='utf-8') as f:
+        f.write(FUNCS)
+    assert cli.main([src, '--native', '--log-level', 'ERROR']) == 0
+    assert capfd.readouterr().out.replace('\r\n', '\n') == '15\n'
+
+
+MIXED = ('struct P { int x int y }\n'
+         'function main() -> int {\n'
+         '    string a = "ab"\n'
+         '    string b = "cd"\n'
+         '    println(a + b)\n'
+         '    P p\n'
+         '    p.x = 3\n'
+         '    p.y = 4\n'
+         '    println(p.x + p.y)\n'
+         '    return 0\n'
+         '}\n')
+
+
+@pytest.mark.skipif(_compiler() is None, reason='本机没有可用的 C 编译器')
+def test_cincc_string_concat_and_struct(workdir, capfd):
+    src = os.path.join(workdir, 'mixed.cin')
+    with open(src, 'w', encoding='utf-8') as f:
+        f.write(MIXED)
+    assert cli.main([src, '--native', '--log-level', 'ERROR']) == 0
+    assert capfd.readouterr().out.replace('\r\n', '\n') == 'abcd\n7\n'
+
+
+STRS = ('function main() -> int {\n'
+        '    println(substr("hello world", 6, 5))\n'
+        '    println(strcmp("a", "b"))\n'
+        '    return 0\n'
+        '}\n')
+
+
+@pytest.mark.skipif(_compiler() is None, reason='本机没有可用的 C 编译器')
+def test_cincc_substr_and_strcmp(workdir, capfd):
+    src = os.path.join(workdir, 'strs.cin')
+    with open(src, 'w', encoding='utf-8') as f:
+        f.write(STRS)
+    assert cli.main([src, '--native', '--log-level', 'ERROR']) == 0
+    assert capfd.readouterr().out.replace('\r\n', '\n') == 'world\n-1\n'
+
+
 def test_import_closure_multi_file(workdir, capfd):
     with open(os.path.join(workdir, 'util.cin'), 'w', encoding='utf-8') as f:
         f.write('function double_it(int x) -> int { return x * 2 }\n')
