@@ -115,6 +115,51 @@ SRV = ('import socket\n'
        's.close()\n')
 
 
+UDP = ('function main() -> int {\n'
+      '    int fd = udp_open(0)\n'
+      '    int sent = udp_sendto(fd, "127.0.0.1", 46203, "ping", 4)\n'
+      '    int buf[64]\n'
+      '    int n = udp_recvfrom(fd, buf, 64, 0)\n'
+      '    println(sent)\n'
+      '    println(n)\n'
+      '    println(buf[0])\n'
+      '    udp_close(fd)\n'
+      '    return 0\n'
+      '}\n')
+
+UDP_SRV = ('import socket\n'
+           's = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)\n'
+           's.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)\n'
+           's.bind(("127.0.0.1", 46203))\n'
+           'data, addr = s.recvfrom(64)\n'
+           's.sendto(data.upper(), addr)\n'
+           's.close()\n')
+
+
+@pytest.mark.skipif(os.name != "nt", reason="需要 WSL 运行 ELF")
+def test_cincc_udp_against_echo_server(workdir):
+    import shutil
+    import subprocess
+
+    wsl = shutil.which("wsl")
+    if not wsl:
+        pytest.skip("WSL 不可用")
+    src = os.path.join(workdir, "udp.cin")
+    with open(src, "w", encoding="utf-8") as f:
+        f.write(UDP)
+    with open(os.path.join(workdir, "srv.py"), "w", encoding="utf-8") as f:
+        f.write(UDP_SRV)
+    built = os.path.join(workdir, "udpapp")
+    assert cli.main([src, "--native-out", built, "--log-level", "ERROR"]) == 0
+    base = "/mnt/" + built[0].lower() + built[2:].replace("\\", "/")
+    d = base.rsplit("/", 1)[0]
+    script = (f"cd '{d}' && (python3 srv.py &) ; sleep 1; timeout 5 '{base}'; "
+              f"echo rc=$?")
+    out = subprocess.run([wsl, "-e", "sh", "-c", script],
+                         capture_output=True, text=True)
+    assert "1196312912" in out.stdout
+
+
 @pytest.mark.skipif(os.name != "nt", reason="需要 WSL 运行 ELF")
 def test_cincc_tcp_against_echo_server(workdir):
     import shutil
@@ -148,6 +193,22 @@ SYSCALLS = ('function main() -> int {\n'
             '    println(cwd() == "/tmp")\n'
             '    return 0\n'
             '}\n')
+
+
+OSINFO = ('function main() -> int {\n'
+          '    println(os_name())\n'
+          '    println(temp_dir())\n'
+          '    return 0\n'
+          '}\n')
+
+
+@pytest.mark.skipif(_compiler() is None, reason='本机没有可用的 C 编译器')
+def test_cincc_os_info(workdir, capfd):
+    src = os.path.join(workdir, 'os.cin')
+    with open(src, 'w', encoding='utf-8') as f:
+        f.write(OSINFO)
+    assert cli.main([src, '--native', '--log-level', 'ERROR']) == 0
+    assert capfd.readouterr().out.replace('\r\n', '\n') == 'linux\n/tmp\n'
 
 
 @pytest.mark.skipif(_compiler() is None, reason='本机没有可用的 C 编译器')

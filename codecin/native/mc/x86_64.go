@@ -621,9 +621,6 @@ func Encode(p *ir.Program) ([]byte, error) {
 			if len(ins.Args) != 1 || ins.Args[0].Kind != "imm" {
 				return nil, fmt.Errorf("SYS: 需要立即数功能号")
 			}
-			if v := ins.Args[0].V; v >= 153 && v <= 156 {
-				return nil, ErrUnsupported{Op: fmt.Sprintf("SYS %d (UDP 未验证)", v)}
-			}
 			switch ins.Args[0].V {
 			case 24: // PRINT_STR: x0 指向 VM 内存里的 NUL 结尾字符串
 				e.raw(0x48, 0x8B, 0x34, 0x25); e.imm32(regAddr(0))
@@ -1010,7 +1007,7 @@ func Encode(p *ir.Program) ([]byte, error) {
 				// 解析点分 IPv4
 				e.raw(0x4C, 0x89, 0xFE); e.raw(0x48, 0x03, 0x34, 0x25); e.imm32(regAddr(7))
 				e.raw(0x45, 0x31, 0xC9)       // xor r9d, r9d (octet 索引)
-				e.raw(0x45, 0x31, 0xC0)       // xor r8d, r8d (累加)
+				e.raw(0x31, 0xC0)             // xor eax, eax (累加)
 				ipLoop := len(e.code)
 				e.raw(0x0F, 0xB6, 0x0E)       // movzx ecx, [rsi]
 				e.raw(0x84, 0xC9)             // test cl, cl
@@ -1148,7 +1145,7 @@ func Encode(p *ir.Program) ([]byte, error) {
 				e.raw(0x4C, 0x89, 0xFE)
 				e.raw(0x48, 0x03, 0x34, 0x25); e.imm32(regAddr(1))
 				e.raw(0x45, 0x31, 0xC9)
-				e.raw(0x45, 0x31, 0xC0)
+				e.raw(0x31, 0xC0)
 				ipLoop2 := len(e.code)
 				e.raw(0x0F, 0xB6, 0x0E)
 				e.raw(0x84, 0xC9)
@@ -1199,6 +1196,23 @@ func Encode(p *ir.Program) ([]byte, error) {
 				e.raw(0xB8); e.imm32(3)
 				e.raw(0x0F, 0x05)
 				e.storeReg(0)
+			case 63: // OSNAME -> "linux"
+				e.raw(0x48, 0xC7, 0xC0); e.imm32(6)
+				e.storeReg(0)
+				e.emitMalloc()
+				e.loadReg(0)
+				e.raw(0x4C, 0x89, 0xFF); e.raw(0x48, 0x01, 0xC7)
+				e.raw(0xC7, 0x07); e.imm32(0x756E696C) // "linu"
+				e.raw(0xC6, 0x47, 0x04, 0x78)          // 'x'
+				e.raw(0xC6, 0x47, 0x05, 0x00)
+			case 89: // TEMPDIR -> "/tmp"
+				e.raw(0x48, 0xC7, 0xC0); e.imm32(5)
+				e.storeReg(0)
+				e.emitMalloc()
+				e.loadReg(0)
+				e.raw(0x4C, 0x89, 0xFF); e.raw(0x48, 0x01, 0xC7)
+				e.raw(0xC7, 0x07); e.imm32(0x706D742F) // "/tmp"
+				e.raw(0xC6, 0x47, 0x04, 0x00)
 			case 25: // STRCONCAT: R0 = R0 + R1
 				e.loadReg(0); e.storeReg(7)
 				e.loadReg(1); e.storeReg(8)

@@ -5,6 +5,232 @@
 
 ---
 
+## [7.22.10] - 2026-11-07
+
+### 发布说明 (Release 7.22.10)
+
+本次为**收尾发布**：把 Code CIN 的编译主线锁定为「CIN → Go 编译器 →
+目标机器码（不经 C、不经字节码）」，Python 只保留 CLI 与日志。
+
+**亮点**
+- `.sdgcc` 成为默认产物，兼容读取旧 BIN v3，`cvm` 默认多文件（读 `mkn.toml`）。
+- `cincc`（Go）直出 x86-64 ELF，已在 WSL 实测覆盖：控制台、字符串全套、
+  数组/struct/全局、分支与循环、函数与实参、多文件 `import`、`malloc`、
+  时间/随机/休眠、文件与目录、`cwd/chdir/os_name/temp_dir`、**TCP 与 UDP**。
+- Python 侧 `codecin --native`、`mkn build --native` 均改为调用 `cincc`。
+- 全部测试：Python `91 passed`，`go test ./mc` 通过，`go vet` 干净。
+
+**已知限制（后续目标）**
+- 未移除自带指令集：`.asm` / BIN / UCBC / `.crom` / VM / 内部 opcode IR 仍在。
+- Windows PE 直出未实现；AArch64 仅骨架（WSL 无 `qemu-aarch64`，只做结构校验）。
+- GUI / 音频 / 画布运行时未实现；HTTP / DNS 未实现。
+- 收尾发布不改变上述范围，后续按新目标继续。
+
+
+### 变更 (Changed)
+
+- **版本号统一为 7.22.10**：`codecin/__init__.py` 的 `__version__` 与
+  `codecin/native/engine/version_gen.go` 的 `BuildVersion` 同步（此前
+  Python 侧仍是 7.0.0，导致 `test_version` 反复失败）。
+- **A-10（函数与分支打通）**：x86-64 后端把 `PUSH/POP` 改到 **VM 栈**
+  （`R32` 相对），`CALL` 在 VM 栈压返回槽、`RET` 弹出，使 CIN 的实参
+  传递与帧偏移对齐；新增 `CMP reg,reg` 与条件分支 `B label, cond`
+  （`EQ/NE/LT/LE/GT/GE`，基于 ZF/LF 标志字节）。
+  WSL 实测：`add(2,3)` 输出 `5`；`if (x>3) ... else ...` 输出 `big`。
+- **A-11（内存分配与 struct）**：新增 `SYS 20`（MALLOC，bump allocator，
+  堆顶存于 `dataBase+0x480`）、`SYS 16`（STRLEN）；`struct` 字段读写因此
+  可用。WSL 实测：`p.x=3; p.y=4; println(p.x+p.y)` 输出 `7`；
+  `hello`/字符串变量/整数输出均回归通过。
+  字符串拼接 `SYS 25` 曾尝试实现，但因**静态字符串在 ELF 数据段、堆字符串
+  在 mmap 区**（两套地址空间）而输出为空，已**回退为明确报错**
+  `SYS 25 (STRCONCAT)`，待把静态数据统一搬进 VM 内存后再启用。
+- **A-12（地址空间统一，拼接打通）**：入口处把 `DataWrites` 搬进 VM 内存
+  （`rsi`=ELF 数据段, `rdi`=r15+addr——上一轮方向写反导致字符串被清零），
+  `PRINT_STR`/`OUT`/`ITOA` 全部改用 `r15 + addr`，并启用 `SYS 25`
+  （STRCONCAT）。WSL 实测：`"ab" + "cd"` → `abcd`；`hello`/字符串变量/
+  整数/struct 全部回归通过，并新增对应回归用例。
+- **A-13（字符串函数）**：新增 `SYS 17`（STRCMP，逐字节比较返回符号差）
+  与 `SYS 28`（SUBSTR，`R0=str,R1=start,R2=len`，malloc 后 `rep movsb` 复制
+  并补 NUL）。WSL 实测：`substr("hello world",6,5)` → `world`；
+  `strcmp("a","b")` → `-1`。
+- **A-14（多文件打通）**：`cincc` 改用 `compiler.CompileFile`（失败再退回
+  单文件 `Compile`），因此 `import "./util.cin"` 的闭包会被展开进同一编译
+  单元。WSL 实测：`import` + `double_it(21)` → `42`；此前被 skip 的
+  多文件用例已启用并通过（`16 passed`，无 skip）。
+- **A-15（大小写转换）**：新增 `SYS 30`（TOUPPER）/`SYS 31`（TOLOWER），
+  共享 `emitCaseConv`（strlen → malloc → 逐字节按区间 ±0x20 → 补 NUL）。
+  WSL 实测：`upper("ab cd")` → `AB CD`，`lower("XY Z")` → `xy z`。
+- **A-16（数值/布尔转换）**：新增 `SYS 35`（ATOI，支持负号与十进制累加）
+  与 `SYS 26`（BOOLSTR，`malloc` 后写入 `true`/`false`）。WSL 实测：
+  `atoi("123")+1` → `124`，`atoi("-45")` → `-45`，`println(true)` → `true`。
+- **A-17（子串查找）**：新增 `SYS 29`（INDEXOF，双指针嵌套循环，
+  找到返回下标、否则 `-1`，空子串返回 0）。WSL 实测：
+  `indexof("hello world","world")` → `6`，`indexof("hello","zz")` → `-1`。
+- **A-18（时间与随机）**：新增 `SYS 15`（TIME，`time(201)` 系统调用）、
+  `SYS 13/14`（RAND/SRAND，xorshift64 状态存 `dataBase+0x488`，输出取
+  低 31 位非负）。WSL 实测：同种子两次 `rand()` 结果一致，`time() > 0`
+  为 `true`。
+- **A-19（空白裁剪）**：新增 `SYS 36/37/38`（TRIM/LTRIM/RTRIM），
+  左右指针收缩 + `malloc` 复制。修掉一个真实缺陷：`emitMalloc` 会破坏
+  `rcx`，导致复制长度丢失、裁剪无效——改为先把长度存到 `R9` 再重载。
+  WSL 实测：`"[  x  ]"` → `[x]`、`[y  ]`、`[  z]`。
+- **A-20（AArch64 起点）**：新增 `codecin/native/mc/aarch64.go`：
+  AArch64 指令编码（`movz/movk/ldr/str/add/sub/mov/svc`）与 `AArch64 ELF64`
+  写出（`e_machine=0xB7`），`cincc -target aarch64-linux` 已接线。
+  当前覆盖 `MOV/ADD/SUB/OUT(str)/HALT`；**只能做结构校验**——WSL 无
+  `qemu-aarch64` 且 `sudo` 需密码无法安装，尚未真实执行验证；`CALL/RET`
+  等更完整覆盖待后续补齐。
+- **A-21（文件 I/O）**：新增 `SYS 52`（FILEWRITE：`open(O_CREAT|TRUNC)` →
+  `write` → `close`）与 `SYS 51`（FILEREAD：分配 64 KiB 缓冲 → `open` →
+  `read` → 补 NUL → `close`）。WSL 实测：写入 `t.txt` 再读回 → `hello`。
+- **A-22（文件元信息）**：新增 `SYS 54`（FILEEXISTS，`access(F_OK)`）、
+  `SYS 56`（FILESIZE，`open`+`lseek(SEEK_END)`+`close`）、`SYS 55`
+  （FILEDELETE，`unlink`）、`SYS 57`（MKDIR，`mkdir(0755)`）。
+  WSL 实测：写文件 → `exists=1`、`size=3` → 删除 → `exists=0`。
+- **A-23（TCP 网络）**：新增 `SYS 147`（TCPDIAL，点分 IPv4 解析 + `socket`/
+  `connect`）、`SYS 148`（TCPSEND，`write`）、`SYS 149`（TCPRECV，`read`）、
+  `SYS 150`（TCPCLOSE）。WSL 实测：本地 echo 服务器（Python）收到 `ping`
+  回 `PING`，CIN 侧打印 `n=4`、`buf[0]=1196312912`（即 `PING` 的小端整数），
+  已固化为回归用例。
+- **A-24（时间/目录系统调用）**：新增 `SYS 91`（TIMEMS，`clock_gettime` +
+  毫秒换算）、`SYS 92`（SLEEPMS，`nanosleep`）、`SYS 66`（CWD，`getcwd`）、
+  `SYS 90`（CHDIR，`chdir`）。修掉两处把 `mov rdi,r15` 误写成
+  `mov rsi,r15` 的缺陷（cwd/chdir 因此拿到野指针）。WSL 实测：
+  `sleep_ms(120)` 后时间差 `>= 100` 为 true，`chdir("/tmp")` 后
+  `cwd() == "/tmp"` 为 true。
+- **A-25（UDP：部分完成，已停用）**：实现 `SYS 153/154/155/156`
+  （udp_open/sendto/recvfrom/close）。修掉一处 `mov r8,r15` 误写成
+  `mov rdi,r15` 的错误后，`udp_sendto` 已能返回 4（发送成功）；但与本地
+  UDP echo 服务器的**往返**在测试中超时未返回，未能稳定验证，
+  因此已把这四个 syscall **统一改为明确报错**
+  （`SYS 153 (UDP 未验证)`），避免产出会阻塞的二进制。
+  **补充定位（第二轮尝试）**：加了服务器端日志后确认——客户端 `sendto`
+  返回 4，但服务器**从未收到数据报**，说明 sockaddr 的目标地址/端口组装
+  有误（family/port/IP 写入位置或字节序），而不是接收端问题；因 WSL 内
+  无 `strace/gdb`，无法继续逐指令核对，保持停用状态。
+- **A-26（UDP 修复并打通）**：**根因找到**——UDP 的 IPv4 解析循环累加器是
+  `eax`，但初始化时清零的是 `r8d`（`xor r8d,r8d`），导致 `sin_addr`
+  由残值算出错误地址，数据报被发往别处（`sendto` 仍返回 4）。
+  改为 `xor eax,eax` 后 WSL 实测：`sent=4`、`n=4`、`buf[0]=1196312912`
+  （`PING` 小端整数），UDP 往返成功并加入回归用例。
+- **A-27（系统信息）**：新增 `SYS 63`（OSNAME → `linux`）与 `SYS 89`
+  （TEMPDIR → `/tmp`），均由 `malloc` 写入常量串。WSL 实测输出
+  `linux` / `/tmp`。全量回归：Python `90 passed`（nativegen/cli/mkn/
+  version/sdgcc）+ `go test ./mc`。
+
+- **编译后端迁移到 Go 直出机器码（阶段 A-1）**：新增 `codecin/native/mc`
+  （IR → x86-64 指令编码 + ELF64 写出）与 `codecin/native/cmd/cincc`
+  （`cincc -o out prog.cin`）。产物**不经过 C 编译器、不经过 UCBC 字节码**，
+  Python 不参与编译；已验证 Go 生成的 ELF 在 WSL 中真实执行
+  （`MOV R0,42; HALT` → 进程退出码 42）。当前覆盖 `MOV/ADD/SUB/HALT`，
+  其余指令返回明确的 `x86-64 后端暂不支持指令: X`，下一步补
+  `CMP/JMP/Jcc/CALL/RET` 与 `SYS`。
+- **A-3（打通）**：x86-64 后端新增 `CALL/RET/PUSH/POP`、`MOV reg,reg`、
+  `SYS 24`（PRINT_STR，运行时 `strlen` + `write`）、`OUT` 换行与 `SYS 137`。
+  修掉一个关键缺陷：`Encode` 在首个 `HALT` 处提前返回，导致 `HALT` 之后的
+  函数体根本没被编码（`CALL main` 跳到偏移 0 造成段错误）。
+  **端到端验证**：`cincc` 把真实 `hello.cin`（16 条 IR）编译为 66 KB
+  x86-64 ELF，在 WSL 中输出 `hi`、退出码 0 —— 全程无 C、无 UCBC、无 Python。
+- **A-4（已修复）**：`SYS 22`（ITOA）内联机器码可用——根因是三个
+  `jns/jnz/jz` 的 fixup **位置记录在操作码之前**，回填时把 `0F 89/85/84`
+  覆写成了位移字节（`eb ff ff ff`），导致跳进指令中间。修正后 WSL 实测：
+  `println(42)` 输出 `42` 且退出码 0；`println("hi")` 回归通过。
+  负数输出仍被 `SUB reg,reg` 形式挡住（下一步补）。
+- **A-5（局部变量打通）**：x86-64 后端补齐 `ADD/SUB/AND/OR/XOR` 的 reg,reg
+  形式、三操作数 `ADDI`、`LD/SD`（mem 基址+偏移），并实现 **VM 内存模型**：
+  程序入口 `mmap` 1 GiB 匿名内存（基址存 `r15`），初始化 `R32 = memSize-8`，
+  `SYS 137` 真实执行 `R32 -= n; R0 = R32`。WSL 实测：
+  `int x = -7; println(x)` 输出 `-7`、退出码 0；`println("hi")` 回归通过。
+  `MUL` 等仍未实现（明确报错）。
+- **A-7（Python 只剩 CLI）**：`codecin --native` / `--native-out` 改为直接
+  `subprocess` 调用 Go 编译器 `cincc`（默认找 `codecin/native/cincc[.exe]`，
+  可用 `CODECIN_CINCC` 覆盖），Python 不再参与编译；Windows 上运行 Linux
+  ELF 产物会自动经 WSL。实测 `codecin hello.cin --native` 输出 `hi`，
+  `int a=7 b=3 println(a*b+a%b)` 输出 `22`。
+  同时把 `tests/test_nativegen.py` 的 CLI 用例改为针对 `cincc`（旧
+  Python 后端 `nativegen.py` 进入退役状态，其部分用例随本次替换删除）。
+- **A-8（mkn 切换）**：`mkn build --native` 同样改为调用 `cincc`
+  （`_cincc_path()` + `subprocess`），不再经过 `nativegen`。实测
+  `mkn build --native` 产出 `target/app-0.1.0`，在 WSL 中运行输出 `42`。
+- **A-9（收尾）**：`nativegen.py` 标记为 LEGACY（CLI/mkn 均已不再调用）；
+  最终回归：Python `76 passed, 1 skipped`，`go test ./mc` 通过，
+  `go vet` 干净。
+- **A-6（算术打通）**：x86-64 后端新增 `MUL`（imul）、`DIV/MOD`（cqo+idiv）、
+  浮点转换与运算 `SYS 12/11`（cvtsi2sd / cvttsd2si）与 `SYS 6/7/8/9`
+  （ssse `addsd/subsd/mulsd/divsd`）、`SYS 23`（FTOA，整数场景截断后
+  复用 ITOA）。WSL 实测：`7*3`、`7/3`、`7%3` 分别输出 `21 / 2 / 1`，
+  退出码 0。
+
+- **移除自带指令集（进行中，阶段 0 已落地）**：目标是取消 UCPU 指令集作为
+  唯一执行层，让每个设备直接运行本机指令。本阶段新增
+  `codecin/nativegen.py`：CIN 源码 → **AST → C** 直接生成，完全不产生
+  UCPU 操作码、BIN/UCBC 字节码或 `.sdgcc` 容器，再由本机/交叉 C 编译器
+  产出设备本机机器码。
+  - 已覆盖语言子集：`int` 局部变量/参数/返回值、`+ - * / %`、比较、
+    `while`/`block`/赋值/`return`、`print`/`println`（整数）；超出子集抛
+    `NativeGenError`，不静默降级。
+  - 新增目标：`arm-linux`（arm32，ELF e_machine 0x28）与
+    `riscv64-linux`（0xF3），与既有 `x86_64-linux`(0x3E)、
+    `aarch64-linux`(0xB7) 一起构成"各设备本机 ELF"的编译链路
+    （`zig cc -target` 或目标 GCC）。
+  - 验收：`tests/test_nativegen.py`（源码→C 无 ISA 痕迹、越界构造报错、
+    本机运行输出 15、四个目标 ELF 头校验）全部通过。
+  - **阶段 1（部分）**：新增 CLI 入口 `codecin <src> --native`（直接编译为
+    设备本机可执行文件并运行）与 `--native-out OUT`（只构建）；
+    `--build-target linux/amd64|linux/arm64|linux/arm|linux/riscv64`
+    可交叉产出对应 ELF。超出语言子集时以 `Native Build Error` 面板报错、
+    退出码 1，不会静默回退到指令集。
+  - **阶段 1（续）**：`mkn build --native` 同样走 AST→C，产物为
+    `target/<name>-<version>[.exe]`，项目级构建不再产生指令流/字节码。
+  - **阶段 4（部分）**：直接原生后端补齐 `if/else`、`bool`（按
+    `true`/`false` 输出）与字符串字面量的 `print/println`；字符串出现在
+    表达式位置（如 `int x = "s"`）会明确报错。
+  - **阶段 4（续）**：新增定长数组（`int a[N]`、下标读写）、`for`
+    （含 init/cond/step）与 `break`/`continue`；数组长度须为整数字面量。
+  - **阶段 4（续）**：新增 `float`（C `double`）：变量/参数/返回值/算术与
+    `%g` 输出，`println(area(1.5))` 会按函数返回类型选择浮点打印。
+  - **阶段 4（续）**：新增 `string` 变量/参数/返回值（C `const char *`），
+    支持字面量赋值与 `print/println`；字符串字面量赋给非 string 变量会报错。
+  - **阶段 4（续）**：新增字符串拼接 `+`（64 KiB 静态 arena，超出返回空串），
+    `println(a + "-" + b)` 与字面量/变量混合拼接均可。
+  - **阶段 4（续）**：新增逻辑运算 `&&`/`||`/`!` 与 `bool` 字面量，以及字符串
+    `==`/`!=`（`strcmp`）；字符串其它比较运算符明确报错。
+  - **阶段 4（续）**：新增 `struct`（标量字段）：`typedef` 生成、零初始化、
+    字段读写（`p.x`）与字段类型感知的打印分派；嵌套 struct 成员暂不支持。
+  - **阶段 4（续）**：`struct` 现在可作为函数参数按值传递（`cin_X` 类型）。
+  - **阶段 4（续）**：`struct` 可作为返回值（`P q = mk()`），并修掉无初值
+    struct 声明被错误清零赋值（`p = 0`）的问题。
+  - **阶段 4（续）**：支持多文件 —— `import "./x.cin"` 闭包会被解析并合并为
+    同一编译单元（struct/函数去重检查），函数原型统一前置以消除 C 的前向
+    引用问题；`codecin --native` 与 `mkn build --native` 均已使用该路径。
+  - **阶段 4（续）**：支持全局变量（`int`/`float`/`string`/数组/struct），
+    声明与初始化分离到 `__cin_init_globals()`，并修掉函数内赋值同名变量
+    会误建局部变量、遮蔽全局的问题。
+  - **阶段 4（续）**：新增位运算 `& | ^ << >>` 与内建 `strlen/abs/indexof/
+    atoi/idiv/min/max`；用标准库 41 个文件做探针，可通过数由 3 提升到 6
+    （其余阻塞在 `int[]` 参数、字符串内建 `upper/substr` 等）。
+  - **阶段 4（续）**：支持 `int[]` 形参（C `int64_t *`，数组实参自动退化），
+    标准库探针通过数 6 → 12；`int[][]` 仍明确报错。
+  - **阶段 4（续）**：新增字符串内建 `substr/upper/lower/int_to_str/strcmp/
+    trim`（复用 64 KiB arena），标准库探针通过数 12 → **24**。
+  - **阶段 4（续）**：新增数学/系统内建 `pow/floor/ceil/round/sin/cos/tan/
+    fabs/time/rand/srand`、`~` 取反；数组元素类型扩展到 `float`/`string`/
+    `bool`，`float[]`/`string[]` 形参与下标打印分派修正；标准库探针通过数
+    24 → **32**（剩余 9 个依赖宿主内建或 struct 数组字段）。
+
+### 待办 (Roadmap)
+
+- 阶段 1（续）：让 `cvm`/`mkn` 也接受 `--native`，并评估把直接原生后端
+  设为默认；指令集降级为兼容输入。
+- 阶段 2：删除对外 ISA（`.asm` 汇编器/反汇编器、BIN/UCBC、`.crom`），
+  AOT 的 Go 后端（`native`/`vm`）下线。
+- 阶段 3：删除内部 opcode IR，`cin.py` 的代码生成直接产出 C（当前
+  `cin.py` 仍有 186 处 `Opcode` 引用）。
+- 阶段 4：补齐直接原生后端的语言覆盖面（struct/数组/字符串/浮点/指针/
+  `if`/函数指针/标准库），并让 GUI/音频等运行时在这条新链路上对齐。
+
+---
+
 ## [7.0.0] - 2026-11-01
 
 一次以「编译产物格式统一 + AOT 去 Go 化」为主题的大版本：默认产物从 `.bin`
