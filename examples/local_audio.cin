@@ -1,5 +1,6 @@
 // Code CIN 本地音频演示 (beep 合成 / 音量 / 播放进度 / 暂停恢复控制)
-// 运行: codecin examples/local_audio.cin   (需原生路径; --sandbox 会拦截)
+// 运行: codecin examples/local_audio.cin   (默认 .sdgcc → Go 原生引擎; --sandbox 会拦截)
+// 7.22.10: 音频运行时只存在于默认 VM 路径; `--native` (cincc) 未实现音频。
 // Windows 用 waveOut 实时发声; Linux/macOS 交给系统播放器 (aplay/afplay 等),
 // 没有可用播放器时 beep 返回 -1, 演示仍正常走完。
 function main() -> int {

@@ -1,5 +1,6 @@
 // import + 内置标准库演示 (B3)
-// 运行: codecin examples/modules_demo.cin
+// 运行: codecin examples/modules_demo.cin     (默认 .sdgcc → Go 原生引擎)
+// 7.22.10: 内置标准库 import 由默认路径解析; cincc 暂不能解析 `import "math.cin"`。
 
 import "math.cin"
 import "str.cin"

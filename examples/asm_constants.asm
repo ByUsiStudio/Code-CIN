@@ -1,5 +1,8 @@
 ; 汇编语法增强: .equ 常量、表达式立即数与符号算术
 ; 运行: codecin examples/asm_constants.asm
+; 仅编译: codecin examples/asm_constants.asm --compile-only -o asm_constants.sdgcc
+; 7.22.10: .asm 仍属兼容输入; 默认产物为 .sdgcc (CODE 段与 BIN v3 一致),
+;   `--disasm` 只接受 .bin。
 ;   结果: x0 = 63, mem[buf + 8*3] = 42 (见下方注释)
 
 .equ ROWS, 4

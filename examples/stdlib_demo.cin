@@ -1,6 +1,6 @@
 // Code CIN 官方标准库演示 (array / sort / conv / vec / json / time / test)
-// 运行: codecin examples/stdlib_demo.cin
-//       codecin examples/stdlib_demo.cin
+// 运行: codecin examples/stdlib_demo.cin     (默认 .sdgcc → Go 原生引擎)
+// 7.22.10: 多库 import 需由默认路径解析内置标准库; cincc 暂不支持 `import "test.cin"`。
 import "test.cin"
 import "array.cin"
 import "sort.cin"

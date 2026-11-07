@@ -1,5 +1,6 @@
 // Code CIN GUI 窗口演示 (Windows Win32 / Linux X11; 其他平台优雅失败)
-// 运行: codecin examples/gui_demo.cin   (需原生路径; --sandbox 会拦截)
+// 运行: codecin examples/gui_demo.cin   (默认 .sdgcc → Go 原生引擎; --sandbox 会拦截)
+// 7.22.10: GUI 运行时只存在于默认 VM 路径; `--native` (cincc) 未实现 GUI/画布。
 // 无显示服务 (CI / SSH / 管道) 时 gui_new 返回 -1, 程序打印提示后正常退出。
 import "gui.cin"
 import "key.cin"

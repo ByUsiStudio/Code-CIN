@@ -1,9 +1,10 @@
-// Code CIN v6.3.1 演示: 终端缓存 + 实时输出
+// Code CIN 7.22.10 演示: 终端缓存 + 实时输出
 //
 // 运行 (请在真实终端中执行, 效果最佳):
-//   codecin examples/terminal_cache_demo.cin
+//   codecin examples/terminal_cache_demo.cin        (默认 .sdgcc → Go 原生引擎)
 //
-// v6.3.1 特性:
+// 7.22.10: 键码/实时输出依赖默认 VM 路径的终端能力; `--native` (cincc) 暂不支持。
+// 当前行为:
 //   1) 实时输出: print / println 在执行过程中就写到终端, 不再等程序结束
 //      才一次性显示; 管道 / 重定向 / 测试捕获仍保持"缓冲 + 结束回传".
 //   2) 终端缓存 (type-ahead): 程序启动、动画期间提前键入的内容会进入缓存,
@@ -77,7 +78,7 @@ function main() -> int {
 
     println(C_CYAN + "==================================================" + C_RESET)
     print(C_CYAN)
-    typewrite("  Code CIN v6.3.1  Terminal Cache + Live Output\n", 5)
+    typewrite("  Code CIN 7.22.10  Terminal Cache + Live Output\n", 5)
     print(C_RESET)
     println(C_CYAN + "==================================================" + C_RESET)
 
@@ -130,6 +131,6 @@ function main() -> int {
     println(C_DIM + "已调用 key_flush(): 清空剩余键码与终端残留输入。" + C_RESET)
     println()
 
-    println(C_CYAN + "v6.3.1 演示结束: 实时输出 + 终端输入/输出缓存。" + C_RESET)
+    println(C_CYAN + "7.22.10 演示结束: 实时输出 + 终端输入/输出缓存。" + C_RESET)
     return 0
 }

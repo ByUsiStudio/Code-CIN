@@ -1,5 +1,8 @@
 // 控制流新语法: break / continue / do-while / switch / 三目 / 复合赋值
-// 运行: codecin examples/control_flow.cin
+// 运行: codecin examples/control_flow.cin              (默认 .sdgcc → Go 原生引擎)
+//       codecin examples/control_flow.cin --native     (cincc 直出 x86-64 ELF)
+// 7.22.10 实测两条路径输出一致 (Windows 上 --native 自动经 WSL 执行)。
+// 仅编译: codecin examples/control_flow.cin --compile-only -o control_flow.sdgcc
 
 function main() -> int {
     int sum = 0

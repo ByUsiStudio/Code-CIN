@@ -1,6 +1,7 @@
 // Code CIN 系统原生交互演示 (跨平台: Windows / Linux / macOS)
-// 运行: codecin examples/system_interaction.cin
-//       codecin examples/system_interaction.cin
+// 运行: codecin examples/system_interaction.cin     (默认 .sdgcc → Go 原生引擎)
+// 7.22.10: hostname/username/exec_output/sha256 等宿主 API 只在默认 VM 路径提供;
+// cincc 仅覆盖文件/目录/环境/时间/TCP/UDP 等核心 syscall。
 function main() -> int {
     // 系统信息
     println("os: " + os_name())

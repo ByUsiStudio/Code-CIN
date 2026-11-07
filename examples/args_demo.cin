@@ -3,6 +3,8 @@
 //       codecin examples/args_demo.cin -- alice 42     (`--` 显式分隔, 兼容旧法)
 // 两种方式等价; 含 `--` 前缀形如选项的参数必须走 `--`。AOT 产物直接取进程
 // os.Args[1:]。另见 stdlib: gostd.cin 的 go_os_args_len() / go_os_args_get(i)。
+// 7.22.10: 默认产物为 .sdgcc (`--compile-only -o args_demo.sdgcc`); 本演示使用
+// arg_count/input_str (SYS 129/131), `--native` (cincc) 暂不支持, 请走默认路径。
 
 function main() -> int {
     int n = arg_count()

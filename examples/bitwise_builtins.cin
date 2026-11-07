@@ -1,5 +1,6 @@
 // Code CIN 位运算 / 整数除法 / 字符串下标 / 新内建函数示例
-// 运行: codecin examples/bitwise_builtins.cin
+// 运行: codecin examples/bitwise_builtins.cin     (默认 .sdgcc → Go 原生引擎)
+// 7.22.10: cincc 尚未实现 SHL 等位移指令, 本演示请使用默认路径。
 function main() -> int {
     // 位运算 (& | ^ << >> ~)
     int a = 0b1100 & 0b1010        // 8
