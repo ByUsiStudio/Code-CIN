@@ -1,6 +1,6 @@
 name: PyPI Packages
 
-# 构建并发布 codecin 到 GitHub Packages (仓库级 PyPI 注册表)。
+# 构建并发布 codecin 的平台专用 wheel 与 sdist 到 PyPI / TestPyPI。
 #
 # 与 release.yml 的区别:
 #   * release.yml 产出 GitHub Release 资产 (原生库以独立文件附带平台后缀);
@@ -15,7 +15,7 @@ name: PyPI Packages
 #      s390x 等, 需用 QEMU + manylinux 容器另行扩展)
 #
 # 触发条件: 仅手动触发 (workflow_dispatch)。
-#   * registry: 选择发布目标 —— GitHub Packages / PyPI / 两者同时发布。
+#   * registry: 发布目标 —— pypi (正式) / testpypi (发布前演练)。
 
 on:
   workflow_dispatch:
@@ -24,15 +24,13 @@ on:
         description: '发布目标'
         required: true
         type: choice
-        default: 'github-packages'
+        default: 'pypi'
         options:
-          - 'github-packages'   # 仓库级 Packages
-          - 'pypi'              # 正式 PyPI (需 PYPI_API_TOKEN secret)
-          - 'both'              # 同时发布到 GitHub Packages 和 PyPI
+          - 'pypi'
+          - 'testpypi'
 
 permissions:
   contents: read
-  packages: write
 
 # Windows runner 的 ANSI 代码页是 cp1252: Python 把 stdout 重定向到 Actions 日志
 # 管道时默认按该代码页编码, 本工作流多处步骤会打印中文 (pic 结构校验、wheel 内容
@@ -256,8 +254,6 @@ jobs:
     needs: [build-wheel, build-sdist]
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    permissions:
-      packages: write
     steps:
       # 合并所有 wheel + sdist 到 dist/
       - uses: actions/download-artifact@v7
@@ -278,15 +274,17 @@ jobs:
       - name: twine 检查 (元数据完整性)
         run: python -m twine check dist/*
 
-      - name: 发布到 GitHub Packages
-        if: ${{ inputs.registry == 'github-packages' || inputs.registry == 'both' }}
-        run: python -m twine upload --repository-url https://upload.pkg.github.com/ dist/*
+      - name: 发布到 TestPyPI (演练)
+        if: ${{ inputs.registry == 'testpypi' }}
+        # 正式发布前先用 TestPyPI 验证元数据与安装链路。
+        # 需在仓库 Secrets 中配置 TESTPYPI_API_TOKEN (test.pypi.org 的 API Token)。
+        run: python -m twine upload --repository-url https://test.pypi.org/legacy/ dist/*
         env:
-          TWINE_USERNAME: ${{ github.actor }}
-          TWINE_PASSWORD: ${{ secrets.GITHUB_TOKEN }}
+          TWINE_USERNAME: __token__
+          TWINE_PASSWORD: ${{ secrets.TESTPYPI_API_TOKEN }}
 
       - name: 发布到 PyPI
-        if: ${{ inputs.registry == 'pypi' || inputs.registry == 'both' }}
+        if: ${{ inputs.registry == 'pypi' }}
         # 正式 PyPI 上传: 用户名固定为 __token__, 密码为 PyPI API Token。
         # 需在仓库 Secrets 中配置 PYPI_API_TOKEN。
         run: python -m twine upload dist/*
