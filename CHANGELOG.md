@@ -218,6 +218,14 @@
     `bool`，`float[]`/`string[]` 形参与下标打印分派修正；标准库探针通过数
     24 → **32**（剩余 9 个依赖宿主内建或 struct 数组字段）。
 
+### 修复 (Fixed)
+
+- **内置标准库 pic 清单版本漂移**：`codecin/lib/*/pic.toml` 的 `version`
+  一直停在 6.4.2，而唯一真源已升到 7.22.10，导致 `pypi-packages.yml` 与
+  `ci.yml` 的 `python script/sync_stdlib_packages.py --check` 全线路失败。
+  现已按真源重新生成全部 41 个清单，并让 `script/bump_version.py` 在提升
+  版本时自动重写它们，避免下次发布再次漂移。
+
 ### 待办 (Roadmap)
 
 - 阶段 1（续）：让 `cvm`/`mkn` 也接受 `--native`，并评估把直接原生后端
