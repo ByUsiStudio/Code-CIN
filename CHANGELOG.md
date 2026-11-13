@@ -5,6 +5,32 @@
 
 ---
 
+## [Unreleased]
+
+### 文档 (Docs)
+
+- 新增 Windows PE 后端（部分可用）：`cincc -target x86_64-windows` 产出
+  PE32+ 可执行文件，本机实测 `return 42` 的程序运行后退出码为 **42**，
+  `CALL/RET` 组合退出码为 **7**。
+  当前支持 `MOV/ADD/SUB/CALL/RET/PUSH/POP/SYS 137/HALT`；
+  **控制台输出仍不可用**：已把 `strlen` 改为 `repne scasb` 后，PE 程序能真实
+  打印（`print("hi")` 输出 `hi`），但随后进程以 0xC0000005 退出——
+  已排除 IAT/句柄/缓冲区/`scasb` 本身，怀疑与 `CALL/RET` 后的栈对齐或
+  退出路径有关；`OUT`/`SYS 24` 仍保持明确报错，不产出会崩的二进制。
+- **A-29（目录与元信息）**：新增 `SYS 86`（DIRREMOVE，`rmdir`）、
+  `SYS 85`（FILEMOVE，`rename`）、`SYS 87`（ISDIR，`stat` + `S_IFMT` 判断）、
+  `SYS 88`（FILEMTIME，`stat.st_mtim`）。WSL 实测：建目录 → `is_dir=1` →
+  写文件并 `file_move` → 存在=1、`mtime>0` → 删文件删目录 → `is_dir=0`。
+- **A-28（文件追加）**：新增 `SYS 53`（FILEAPPEND，`open(O_WRONLY|O_CREAT|
+  O_APPEND)` → `write` → `close`）。WSL 实测：写入 `a`、追加 `bc` 后读回
+  `abc`，已加入回归用例。
+  已定位并修复的 PE 问题：`.rdata` 缺 `MEM_WRITE`、导入表清单与代码不一致、
+  `HALT` 提前返回导致 `CALL` 跳 0、`PUSH/POP` 地址寄存器被覆盖。
+- 新增 `docs/roadmap.md`：7.23.0（PE 直出 / AArch64 可运行 / 剩余 syscall）、
+  7.24.0（移除自带指令集，BREAKING）、8.0.0（编译器统一到 Go，删除 Python
+  编译器）、8.x（GUI/音频/画布/更多平台）的分阶段目标、完成定义（DoD）、
+  决策点与验收原则。
+
 ## [7.22.10] - 2026-11-07
 
 ### 发布说明 (Release 7.22.10)
