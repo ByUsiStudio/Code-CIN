@@ -21,7 +21,7 @@ func main() {
 		fmt.Fprintln(os.Stderr, "用法: cincc -o <out> <prog.cin>")
 		os.Exit(2)
 	}
-	if *target != "x86_64-linux" && *target != "aarch64-linux" {
+	if *target != "x86_64-linux" && *target != "aarch64-linux" && *target != "x86_64-windows" {
 		fmt.Fprintf(os.Stderr, "cincc: 暂不支持目标 %s\n", *target)
 		os.Exit(2)
 	}
@@ -44,6 +44,19 @@ func main() {
 		}
 	}
 	var code []byte
+	if *target == "x86_64-windows" {
+		img, werr := mc.WrapPE(prog)
+		if werr != nil {
+			fmt.Fprintf(os.Stderr, "cincc: %v\n", werr)
+			os.Exit(1)
+		}
+		if err := os.WriteFile(*out, img, 0o755); err != nil {
+			fmt.Fprintf(os.Stderr, "cincc: 写出失败: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("cincc: %s -> %s (%d 字节, PE32+)\n", flag.Arg(0), *out, len(img))
+		return
+	}
 	if *target == "aarch64-linux" {
 		code, err = mc.EncodeAArch64(prog)
 	} else {
