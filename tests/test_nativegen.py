@@ -202,6 +202,46 @@ OSINFO = ('function main() -> int {\n'
           '}\n')
 
 
+APPEND = ('function main() -> int {\n'
+          '    file_write("/tmp/cin_append_test.txt", "a")\n'
+          '    file_append("/tmp/cin_append_test.txt", "bc")\n'
+          '    println(file_read("/tmp/cin_append_test.txt"))\n'
+          '    return 0\n'
+          '}\n')
+
+
+DIRS = ('function main() -> int {\n'
+        '    mkdir("/tmp/cin_dd_test")\n'
+        '    println(is_dir("/tmp/cin_dd_test"))\n'
+        '    file_write("/tmp/cin_dd_test/a.txt", "x")\n'
+        '    file_move("/tmp/cin_dd_test/a.txt", "/tmp/cin_dd_test/b.txt")\n'
+        '    println(file_exists("/tmp/cin_dd_test/b.txt"))\n'
+        '    println(file_mtime("/tmp/cin_dd_test/b.txt") > 0)\n'
+        '    file_delete("/tmp/cin_dd_test/b.txt")\n'
+        '    dir_remove("/tmp/cin_dd_test")\n'
+        '    println(is_dir("/tmp/cin_dd_test"))\n'
+        '    return 0\n'
+        '}\n')
+
+
+@pytest.mark.skipif(_compiler() is None, reason='本机没有可用的 C 编译器')
+def test_cincc_dir_ops(workdir, capfd):
+    src = os.path.join(workdir, 'dirs.cin')
+    with open(src, 'w', encoding='utf-8') as f:
+        f.write(DIRS)
+    assert cli.main([src, '--native', '--log-level', 'ERROR']) == 0
+    assert capfd.readouterr().out.replace('\r\n', '\n') == '1\n1\ntrue\n0\n'
+
+
+@pytest.mark.skipif(_compiler() is None, reason='本机没有可用的 C 编译器')
+def test_cincc_file_append(workdir, capfd):
+    src = os.path.join(workdir, 'append.cin')
+    with open(src, 'w', encoding='utf-8') as f:
+        f.write(APPEND)
+    assert cli.main([src, '--native', '--log-level', 'ERROR']) == 0
+    assert capfd.readouterr().out.replace('\r\n', '\n') == 'abc\n'
+
+
 @pytest.mark.skipif(_compiler() is None, reason='本机没有可用的 C 编译器')
 def test_cincc_os_info(workdir, capfd):
     src = os.path.join(workdir, 'os.cin')
