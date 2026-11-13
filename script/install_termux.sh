@@ -177,7 +177,7 @@ done
 if command -v codecin >/dev/null 2>&1; then
     exec codecin "${args[@]}"
 else
-    exec uv run python cpu.py "${args[@]}"
+    exec uv run python cli.py "${args[@]}"
 fi
 EOF
 chmod +x codecin-cli
