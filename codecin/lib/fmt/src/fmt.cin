@@ -323,3 +323,88 @@ function fmt_bool(bool b) -> string {
     if (b) { return "true" }
     return "false"
 }
+
+// ---------------- 字符串对齐 / 拼接 / 人类可读数值 (新增) ----------------
+// 宽度仍是**字节**列数 (UTF-8 汉字算 3 列), 不做终端宽度计算。
+
+// 左对齐到 width 列右补空格; 已 >= width 时原样返回 (等价 fmt_align(s, width, 0))
+function fmt_left(string s, int width) -> string {
+    return fmt_align(s, width, 0)
+}
+
+// 右对齐到 width 列左补空格; 已 >= width 时原样返回 (等价 fmt_align(s, width, 1))
+function fmt_right(string s, int width) -> string {
+    return fmt_align(s, width, 1)
+}
+
+// 用 sep 拼接 string[] 的前 n 个元素; n <= 0 返回 ""
+function fmt_join(string[] parts, int n, string sep) -> string {
+    if (n <= 0) { return "" }
+    string out = parts[0]
+    for (int i = 1; i < n; i = i + 1) {
+        out = out + sep + parts[i]
+    }
+    return out
+}
+
+// 字节数 -> 人类可读大小 (1024 进制, 保留 1 位小数)
+// fmt_bytes_size(0) -> "0 B"; fmt_bytes_size(1024) -> "1.0 KB";
+// fmt_bytes_size(1536) -> "1.5 KB"; fmt_bytes_size(-2048) -> "-2.0 KB"
+// 单位依次为 B / KB / MB / GB / TB / PB; |bytes| < 1024 时不带小数
+function fmt_bytes_size(int bytes) -> string {
+    string sign = ""
+    int b = bytes
+    if (b < 0) {
+        sign = "-"
+        b = -b
+    }
+    if (b < 1024) { return sign + int_to_str(b) + " B" }
+    float v = b
+    int unit = 0
+    while (v >= 1024.0 && unit < 5) {
+        v = v / 1024.0
+        unit = unit + 1
+    }
+    string suffix = "KB"
+    if (unit == 2) { suffix = "MB" }
+    if (unit == 3) { suffix = "GB" }
+    if (unit == 4) { suffix = "TB" }
+    if (unit == 5) { suffix = "PB" }
+    return sign + fmt_float_dec(v, 1) + " " + suffix
+}
+
+// 毫秒 -> 紧凑时长: "500ms" / "1s" / "1.5s" / "1m05s" / "1h02m03s"
+// 负值按 0 处理; 不足 1 秒显示毫秒, 不足 1 分钟显示秒 (有零头时保留 1 位小数)
+function fmt_duration_short(int ms) -> string {
+    if (ms < 0) { ms = 0 }
+    if (ms < 1000) { return int_to_str(ms) + "ms" }
+    int s = idiv(ms, 1000)
+    int r = ms % 1000
+    if (s < 60) {
+        if (r == 0) { return int_to_str(s) + "s" }
+        return fmt_float_dec(ms / 1000.0, 1) + "s"
+    }
+    int m = idiv(s, 60)
+    int rs = s % 60
+    if (m < 60) {
+        if (rs == 0) { return int_to_str(m) + "m" }
+        return int_to_str(m) + "m" + fmt_int_zero(rs, 2) + "s"
+    }
+    int h = idiv(m, 60)
+    int rm = m % 60
+    return int_to_str(h) + "h" + fmt_int_zero(rm, 2) + "m" + fmt_int_zero(rs, 2) + "s"
+}
+
+// 金额 (单位: 分) -> 货币字符串 (两位小数 + 千位分隔)
+// fmt_currency(123456, "$") -> "$1,234.56"; fmt_currency(-5, "$") -> "-$0.05"
+function fmt_currency(int cents, string symbol) -> string {
+    string sign = ""
+    int v = cents
+    if (v < 0) {
+        sign = "-"
+        v = -v
+    }
+    int ip = idiv(v, 100)
+    int fp = v % 100
+    return sign + symbol + fmt_thousands(ip) + "." + fmt_int_zero(fp, 2)
+}

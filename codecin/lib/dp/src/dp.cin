@@ -323,3 +323,107 @@ function dp_min_path(int[] grid, int rows, int cols) -> int {
     }
     return dp_cap[cols - 1]
 }
+
+// ---------------- 追加: 完全背包 / 股票 / 打家劫舍 / 子串 / 路径数 ----------------
+
+// 完全背包最大价值 (每件物品可用无限次), 其余语义与 dp_knapsack01 完全一致
+//   n <= 0 或 cap <= 0 返回 0; cap > DP_KNAP_CAP 时按 DP_KNAP_CAP 计算;
+//   重量 < 0 的物品按"重量 0"处理; 重量 > cap 的物品自动跳过
+function dp_knapsack_complete(int[] w, int[] v, int n, int cap) -> int {
+    if (n <= 0) { return 0 }
+    if (cap <= 0) { return 0 }
+    int c = cap
+    if (c > DP_KNAP_CAP) { c = DP_KNAP_CAP }
+    for (int j = 0; j <= c; j = j + 1) {
+        dp_cap[j] = 0
+    }
+    for (int i = 0; i < n; i = i + 1) {
+        int wi = w[i]
+        if (wi < 0) { wi = 0 }
+        int vi = v[i]
+        if (wi > c) { continue }
+        for (int j = wi; j <= c; j = j + 1) {
+            int cand = dp_cap[j - wi] + vi
+            if (cand > dp_cap[j]) { dp_cap[j] = cand }
+        }
+    }
+    return dp_cap[c]
+}
+
+// 单笔股票交易的最大利润 (先买后卖, 只允许一次买卖)
+//   n <= 0 返回 0; 价格可正可负, 无利润时返回 0
+function dp_stock_profit(int[] prices, int n) -> int {
+    if (n <= 0) { return 0 }
+    int lo = prices[0]
+    int best = 0
+    for (int i = 1; i < n; i = i + 1) {
+        if (prices[i] < lo) { lo = prices[i] }
+        int gain = prices[i] - lo
+        if (gain > best) { best = gain }
+    }
+    return best
+}
+
+// 打家劫舍: 相邻房屋不能同时选, 返回能偷到的最大金额
+//   n <= 0 返回 0; 金额为负时也会按"不偷"处理
+function dp_house_robber(int[] a, int n) -> int {
+    if (n <= 0) { return 0 }
+    int rob = a[0]
+    int skip = 0
+    for (int i = 1; i < n; i = i + 1) {
+        int nr = skip + a[i]
+        int ns = rob
+        if (skip > ns) { ns = skip }
+        rob = nr
+        skip = ns
+    }
+    int best = rob
+    if (skip > best) { best = skip }
+    return best
+}
+
+// 最长公共子串长度 (要求连续, 按字节比较; 滚动两行 O(min) 空间)
+//   任一空串返回 0; 串长超过 DP_STR_MAX 时只看前 DP_STR_MAX 字节
+function dp_longest_common_substring(string a, string b) -> int {
+    int la = strlen(a)
+    int lb = strlen(b)
+    if (la > DP_STR_MAX) { la = DP_STR_MAX }
+    if (lb > DP_STR_MAX) { lb = DP_STR_MAX }
+    for (int j = 0; j <= lb; j = j + 1) {
+        dp_row_prev[j] = 0
+    }
+    int best = 0
+    for (int i = 1; i <= la; i = i + 1) {
+        dp_row_cur[0] = 0
+        for (int j = 1; j <= lb; j = j + 1) {
+            if (a[i - 1] == b[j - 1]) {
+                dp_row_cur[j] = dp_row_prev[j - 1] + 1
+                if (dp_row_cur[j] > best) { best = dp_row_cur[j] }
+            } else {
+                dp_row_cur[j] = 0
+            }
+        }
+        for (int j = 0; j <= lb; j = j + 1) {
+            dp_row_prev[j] = dp_row_cur[j]
+        }
+    }
+    return best
+}
+
+// 网格路径数 (rows x cols, 只能向右或向下): 等价于 C(rows+cols-2, rows-1)
+//   rows <= 0 或 cols <= 0 返回 0;
+//   cols > DP_PATH_COLS 返回 -1 (滚动数组放不下);
+//   结果按 64 位整数回绕 (rows/cols 较大时可能溢出)
+function dp_grid_paths(int rows, int cols) -> int {
+    if (rows <= 0 || cols <= 0) { return 0 }
+    if (cols > DP_PATH_COLS) { return -1 }
+    for (int c = 0; c < cols; c = c + 1) {
+        dp_cap[c] = 1
+    }
+    for (int r = 1; r < rows; r = r + 1) {
+        for (int c = 1; c < cols; c = c + 1) {
+            dp_cap[c] = dp_cap[c] + dp_cap[c - 1]
+        }
+    }
+    return dp_cap[cols - 1]
+}

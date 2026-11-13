@@ -365,3 +365,116 @@ function graph_dijkstra(int src, int[] dist) -> int {
     }
     return cnt
 }
+
+// ---------------- 追加: 可达性 / 跳数 / 分量标号 / 边权统计 ----------------
+
+// u 能否沿出边到达 v (无向图加边时两侧都有, 因此等价于连通); 1/0
+//   任一节点越界返回 0
+function graph_has_path(int u, int v) -> int {
+    if (graph_aux_node(u) == 0 || graph_aux_node(v) == 0) { return 0 }
+    for (int i = 0; i < graph_n; i = i + 1) {
+        graph_seen[i] = 0
+    }
+    int head = 0
+    int tail = 0
+    graph_queue[tail] = u
+    tail = tail + 1
+    graph_seen[u] = 1
+    while (head < tail) {
+        int x = graph_queue[head]
+        head = head + 1
+        if (x == v) { return 1 }
+        for (int y = 0; y < graph_n; y = y + 1) {
+            if (graph_edge[x * GRAPH_MAX + y] == 0) { continue }
+            if (graph_seen[y] == 1) { continue }
+            graph_seen[y] = 1
+            graph_queue[tail] = y
+            tail = tail + 1
+        }
+    }
+    return 0
+}
+
+// u 到 v 的最短跳数 (按边数计, 沿出边方向; 无向图两个方向都算)
+//   同一节点返回 0; 不可达返回 -1; 任一节点越界返回 -1
+function graph_edges_between(int u, int v) -> int {
+    if (graph_aux_node(u) == 0 || graph_aux_node(v) == 0) { return -1 }
+    int d[16]
+    for (int i = 0; i < 16; i = i + 1) {
+        d[i] = -1
+    }
+    int head = 0
+    int tail = 0
+    graph_queue[tail] = u
+    tail = tail + 1
+    d[u] = 0
+    while (head < tail) {
+        int x = graph_queue[head]
+        head = head + 1
+        for (int y = 0; y < graph_n; y = y + 1) {
+            if (graph_edge[x * GRAPH_MAX + y] == 0) { continue }
+            if (d[y] >= 0) { continue }
+            d[y] = d[x] + 1
+            graph_queue[tail] = y
+            tail = tail + 1
+        }
+    }
+    return d[v]
+}
+
+// 按**无向视角**给每个节点标出所属连通分量编号 (0 起, 按最小节点编号递增),
+//   labels 至少 graph_n 个槽; 返回分量个数 (空图返回 0)
+function graph_label_components(int[] labels) -> int {
+    for (int i = 0; i < graph_n; i = i + 1) {
+        labels[i] = -1
+        graph_seen[i] = 0
+    }
+    int id = 0
+    for (int s = 0; s < graph_n; s = s + 1) {
+        if (graph_seen[s] == 1) { continue }
+        int head = 0
+        int tail = 0
+        graph_queue[tail] = s
+        tail = tail + 1
+        graph_seen[s] = 1
+        labels[s] = id
+        while (head < tail) {
+            int x = graph_queue[head]
+            head = head + 1
+            for (int y = 0; y < graph_n; y = y + 1) {
+                if (graph_aux_arc(x, y) == 0) { continue }
+                if (graph_seen[y] == 1) { continue }
+                graph_seen[y] = 1
+                labels[y] = id
+                graph_queue[tail] = y
+                tail = tail + 1
+            }
+        }
+        id = id + 1
+    }
+    return id
+}
+
+// 所有边权之和; 无向图里每条边只算一次, 有向图按每条弧分别累加; 空图返回 0
+function graph_edge_total_weight() -> int {
+    int s = 0
+    for (int i = 0; i < graph_n; i = i + 1) {
+        for (int j = 0; j < graph_n; j = j + 1) {
+            if (graph_edge[i * GRAPH_MAX + j] == 0) { continue }
+            if (graph_dir == 0 && j <= i) { continue }
+            s = s + graph_w[i * GRAPH_MAX + j]
+        }
+    }
+    return s
+}
+
+// 是否为完全图 (任意两个不同节点之间都有边, 自环不影响判定); 空图与单节点返回 1
+function graph_is_complete() -> int {
+    for (int i = 0; i < graph_n; i = i + 1) {
+        for (int j = 0; j < graph_n; j = j + 1) {
+            if (i == j) { continue }
+            if (graph_edge[i * GRAPH_MAX + j] == 0) { return 0 }
+        }
+    }
+    return 1
+}

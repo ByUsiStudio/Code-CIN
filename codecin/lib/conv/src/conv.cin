@@ -123,6 +123,73 @@ function c_to_int(string s) -> int {
     return atoi(s)
 }
 
+// 整数 -> 任意进制字符串 (base 2..36, 大写数字; 负数保留 '-' 号)
+// 例: c_to_base(255, 16) -> "FF"; c_to_base(-8, 2) -> "-1000"
+function c_to_base(int v, int base) -> string {
+    if (base < 2 || base > 36) { return "" }
+    if (v == 0) { return "0" }
+    string digits = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    int x = v
+    string sign = ""
+    if (x < 0) {
+        sign = "-"
+        x = -x
+    }
+    string out = ""
+    while (x != 0) {
+        int d = x % base
+        out = substr(digits, d, 1) + out
+        x = idiv(x, base)
+    }
+    return sign + out
+}
+
+// 任意进制字符串 -> 整数 (base 2..36; 忽略非法字符前的部分)
+// 例: c_parse_base("FF", 16) -> 255; c_parse_base("-1010", 2) -> -10
+function c_parse_base(string s, int base) -> int {
+    if (base < 2 || base > 36) { return 0 }
+    int n = strlen(s)
+    int i = 0
+    int neg = 0
+    if (i < n && s[i] == 45) {
+        neg = 1
+        i = i + 1
+    } else if (i < n && s[i] == 43) {
+        i = i + 1
+    }
+    int v = 0
+    while (i < n) {
+        int ch = s[i]
+        int d = -1
+        if (ch >= 48 && ch <= 57) {
+            d = ch - 48
+        } else if (ch >= 65 && ch <= 90) {
+            d = ch - 55
+        } else if (ch >= 97 && ch <= 122) {
+            d = ch - 87
+        }
+        if (d < 0 || d >= base) { break }
+        v = v * base + d
+        i = i + 1
+    }
+    if (neg == 1) { return -v }
+    return v
+}
+
+// 整数 -> 八进制字符串 (负数保留 '-' 号)
+function c_to_oct(int v) -> string {
+    return c_to_base(v, 8)
+}
+
+// 八进制字符串 -> 整数 (可带 0o / 0O 前缀)
+function c_parse_oct(string s) -> int {
+    int n = strlen(s)
+    if (n >= 2 && s[0] == 48 && (s[1] == 111 || s[1] == 79)) {
+        return c_parse_base(substr(s, 2, n - 2), 8)
+    }
+    return c_parse_base(s, 8)
+}
+
 // 字符串 -> 浮点 (支持可选负号与小数部分)
 function c_parse_float(string s) -> float {
     int n = strlen(s)

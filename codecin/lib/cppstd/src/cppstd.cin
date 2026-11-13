@@ -416,3 +416,53 @@ function stl_clamp(int x, int lo, int hi) -> int {
     if (x > hi) { return hi }
     return x
 }
+
+// ==================== <algorithm> 三值补充 ====================
+
+// std::max({a, b, c})
+function stl_max3(int a, int b, int c) -> int {
+    int m = a
+    if (b > m) { m = b }
+    if (c > m) { m = c }
+    return m
+}
+
+// std::min({a, b, c})
+function stl_min3(int a, int b, int c) -> int {
+    int m = a
+    if (b < m) { m = b }
+    if (c < m) { m = c }
+    return m
+}
+
+// std::abs(a - b): 两整数差的绝对值
+function stl_abs_diff(int a, int b) -> int {
+    int d = a - b
+    if (d < 0) { d = -d }
+    return d
+}
+
+// 三值升序写入 out[0..2] (等价于对 3 元素数组调用 std::sort)
+function stl_sort3(int a, int b, int c, int[] out) -> void {
+    int x = a
+    int y = b
+    int z = c
+    if (x > y) {
+        int t1 = x
+        x = y
+        y = t1
+    }
+    if (y > z) {
+        int t2 = y
+        y = z
+        z = t2
+    }
+    if (x > y) {
+        int t3 = x
+        x = y
+        y = t3
+    }
+    out[0] = x
+    out[1] = y
+    out[2] = z
+}

@@ -181,3 +181,97 @@ function tok_word_get(string s, int idx) -> string {
     }
     return ""
 }
+
+// ---------------- 区间 / 拼接 / 引号 (新增) ----------------
+// 下列函数沿用本库的切分语义 (保留空 token, delim 按整串匹配)。
+
+// 把 [start, end) 号 token 用 delim 重新拼回 (保留空 token 与原始顺序)。
+// start < 0 视为 0; end > tok_count 时收紧到 tok_count; end <= start 返回 ""。
+// 注意: 逐段拼接会分配多个堆块, 单次调用请保持区间较小
+function tok_slice(string s, string delim, int start, int end) -> string {
+    int total = tok_count(s, delim)
+    if (start < 0) { start = 0 }
+    if (end > total) { end = total }
+    if (end <= start) { return "" }
+    string out = tok_get(s, delim, start)
+    for (int k = start + 1; k < end; k = k + 1) {
+        out = out + delim + tok_get(s, delim, k)
+    }
+    return out
+}
+
+// 用 delim 拼接 string[] 的前 n 个元素; n <= 0 返回 ""
+function tok_join(string[] parts, int n, string delim) -> string {
+    if (n <= 0) { return "" }
+    string out = parts[0]
+    for (int i = 1; i < n; i = i + 1) {
+        out = out + delim + parts[i]
+    }
+    return out
+}
+
+// token 是否被一对双引号包住 (长度 >= 2 且首尾都是 '"')
+function tok_is_quoted(string t) -> int {
+    int n = strlen(t)
+    if (n >= 2 && t[0] == '"' && t[n - 1] == '"') { return 1 }
+    return 0
+}
+
+// 反转义: 若整串被一对 '"' 包住先剥掉一层; 然后
+//   \\ -> \, \" -> ", \n -> 换行, \t -> 制表, \r -> 回车,
+//   "" -> " (CSV 风格), 其余 \x 原样保留 x (丢弃反斜杠)。
+// 未加引号的输入同样做反转义; 空串返回 ""
+function tok_unescape(string t) -> string {
+    int n = strlen(t)
+    int start = 0
+    int end = n
+    if (n >= 2 && t[0] == '"' && t[n - 1] == '"') {
+        start = 1
+        end = n - 1
+    }
+    string out = ""
+    int i = start
+    while (i < end) {
+        int c = t[i]
+        if (c == '\\' && i + 1 < end) {
+            int d = t[i + 1]
+            if (d == 'n') {
+                out = out + "\n"
+                i = i + 2
+            } else if (d == 't') {
+                out = out + "\t"
+                i = i + 2
+            } else if (d == 'r') {
+                out = out + "\r"
+                i = i + 2
+            } else if (d == '\\') {
+                out = out + "\\"
+                i = i + 2
+            } else if (d == '"') {
+                out = out + "\""
+                i = i + 2
+            } else {
+                out = out + substr(t, i + 1, 1)
+                i = i + 2
+            }
+        } else if (c == '"' && i + 1 < end && t[i + 1] == '"') {
+            out = out + "\""
+            i = i + 2
+        } else {
+            out = out + substr(t, i, 1)
+            i = i + 1
+        }
+    }
+    return out
+}
+
+// token 个数; 与 tok_count 等价 (命名更贴近 "split 后有几个字段")
+function tok_split_count(string s, string delim) -> int {
+    return tok_count(s, delim)
+}
+
+// 是否存在与 t 逐字节相同 (区分大小写) 的 token; 1/0
+function tok_contains(string s, string delim, string t) -> int {
+    if (tok_find(s, delim, t) >= 0) { return 1 }
+    return 0
+}

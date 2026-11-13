@@ -153,3 +153,100 @@ function mat_print(int[] a, int n) -> void {
         println(line + "]")
     }
 }
+
+// ---------------- 追加: 行列和 / 单位阵 / 幂 / 伴随矩阵 ----------------
+
+// 第 r 行的元素之和; r 越界返回 0
+function mat_row_sum(int[] a, int n, int r) -> int {
+    if (r < 0 || r >= n) { return 0 }
+    int s = 0
+    for (int j = 0; j < n; j = j + 1) {
+        s = s + a[r * n + j]
+    }
+    return s
+}
+
+// 第 c 列的元素之和; c 越界返回 0
+function mat_col_sum(int[] a, int n, int c) -> int {
+    if (c < 0 || c >= n) { return 0 }
+    int s = 0
+    for (int i = 0; i < n; i = i + 1) {
+        s = s + a[i * n + c]
+    }
+    return s
+}
+
+// 是否为单位阵 (对角线 1, 其余 0); n <= 0 视为单位阵返回 1
+function mat_is_identity(int[] a, int n) -> int {
+    for (int i = 0; i < n; i = i + 1) {
+        for (int j = 0; j < n; j = j + 1) {
+            if (i == j) {
+                if (a[i * n + j] != 1) { return 0 }
+            } else {
+                if (a[i * n + j] != 0) { return 0 }
+            }
+        }
+    }
+    return 1
+}
+
+// out = a^e (快速幂); e < 0 视为 0, 即结果为单位阵
+//   要求 n <= 8 (内部两个 8x8 的暂存区), n <= 0 或 n > 8 返回 0;
+//   out 可以与 a 为同一数组 (内部先复制底矩阵)
+function mat_pow(int[] a, int e, int[] out, int n) -> int {
+    if (n <= 0 || n > 8) { return 0 }
+    int base[64]
+    int tmp[64]
+    for (int i = 0; i < n * n; i = i + 1) {
+        base[i] = a[i]
+        out[i] = 0
+    }
+    mat_identity(out, n)
+    int k = e
+    if (k < 0) { k = 0 }
+    while (k > 0) {
+        if (k % 2 == 1) {
+            mat_mul(out, base, tmp, n)
+            for (int i = 0; i < n * n; i = i + 1) {
+                out[i] = tmp[i]
+            }
+        }
+        k = idiv(k, 2)
+        if (k > 0) {
+            mat_mul(base, base, tmp, n)
+            for (int i = 0; i < n * n; i = i + 1) {
+                base[i] = tmp[i]
+            }
+        }
+    }
+    return 1
+}
+
+// out = a 的伴随矩阵 (adjugate): out[i][j] = (-1)^(i+j) * det(去掉第 j 行第 i 列的余子式)
+//   要求 n <= 6 (与 mat_det 的递归容量一致); n <= 0 或 n > 6 返回 0;
+//   n == 1 时伴随矩阵为 [1]; out 不得与 a 为同一数组 (内部会读 a 再写 out)
+function mat_adjugate(int[] a, int[] out, int n) -> int {
+    if (n <= 0 || n > 6) { return 0 }
+    if (n == 1) {
+        out[0] = 1
+        return 1
+    }
+    int minor[36]
+    for (int i = 0; i < n; i = i + 1) {
+        for (int j = 0; j < n; j = j + 1) {
+            int k = 0
+            for (int r = 0; r < n; r = r + 1) {
+                if (r == j) { continue }
+                for (int c = 0; c < n; c = c + 1) {
+                    if (c == i) { continue }
+                    minor[k] = a[r * n + c]
+                    k = k + 1
+                }
+            }
+            int v = mat_det(minor, n - 1)
+            if ((i + j) % 2 == 1) { v = 0 - v }
+            out[i * n + j] = v
+        }
+    }
+    return 1
+}

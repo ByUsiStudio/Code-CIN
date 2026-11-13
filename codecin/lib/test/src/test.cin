@@ -72,3 +72,67 @@ function t_report() -> int {
     }
     return T_FAIL
 }
+
+// ==================== 断言扩展 ====================
+
+// 断言浮点近似相等 (绝对容差 1e-9; 需要更大容差请用 t_near)
+function t_eq_float(float got, float want, string label) -> int {
+    float d = got - want
+    if (d < 0.0) { d = -d }
+    if (d <= 0.000000001) {
+        T_PASS = T_PASS + 1
+        return 1
+    }
+    T_FAIL = T_FAIL + 1
+    println("FAIL " + label + ": got=" + float_to_str(got) + " want=" + float_to_str(want))
+    return 0
+}
+
+// 断言两个布尔值相等 (非 0 视为真)
+function t_eq_bool(int got, int want, string label) -> int {
+    int g = 0
+    int w = 0
+    if (got != 0) { g = 1 }
+    if (want != 0) { w = 1 }
+    if (g == w) {
+        T_PASS = T_PASS + 1
+        return 1
+    }
+    T_FAIL = T_FAIL + 1
+    println("FAIL " + label + ": got=" + int_to_str(g) + " want=" + int_to_str(w))
+    return 0
+}
+
+// 断言 got > want
+function t_gt(int got, int want, string label) -> int {
+    if (got > want) {
+        T_PASS = T_PASS + 1
+        return 1
+    }
+    T_FAIL = T_FAIL + 1
+    println("FAIL " + label + ": got=" + int_to_str(got) + " want> " + int_to_str(want))
+    return 0
+}
+
+// 断言 got < want
+function t_lt(int got, int want, string label) -> int {
+    if (got < want) {
+        T_PASS = T_PASS + 1
+        return 1
+    }
+    T_FAIL = T_FAIL + 1
+    println("FAIL " + label + ": got=" + int_to_str(got) + " want< " + int_to_str(want))
+    return 0
+}
+
+// 无条件失败 (用于尚未实现的占位断言)
+function t_fail(string label) -> int {
+    T_FAIL = T_FAIL + 1
+    println("FAIL " + label + ": asserted failure")
+    return 0
+}
+
+// 输出分组标题 (只打印, 不计入通过/失败数)
+function t_case(string name) -> void {
+    println("== " + name + " ==")
+}

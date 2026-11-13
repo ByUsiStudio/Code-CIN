@@ -8,8 +8,14 @@
 //
 // 绘图模型: g_new 成功后, 画布内建 (set_color / fill_rect / fill_circle /
 // draw_line / draw_text) 直接画进窗口后备缓冲, 每次调用 g_update() 才呈现。
-// **窗口打开期间不要再调用 canvas() 与本库的图表助手** —— 它们会把画布
-// 重新绑定为离屏画布, 窗口从此不再更新; g_clear 已用 g_active() 做防护。
+// **窗口打开期间不要再调用 canvas() 与本库的离屏图表助手 (g_bar_chart /
+// g_line_chart / g_scatter)** —— 它们会调用 canvas() 重新绑定为离屏画布,
+// 窗口从此不再更新; g_clear 已用 g_active() 做防护。
+// (g_grid 只画线不重绑画布, 可安全用于窗口; 但需先自行 g_clear 清屏。)
+//
+// 窗口安全的绘图助手 (不调用 canvas(), 有窗口时直接画进窗口):
+//   g_text / g_line / g_circle / g_rect / g_pixel / g_progress_bar。
+// 它们与下面的离屏图表助手共存于本库, 按需使用。
 //
 // 事件模型: 键盘事件与终端共用同一键码队列 (get_key / key_hit, 见 key.cin),
 // 窗口获得焦点时按键会进入该队列; 关闭请求 (点 X / Alt+F4 / WM 删除协议)
@@ -215,4 +221,84 @@ function g_save(string path) -> int {
 // 调用系统查看器弹出窗口
 function g_show() -> int {
     return show_canvas()
+}
+
+// ==================== 三、窗口安全绘图助手 ====================
+// 只使用画布内建 (set_color / fill_rect / fill_circle / draw_line / draw_text),
+// 不调用 canvas() —— 窗口打开时直接画进窗口后备缓冲, 画完需 g_update() 呈现。
+
+// 在 (x, y) 画文本 (内置 5x7 点阵字库, 小写按大写绘制), 颜色 rgb
+function g_text(int x, int y, string s, int rgb) -> void {
+    set_color(rgb)
+    draw_text(x, y, s)
+}
+
+// 直线 (x0,y0) -> (x1,y1), 颜色 rgb
+function g_line(int x0, int y0, int x1, int y1, int rgb) -> void {
+    set_color(rgb)
+    draw_line(x0, y0, x1, y1)
+}
+
+// 实心圆: 圆心 (cx, cy), 半径 r, 颜色 rgb
+function g_circle(int cx, int cy, int r, int rgb) -> void {
+    set_color(rgb)
+    fill_circle(cx, cy, r)
+}
+
+// 实心矩形 (左上角 x,y; 宽 w 高 h), 颜色 rgb
+function g_rect(int x, int y, int w, int h, int rgb) -> void {
+    set_color(rgb)
+    fill_rect(x, y, w, h)
+}
+
+// 单像素点 (内部用 1x1 的 fill_rect 实现), 颜色 rgb
+function g_pixel(int x, int y, int rgb) -> void {
+    set_color(rgb)
+    fill_rect(x, y, 1, 1)
+}
+
+// 进度条: 在 (x,y,w,h) 内先铺浅灰底, 再按 pct (0..100, 越界自动钳制)
+// 从左填充 rgb 色。只使用画布内建, 窗口打开时可直接调用。
+function g_progress_bar(int x, int y, int w, int h, int pct, int rgb) -> void {
+    if (w <= 0 || h <= 0) { return }
+    if (pct < 0) { pct = 0 }
+    if (pct > 100) { pct = 100 }
+    set_color(g_rgb(230, 230, 230))
+    fill_rect(x, y, w, h)
+    int fillw = idiv(w * pct, 100)
+    if (fillw > 0) {
+        set_color(rgb)
+        fill_rect(x, y, fillw, h)
+    }
+}
+
+// 散点图 (离屏画布: 会调用 canvas(w, h), 窗口打开期间不要使用)。
+// xs/ys 为点坐标 (各 n 个), 自动按两组的最小/最大值缩放到 w x h, 每点画 1 像素。
+function g_scatter(int[] xs, int[] ys, int n, int w, int h, int rgb) -> void {
+    canvas(w, h)
+    set_color(g_rgb(255, 255, 255))
+    fill_rect(0, 0, w, h)
+    if (n <= 0 || w <= 0 || h <= 0) { return }
+    int minx = xs[0]
+    int maxx = xs[0]
+    int miny = ys[0]
+    int maxy = ys[0]
+    for (int i = 1; i < n; i = i + 1) {
+        if (xs[i] < minx) { minx = xs[i] }
+        if (xs[i] > maxx) { maxx = xs[i] }
+        if (ys[i] < miny) { miny = ys[i] }
+        if (ys[i] > maxy) { maxy = ys[i] }
+    }
+    set_color(rgb)
+    for (int i = 0; i < n; i = i + 1) {
+        int px = 0
+        if (maxx > minx) {
+            px = idiv((xs[i] - minx) * (w - 1), maxx - minx)
+        }
+        int py = h - 1
+        if (maxy > miny) {
+            py = h - 1 - idiv((ys[i] - miny) * (h - 1), maxy - miny)
+        }
+        fill_rect(px, py, 1, 1)
+    }
 }

@@ -413,3 +413,80 @@ function go_slices_sort(int[] a, int n) -> void {
         }
     }
 }
+
+// ==================== strings / strconv 补充 ====================
+
+// strings.Join: 把 parts[0..n-1] 用 sep 连接 (CIN 无动态数组, 显式传长度)
+function go_strings_join(string[] parts, int n, string sep) -> string {
+    string out = ""
+    for (int i = 0; i < n; i = i + 1) {
+        if (i > 0) { out = out + sep }
+        out = out + parts[i]
+    }
+    return out
+}
+
+// strings.Fields 的计数形态: 按 ASCII 空白分隔的非空片段数
+function go_strings_fields_count(string s) -> int {
+    int n = strlen(s)
+    int total = 0
+    int i = 0
+    while (i < n) {
+        int c = s[i]
+        if (c == 32 || (c >= 9 && c <= 13)) {
+            i = i + 1
+        } else {
+            total = total + 1
+            while (i < n) {
+                int d = s[i]
+                if (d == 32 || (d >= 9 && d <= 13)) { break }
+                i = i + 1
+            }
+        }
+    }
+    return total
+}
+
+// strconv.Atoi 的 (value, ok) 形态: 解析成功写 out[0] 并返回 1;
+// 失败返回 0 且不写 out。允许可选 +/- 前缀, 其余必须全是 0-9
+function go_strconv_atoi_ok(string s, int[] out) -> int {
+    int n = strlen(s)
+    if (n == 0) { return 0 }
+    int i = 0
+    int neg = 0
+    int c = s[0]
+    if (c == 43 || c == 45) {
+        if (c == 45) { neg = 1 }
+        i = 1
+    }
+    if (i >= n) { return 0 }
+    int v = 0
+    while (i < n) {
+        int d = s[i]
+        if (d < 48 || d > 57) { return 0 }
+        v = v * 10 + (d - 48)
+        i = i + 1
+    }
+    if (neg == 1) { v = -v }
+    out[0] = v
+    return 1
+}
+
+// strconv.ParseBool 的 (value, ok) 形态: 成功写 out[0] (0/1) 并返回 1;
+// 失败写 out[0] = -1 并返回 0
+function go_strconv_parse_bool(string s, int[] out) -> int {
+    if (strcmp(s, "1") == 0 || strcmp(s, "t") == 0 || strcmp(s, "T") == 0
+        || strcmp(s, "true") == 0 || strcmp(s, "TRUE") == 0
+        || strcmp(s, "True") == 0) {
+        out[0] = 1
+        return 1
+    }
+    if (strcmp(s, "0") == 0 || strcmp(s, "f") == 0 || strcmp(s, "F") == 0
+        || strcmp(s, "false") == 0 || strcmp(s, "FALSE") == 0
+        || strcmp(s, "False") == 0) {
+        out[0] = 0
+        return 1
+    }
+    out[0] = -1
+    return 0
+}

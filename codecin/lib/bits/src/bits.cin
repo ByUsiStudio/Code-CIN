@@ -141,3 +141,54 @@ function bits_bswap(int x) -> int {
     }
     return r
 }
+
+// popcount 的奇偶性: 1 的个数为奇数返回 1, 否则 0
+function bits_parity(int x) -> int {
+    return bits_popcount(x) % 2
+}
+
+// 0 的个数 (64 位)
+function bits_zero_count(int x) -> int {
+    return 64 - bits_popcount(x)
+}
+
+// 格雷码编码: g = x ^ (x >>> 1) (逻辑右移, 对负数也正确)
+function bits_gray_encode(int x) -> int {
+    int s = (x >> 1) & 0x7FFFFFFFFFFFFFFF
+    return x ^ s
+}
+
+// 格雷码解码 (64 位, 前缀异或展开)
+function bits_gray_decode(int g) -> int {
+    int x = g
+    x = x ^ ((x >> 1) & 0x7FFFFFFFFFFFFFFF)
+    x = x ^ ((x >> 2) & 0x3FFFFFFFFFFFFFFF)
+    x = x ^ ((x >> 4) & 0x0FFFFFFFFFFFFFFF)
+    x = x ^ ((x >> 8) & 0x00FFFFFFFFFFFFFF)
+    x = x ^ ((x >> 16) & 0x0000FFFFFFFFFFFF)
+    x = x ^ ((x >> 32) & 0x00000000FFFFFFFF)
+    return x
+}
+
+// 把低 width 位按有符号数扩展 (width 属于 1..64)
+function bits_sign_extend(int x, int width) -> int {
+    if (width <= 0) { return 0 }
+    if (width >= 64) { return x }
+    int mask = (1 << width) - 1
+    int v = x & mask
+    if (((v >> (width - 1)) & 1) == 1) {
+        v = v | ~mask
+    }
+    return v
+}
+
+// 连续 1 的段数 (例如 0b1011 有 2 段)
+function bits_one_runs(int x) -> int {
+    int runs = 0
+    for (int i = 0; i < 64; i = i + 1) {
+        if (bits_test(x, i) == 1 && (i == 0 || bits_test(x, i - 1) == 0)) {
+            runs = runs + 1
+        }
+    }
+    return runs
+}

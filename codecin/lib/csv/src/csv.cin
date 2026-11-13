@@ -403,3 +403,68 @@ function csv_raw_get(string line, int delim, int idx) -> string {
     }
     return ""
 }
+
+// ---------------- 整行生成 / 原始字段 / 反转义 (新增) ----------------
+// 仍遵守本库的单行、逗号分隔、RFC 4180 引号转义约定 (见文件头"限制")。
+
+// 把 string[] 的前 n 个字段拼成一行 (每个字段按 csv_quote 决定是否加引号)
+// 等价于对每个字段依次调用 csv_line_add; 不走全局缓冲, 也没有 1024 字节上限。
+// n <= 0 返回 ""; 注意拼接产生的堆块不回收, 单次调用请控制字段数/总长度。
+function csv_row(string[] fields, int n) -> string {
+    if (n <= 0) { return "" }
+    string out = csv_quote(fields[0])
+    for (int i = 1; i < n; i = i + 1) {
+        out = out + "," + csv_quote(fields[i])
+    }
+    return out
+}
+
+// 总是加外层双引号并转义内部 " (即使字段为空或不需要引号)
+// csv_escape_quoted("") -> "\"\""; csv_escape_quoted("a\"b") -> "\"a\"\"b\""
+function csv_escape_quoted(string field) -> string {
+    return "\"" + csv_escape(field) + "\""
+}
+
+// csv_escape 的逆操作: 把字段内部的 "" 还原成单个 ", 不处理外层引号。
+// 未出现 "" 时原样返回 field; 空串返回 ""
+function csv_unescape(string field) -> string {
+    int n = strlen(field)
+    string out = ""
+    int seg = 0
+    int i = 0
+    while (i < n) {
+        if (field[i] == '"' && i + 1 < n && field[i + 1] == '"') {
+            out = out + substr(field, seg, i - seg) + "\""
+            i = i + 2
+            seg = i
+        } else {
+            i = i + 1
+        }
+    }
+    return out + substr(field, seg, n - seg)
+}
+
+// 第 idx 个字段的**原始文本** (0 起, 含外层引号与前后的空白, 不含分隔逗号);
+// 越界或 idx < 0 返回 ""; 需要"保留用户原样写法"时用它, 需要去引号值时用 csv_get
+function csv_field_raw(string line, int idx) -> string {
+    if (idx < 0) { return "" }
+    int n = strlen(line)
+    if (n == 0) { return "" }
+    int i = 0
+    int cur = 0
+    while (true) {
+        int nxt = csv_next_start(line, i)
+        int end = n
+        if (nxt >= 0) { end = nxt - 1 }
+        if (cur == idx) { return substr(line, i, end - i) }
+        if (nxt < 0) { return "" }
+        cur = cur + 1
+        i = nxt
+    }
+    return ""
+}
+
+// 一行有多少个字段; 与 csv_count 等价 (命名更直观: 一行 = 一条记录)
+function csv_row_count(string line) -> int {
+    return csv_count(line)
+}

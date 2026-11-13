@@ -129,8 +129,11 @@ function ffi_call8(int fn, int a0, int a1, int a2, int a3, int a4, int a5,
     return ffi_call(fn, buf, 8)
 }
 
-// ---------------- 浮点调用 (1..4 个 float 参数) ----------------
+// ---------------- 浮点调用 (1..8 个 float 参数) --------------
 // 返回值是 double (CIN float 位模式, 直接参与浮点运算即可)。
+// float 参数按 IEEE754 位模式写入 float[] 缓冲, 引擎 ffi_callf 以 double 形式
+// 逐个传参 —— Windows x64 / System V ABI 下浮点参数走 XMM 寄存器, 与整数参数
+// (ffi_call* 走通用寄存器) 是两条独立通道, 因此本库仍不提供混合封装。
 
 function ffi_callf1(int fn, float a0) -> float {
     float buf[8]
@@ -160,4 +163,54 @@ function ffi_callf4(int fn, float a0, float a1, float a2, float a3) -> float {
     buf[2] = a2
     buf[3] = a3
     return ffi_callf(fn, buf, 4)
+}
+
+function ffi_callf5(int fn, float a0, float a1, float a2, float a3,
+                    float a4) -> float {
+    float buf[8]
+    buf[0] = a0
+    buf[1] = a1
+    buf[2] = a2
+    buf[3] = a3
+    buf[4] = a4
+    return ffi_callf(fn, buf, 5)
+}
+
+function ffi_callf6(int fn, float a0, float a1, float a2, float a3,
+                    float a4, float a5) -> float {
+    float buf[8]
+    buf[0] = a0
+    buf[1] = a1
+    buf[2] = a2
+    buf[3] = a3
+    buf[4] = a4
+    buf[5] = a5
+    return ffi_callf(fn, buf, 6)
+}
+
+function ffi_callf7(int fn, float a0, float a1, float a2, float a3,
+                    float a4, float a5, float a6) -> float {
+    float buf[8]
+    buf[0] = a0
+    buf[1] = a1
+    buf[2] = a2
+    buf[3] = a3
+    buf[4] = a4
+    buf[5] = a5
+    buf[6] = a6
+    return ffi_callf(fn, buf, 7)
+}
+
+function ffi_callf8(int fn, float a0, float a1, float a2, float a3,
+                    float a4, float a5, float a6, float a7) -> float {
+    float buf[8]
+    buf[0] = a0
+    buf[1] = a1
+    buf[2] = a2
+    buf[3] = a3
+    buf[4] = a4
+    buf[5] = a5
+    buf[6] = a6
+    buf[7] = a7
+    return ffi_callf(fn, buf, 8)
 }

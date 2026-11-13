@@ -372,3 +372,82 @@ function bs_from_int(int v) -> void {
 function bs_to_int() -> int {
     return bs_data[bs_cur * 8]
 }
+
+// ---------------- 追加: 反向查找 / 集合关系 / 区间操作 ----------------
+
+// 小于等于 from 的最大置位下标; 没有则返回 -1; from 越界返回 -1
+function bs_prev_set(int from) -> int {
+    if (from < 0 || from > 511) { return -1 }
+    int i = from
+    while (i >= 0) {
+        if (bs_test(i) == 1) { return i }
+        i = i - 1
+    }
+    return -1
+}
+
+// 当前槽与槽 other 是否有共同置位; 1/0; other 非法返回 0
+function bs_intersects(int other) -> int {
+    if (bs_valid(other) == 0) { return 0 }
+    for (int w = 0; w < 8; w = w + 1) {
+        if ((bs_data[bs_cur * 8 + w] & bs_data[other * 8 + w]) != 0) { return 1 }
+    }
+    return 0
+}
+
+// 当前槽 &= ~槽 other (差集写回当前槽); 1 成功, 0 表示 other 非法 (无操作)
+function bs_and_not(int other) -> int {
+    if (bs_valid(other) == 0) { return 0 }
+    for (int w = 0; w < 8; w = w + 1) {
+        int m = bs_data[other * 8 + w] ^ 0xFFFFFFFFFFFFFFFF
+        bs_data[bs_cur * 8 + w] = bs_data[bs_cur * 8 + w] & m
+    }
+    return 1
+}
+
+// 把闭区间 [lo, hi] 内的位置 1 (lo/hi 自动钳制到 0..511);
+// 返回**新置位**的位数; 钳制后 hi < lo 返回 0
+function bs_set_range(int lo, int hi) -> int {
+    int a = lo
+    int b = hi
+    if (a < 0) { a = 0 }
+    if (b > 511) { b = 511 }
+    if (b < a) { return 0 }
+    int n = 0
+    for (int i = a; i <= b; i = i + 1) {
+        if (bs_test(i) == 0) { n = n + 1 }
+        bs_set(i)
+    }
+    return n
+}
+
+// 把闭区间 [lo, hi] 内的位清 0 (lo/hi 自动钳制到 0..511);
+// 返回**被清掉**的位数; 钳制后 hi < lo 返回 0
+function bs_clear_range(int lo, int hi) -> int {
+    int a = lo
+    int b = hi
+    if (a < 0) { a = 0 }
+    if (b > 511) { b = 511 }
+    if (b < a) { return 0 }
+    int n = 0
+    for (int i = a; i <= b; i = i + 1) {
+        if (bs_test(i) == 1) { n = n + 1 }
+        bs_clear(i)
+    }
+    return n
+}
+
+// 闭区间 [lo, hi] 内 1 的个数 (lo/hi 自动钳制到 0..511);
+// 钳制后 hi < lo 返回 0
+function bs_count_range(int lo, int hi) -> int {
+    int a = lo
+    int b = hi
+    if (a < 0) { a = 0 }
+    if (b > 511) { b = 511 }
+    if (b < a) { return 0 }
+    int n = 0
+    for (int i = a; i <= b; i = i + 1) {
+        if (bs_test(i) == 1) { n = n + 1 }
+    }
+    return n
+}

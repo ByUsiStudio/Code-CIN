@@ -113,3 +113,55 @@ function uf_union(int a, int b) -> int {
     uf_comps = uf_comps - 1
     return 1
 }
+
+// ---------------- 追加: 分组统计 / 全量压缩 / 根列表 ----------------
+
+// 重新扫描所有元素得到的不同根数量 (不依赖 uf_comps 计数)。
+//   正常情况下与 uf_count 相等; uf_n == 0 返回 0
+function uf_group_count() -> int {
+    int c = 0
+    for (int i = 0; i < uf_n; i = i + 1) {
+        if (uf_find(i) == i) { c = c + 1 }
+    }
+    return c
+}
+
+// 最大集合的大小; uf_n == 0 返回 0
+function uf_largest_group() -> int {
+    int best = 0
+    for (int i = 0; i < uf_n; i = i + 1) {
+        if (uf_find(i) == i) {
+            if (uf_sz[i] > best) { best = uf_sz[i] }
+        }
+    }
+    return best
+}
+
+// 对所有元素做一次路径压缩 (uf_find 会把路径压平), 返回压缩后的根个数
+function uf_compress_all() -> int {
+    int c = 0
+    for (int i = 0; i < uf_n; i = i + 1) {
+        if (uf_find(i) == i) { c = c + 1 }
+    }
+    return c
+}
+
+// 把每个集合的代表元 (升序) 写入 out; out 至少要有 uf_n 个槽。
+//   返回根个数; uf_n == 0 返回 0 且不写 out
+function uf_root_list(int[] out) -> int {
+    int c = 0
+    for (int i = 0; i < uf_n; i = i + 1) {
+        if (uf_find(i) == i) {
+            out[c] = i
+            c = c + 1
+        }
+    }
+    return c
+}
+
+// x 是否为其所在集合的代表元; 非法元素返回 0
+function uf_is_root(int x) -> int {
+    if (x < 0 || x >= uf_n) { return 0 }
+    if (uf_find(x) == x) { return 1 }
+    return 0
+}

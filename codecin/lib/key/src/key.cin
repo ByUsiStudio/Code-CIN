@@ -76,3 +76,69 @@ function key_wait() -> int {
     }
     return -1
 }
+
+// ==================== 键位分类 / 命名 / 轮询扩展 ====================
+
+// 是否方向键 (不含 Ctrl/Shift 组合, 组合见 k_is_modified_arrow)
+function k_is_arrow(int code) -> int {
+    if (code >= 1001 && code <= 1004) { return 1 }
+    return 0
+}
+
+// 是否导航键 (方向键 / Home / End / PgUp / PgDn / Ins / Del)
+function k_is_nav(int code) -> int {
+    if (code >= 1001 && code <= 1010) { return 1 }
+    return 0
+}
+
+// 是否回车 (K_ENTER 或换行字节 10)
+function k_is_enter(int code) -> int {
+    if (code == K_ENTER || code == 10) { return 1 }
+    return 0
+}
+
+// 非阻塞轮询: 有键返回键码, 无键返回 -1 (不睡眠)
+function key_poll() -> int {
+    if (key_hit() == 0) { return -1 }
+    return get_key()
+}
+
+// 私有: 字符码 -> 单字符字符串 (32..126 与 \t \n; 其余返回空串)
+function _key_chr(int code) -> string {
+    if (code == 10) { return "\n" }
+    if (code == 9) { return "\t" }
+    if (code < 32 || code > 126) { return "" }
+    string all = " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~"
+    return substr(all, code - 32, 1)
+}
+
+// 键码 -> 可读名称 (可打印 ASCII 返回该字符本身, 不认识的键返回 "")
+function k_key_name(int code) -> string {
+    if (code == 8) { return "Backspace" }
+    if (code == 9) { return "Tab" }
+    if (code == 10) { return "LF" }
+    if (code == 13) { return "Enter" }
+    if (code == 27) { return "Esc" }
+    if (code == 32) { return "Space" }
+    if (code == 1001) { return "Up" }
+    if (code == 1002) { return "Down" }
+    if (code == 1003) { return "Left" }
+    if (code == 1004) { return "Right" }
+    if (code == 1005) { return "Home" }
+    if (code == 1006) { return "End" }
+    if (code == 1007) { return "PgUp" }
+    if (code == 1008) { return "PgDn" }
+    if (code == 1009) { return "Ins" }
+    if (code == 1010) { return "Del" }
+    if (code >= 1021 && code <= 1032) { return "F" + int_to_str(code - 1020) }
+    if (code == 1101) { return "Ctrl+Up" }
+    if (code == 1102) { return "Ctrl+Down" }
+    if (code == 1103) { return "Ctrl+Left" }
+    if (code == 1104) { return "Ctrl+Right" }
+    if (code == 1105) { return "Shift+Up" }
+    if (code == 1106) { return "Shift+Down" }
+    if (code == 1107) { return "Shift+Left" }
+    if (code == 1108) { return "Shift+Right" }
+    if (code == 1109) { return "Shift+Tab" }
+    return _key_chr(code)
+}

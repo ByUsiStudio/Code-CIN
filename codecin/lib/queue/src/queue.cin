@@ -110,3 +110,64 @@ function stack_peek() -> int {
     if (stack_len == 0) { return 0 }
     return stack_data[stack_len - 1]
 }
+
+// ---------------- 追加: 按下标访问 / 旋转 / 反转 / 批量入队 ----------------
+
+// 队列中第 k 个元素 (k = 0 是队首); k 越界或队列为空返回 0
+function queue_peek_at(int k) -> int {
+    if (k < 0 || k >= queue_len) { return 0 }
+    return queue_ring[(queue_head + k) % 64]
+}
+
+// 循环左移 k 个位置 (k < 0 表示右移, |k| 按队列长度取模);
+//   返回实际左移的元素个数 (0..queue_len-1), 空队列返回 0
+function queue_rotate(int k) -> int {
+    if (queue_len == 0) { return 0 }
+    int n = queue_len
+    int steps = k % n
+    if (steps < 0) { steps = steps + n }
+    for (int i = 0; i < steps; i = i + 1) {
+        int v = queue_pop()
+        queue_push(v)
+    }
+    return steps
+}
+
+// 反转队列 (队首与队尾互换); 空队列或单元素无操作
+function queue_reverse() -> void {
+    int n = queue_len
+    for (int i = 0; i < idiv(n, 2); i = i + 1) {
+        int x = (queue_head + i) % 64
+        int y = (queue_head + n - 1 - i) % 64
+        int t = queue_ring[x]
+        queue_ring[x] = queue_ring[y]
+        queue_ring[y] = t
+    }
+}
+
+// 批量入队: 依次压入 vals[0..n-1], 队列满即停止; 返回成功入队的个数
+function queue_push_all(int[] vals, int n) -> int {
+    int c = 0
+    for (int i = 0; i < n; i = i + 1) {
+        if (queue_push(vals[i]) == 0) { break }
+        c = c + 1
+    }
+    return c
+}
+
+// 第 k 个栈元素 (k = 0 是栈底, k = stack_size()-1 是栈顶);
+//   k 越界或栈为空返回 0
+function stack_peek_at(int k) -> int {
+    if (k < 0 || k >= stack_len) { return 0 }
+    return stack_data[k]
+}
+
+// 反转栈 (栈底变栈顶); 空栈或单元素无操作
+function stack_reverse() -> void {
+    for (int i = 0; i < idiv(stack_len, 2); i = i + 1) {
+        int j = stack_len - 1 - i
+        int t = stack_data[i]
+        stack_data[i] = stack_data[j]
+        stack_data[j] = t
+    }
+}

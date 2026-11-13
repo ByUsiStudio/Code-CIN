@@ -44,3 +44,66 @@ function r_chance(int p) -> int {
     if (rand() % 100 < p) { return 1 }
     return 0
 }
+
+// 自然对数 (内部辅助: 先规格化到 [1,2), 再用 atanh 级数)
+function r_ln(float x) -> float {
+    if (x <= 0.0) { return 0.0 - 1000000000000.0 }
+    int k = 0
+    while (x >= 2.0) {
+        x = x / 2.0
+        k = k + 1
+    }
+    while (x < 1.0) {
+        x = x * 2.0
+        k = k - 1
+    }
+    float y = (x - 1.0) / (x + 1.0)
+    float y2 = y * y
+    float term = y
+    float sum = 0.0
+    for (int i = 1; i < 40; i = i + 2) {
+        sum = sum + term / i
+        term = term * y2
+    }
+    return 2.0 * sum + k * 0.6931471805599453
+}
+
+// 正态分布随机数 (Box-Muller 变换)
+function r_normal(float mu, float sigma) -> float {
+    float u1 = r_float()
+    if (u1 <= 0.0) { u1 = 0.000000001 }
+    float u2 = r_float()
+    float z = sqrt(-2.0 * r_ln(u1)) * cos(6.283185307179586 * u2)
+    return mu + sigma * z
+}
+
+// 按权重随机返回下标 (权重 <= 0 视为不可选); 全部不可选或无元素返回 -1
+function r_weighted(int[] w, int n) -> int {
+    if (n <= 0) { return -1 }
+    int total = 0
+    for (int i = 0; i < n; i = i + 1) {
+        if (w[i] > 0) { total = total + w[i] }
+    }
+    if (total <= 0) { return -1 }
+    int r = rand() % total
+    int cum = 0
+    for (int i = 0; i < n; i = i + 1) {
+        if (w[i] > 0) {
+            cum = cum + w[i]
+            if (r < cum) { return i }
+        }
+    }
+    return -1
+}
+
+// 掷骰子: 返回 1..sides; sides <= 0 返回 0
+function r_dice(int sides) -> int {
+    if (sides <= 0) { return 0 }
+    return r_range(1, sides)
+}
+
+// 随机下标 [0, n); n <= 0 返回 -1
+function r_sample_index(int n) -> int {
+    if (n <= 0) { return -1 }
+    return r_range(0, n - 1)
+}

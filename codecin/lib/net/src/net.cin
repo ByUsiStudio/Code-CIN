@@ -13,10 +13,14 @@
 //   dns_lookup(host) -> IP 字符串 (失败空串)
 //
 // 本库在其上提供:
-//   * HTTP: 带自定义头的 GET/POST、状态码便捷判断;
-//   * TCP: 发送字符串、按行接收 (文本协议友好)、echo 客户端一步到位;
-//   * UDP: 字符串收发封装 (主机名自动解析);
-//   * DNS: 解析 + 反查。
+//   * HTTP: 带自定义头的 GET/POST/PUT/PATCH/DELETE、JSON 提交、状态码短语;
+//   * TCP: 发送字符串、按行接收 (文本协议友好)、echo 客户端一步到位,
+//          服务端一次性 echo (收一行回一行后关闭);
+//   * UDP: 字符串收发封装 (主机名自动解析)、带回源地址的消息接收;
+//   * DNS: 正向解析 (dns_lookup)。
+//
+// 明确不提供: dns_reverse (反向解析) —— 引擎没有对应宿主能力, 不伪造该接口;
+// 需要反查请自行调用外部命令 (exec_output)。
 //
 // 缓冲区约定: CIN 数组每个元素占 8 字节, tcp_recv / udp_recvfrom 把收到的
 // 字节流原样写入缓冲区内存。接收辅助函数接收 `int[] buf` 并按小端字节序
@@ -168,4 +172,109 @@ function dns_resolve(string host) -> string {
 // 主机名是否可解析。
 function dns_ok(string host) -> int {
     return dns_lookup(host) != ""
+}
+
+// ---------------- HTTP: 其他方法与状态码短语 ----------------
+
+// PUT (可带自定义头)。headers 形式同 http_get_headers ("Key: Value\n..."),
+// 空串表示无。
+function http_put(string url, string body, string headers) -> string {
+    return http_req("PUT", url, headers, body)
+}
+
+// PATCH (可带自定义头)。
+function http_patch(string url, string body, string headers) -> string {
+    return http_req("PATCH", url, headers, body)
+}
+
+// DELETE (可带自定义头; 无请求体)。
+function http_delete(string url, string headers) -> string {
+    return http_req("DELETE", url, headers, "")
+}
+
+// 以 application/json 提交 (自动设置 Content-Type 头)。
+function http_post_json(string url, string json) -> string {
+    return http_req("POST", url, "Content-Type: application/json", json)
+}
+
+// HTTP 状态码 -> 常见英文短语 (不联网; 可与 http_code() 配合):
+//   print(http_status_text(http_code()))
+// 未识别的码返回 "Unknown"; -1 (从未请求 / 请求失败) 返回 "No Response"。
+function http_status_text(int code) -> string {
+    if (code == 100) { return "Continue" }
+    if (code == 101) { return "Switching Protocols" }
+    if (code == 200) { return "OK" }
+    if (code == 201) { return "Created" }
+    if (code == 202) { return "Accepted" }
+    if (code == 204) { return "No Content" }
+    if (code == 206) { return "Partial Content" }
+    if (code == 301) { return "Moved Permanently" }
+    if (code == 302) { return "Found" }
+    if (code == 304) { return "Not Modified" }
+    if (code == 307) { return "Temporary Redirect" }
+    if (code == 308) { return "Permanent Redirect" }
+    if (code == 400) { return "Bad Request" }
+    if (code == 401) { return "Unauthorized" }
+    if (code == 403) { return "Forbidden" }
+    if (code == 404) { return "Not Found" }
+    if (code == 405) { return "Method Not Allowed" }
+    if (code == 408) { return "Request Timeout" }
+    if (code == 409) { return "Conflict" }
+    if (code == 413) { return "Payload Too Large" }
+    if (code == 415) { return "Unsupported Media Type" }
+    if (code == 422) { return "Unprocessable Entity" }
+    if (code == 429) { return "Too Many Requests" }
+    if (code == 500) { return "Internal Server Error" }
+    if (code == 501) { return "Not Implemented" }
+    if (code == 502) { return "Bad Gateway" }
+    if (code == 503) { return "Service Unavailable" }
+    if (code == 504) { return "Gateway Timeout" }
+    if (code == -1) { return "No Response" }
+    return "Unknown"
+}
+
+// ---------------- TCP: 服务端一次性 echo ----------------
+
+// 接受一个连接 -> 收一行 -> 回一行 (自动补 "\n") -> 关闭连接。
+// 返回回送的字节数 / -1 (没有连接可接受或收发出错)。
+// 服务器主循环示例:
+//   int lfd = tcp_server(7000)
+//   while (1) { tcp_server_echo_once(lfd) }
+function tcp_server_echo_once(int lfd) -> int {
+    int cfd = tcp_accept(lfd)
+    if (cfd <= 0) { return -1 }
+    int buf[512]
+    string line = tcp_recv_line(cfd, buf, 4096)
+    int sent = tcp_send_line(cfd, line)
+    tcp_close(cfd)
+    return sent
+}
+
+// ---------------- UDP: 带回源地址的消息接收 ----------------
+
+// 接收一个数据报: 正文重组为字符串返回, 源地址 "ip:port" 由引擎写入 src
+// (原始文本, NUL 结尾), 调用方自行按字节读取 (srcmax 为 src 缓冲的容量,
+// 建议 >= 64; 本函数不读取 src, 仅原样交给 udp_recvfrom)。
+//
+// 读取源地址示例 (src 为 int[16], srcmax = 128):
+//   int i = 0
+//   while (i < srcmax) {
+//       int b = (src[idiv(i, 8)] >> ((i % 8) * 8)) & 0xFF
+//       if (b == 0) { break }
+//       ... 逐字节处理 ...
+//       i = i + 1
+//   }
+function udp_recv_msg(int fd, int[] buf, int max, int[] src, int srcmax) -> string {
+    int n = udp_recvfrom(fd, buf, max, src)
+    if (n <= 0) { return "" }
+    string s = ""
+    int i = 0
+    while (i < n) {
+        int k = idiv(i, 8)
+        int b = (buf[k] >> ((i % 8) * 8)) & 0xFF
+        if (b == 0) { break }
+        if (b > 0) { s = s + substr(net_bytes, b - 1, 1) }
+        i = i + 1
+    }
+    return s
 }

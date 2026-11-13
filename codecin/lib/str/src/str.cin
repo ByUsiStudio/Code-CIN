@@ -52,3 +52,108 @@ function s_repeat(string ch, int n) -> string {
     }
     return out
 }
+
+// ---------------- 切分与拼接 (新增) ----------------
+// 与 token.cin 的 tok_* 语义一致: delim 按整串匹配, 保留空字段;
+// 空串切分后是 1 个空字段, delim 为空串时整串是唯一字段。
+// 所有下标与长度都是**字节**语义 (UTF-8 汉字算 3 字节)。
+
+// 字段个数 = s_count(s, delim) + 1; 空串返回 1, delim 为空串返回 1
+function s_split_count(string s, string delim) -> int {
+    return s_count(s, delim) + 1
+}
+
+// 第 idx 个字段 (0 起, 新堆块); idx 越界或为负返回 ""; delim 为空串时只有 idx == 0 有效
+function s_split_get(string s, string delim, int idx) -> string {
+    if (idx < 0) { return "" }
+    int n = strlen(s)
+    int dl = strlen(delim)
+    if (dl == 0) {
+        if (idx == 0) { return s }
+        return ""
+    }
+    int cur = 0
+    int pos = 0
+    while (pos <= n) {
+        int found = -1
+        int k = pos
+        while (k + dl <= n) {
+            int m = 0
+            int ok = 1
+            while (m < dl) {
+                if (s[k + m] != delim[m]) {
+                    ok = 0
+                    break
+                }
+                m = m + 1
+            }
+            if (ok == 1) {
+                found = k
+                break
+            }
+            k = k + 1
+        }
+        if (found < 0) { break }
+        if (cur == idx) { return substr(s, pos, found - pos) }
+        cur = cur + 1
+        pos = found + dl
+    }
+    if (cur == idx) { return substr(s, pos, n - pos) }
+    return ""
+}
+
+// 用 sep 拼接 string[] 的前 n 个元素; n <= 0 返回 ""; sep 为空串时直接首尾相连
+// 注意: 结果在堆上, 单次调用建议 n 与总长度都保持较小 (堆约 64 KiB 且不回收)
+function s_join(string[] parts, int n, string sep) -> string {
+    if (n <= 0) { return "" }
+    string out = parts[0]
+    for (int i = 1; i < n; i = i + 1) {
+        out = out + sep + parts[i]
+    }
+    return out
+}
+
+// 全部替换 (不重叠); from 为空串时原样返回 s
+function s_replace(string s, string from, string to) -> string {
+    if (strlen(from) == 0) { return s }
+    int n = strlen(s)
+    int fl = strlen(from)
+    string out = ""
+    int pos = 0
+    while (pos < n) {
+        string rest = substr(s, pos, n - pos)
+        int at = indexof(rest, from)
+        if (at < 0) { break }
+        out = out + substr(s, pos, at) + to
+        pos = pos + at + fl
+    }
+    return out + substr(s, pos, n - pos)
+}
+
+// needle 最后一次出现的字节下标 (允许重叠匹配); 未找到 -1; 空 needle 返回 strlen(hay)
+function s_last_index_of(string s, string needle) -> int {
+    int n = strlen(s)
+    int nl = strlen(needle)
+    if (nl == 0) { return n }
+    int last = -1
+    int i = 0
+    while (i + nl <= n) {
+        int m = 0
+        int ok = 1
+        while (m < nl) {
+            if (s[i + m] != needle[m]) {
+                ok = 0
+                break
+            }
+            m = m + 1
+        }
+        if (ok == 1) { last = i }
+        i = i + 1
+    }
+    return last
+}
+
+// 去掉首尾空白 (空格 / \t / \n / \r), 中间空白原样保留
+function s_trim(string s) -> string {
+    return trim(s)
+}

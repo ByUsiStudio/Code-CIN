@@ -321,3 +321,87 @@ function txt_swap_case(string s) -> string {
     }
     return out
 }
+
+// ---------------- 行 / 截断 / 简化 (新增) ----------------
+// 行以单个 '\n' 分隔; '\r' 只在 txt_line 返回时从行尾去掉。
+// 所有长度仍是**字节**语义 (UTF-8 汉字算 3 字节)。
+
+// 行数: 空串为 0; 尾随 '\n' 只结束当前行, 不额外产生空行。
+// txt_lines("a") == 1, txt_lines("a\n") == 1, txt_lines("a\n\n") == 2, txt_lines("\n") == 1
+function txt_lines(string s) -> int {
+    int n = strlen(s)
+    if (n == 0) { return 0 }
+    int count = 0
+    for (int i = 0; i < n; i = i + 1) {
+        if (s[i] == '\n') { count = count + 1 }
+    }
+    if (s[n - 1] != '\n') { count = count + 1 }
+    return count
+}
+
+// 第 idx 行 (0 起, 不含行尾 '\n'; 行尾的单个 '\r' 会去掉); 越界或为负返回 ""
+function txt_line(string s, int idx) -> string {
+    if (idx < 0) { return "" }
+    int n = strlen(s)
+    if (n == 0) { return "" }
+    int cur = 0
+    int start = 0
+    int i = 0
+    while (i < n) {
+        if (s[i] == '\n') {
+            int end = i
+            if (end > start && s[end - 1] == '\r') { end = end - 1 }
+            if (cur == idx) { return substr(s, start, end - start) }
+            cur = cur + 1
+            start = i + 1
+        }
+        i = i + 1
+    }
+    int end = n
+    if (end > start && s[end - 1] == '\r') { end = end - 1 }
+    if (cur == idx) { return substr(s, start, end - start) }
+    return ""
+}
+
+// 截断到最多 max_bytes 字节; 超长时保留前 max_bytes - 3 字节并追加 "..."。
+// max_bytes <= 0 返回 ""; max_bytes <= 3 时不加省略号, 直接取前 max_bytes 字节。
+// 字节截断可能把 UTF-8 多字节字符切开 (需要整字符请用 txt_slice)
+function txt_truncate(string s, int max_bytes) -> string {
+    if (max_bytes <= 0) { return "" }
+    int n = strlen(s)
+    if (n <= max_bytes) { return s }
+    if (max_bytes <= 3) { return substr(s, 0, max_bytes) }
+    return substr(s, 0, max_bytes - 3) + "..."
+}
+
+// 简化成 slug: ASCII 字母转小写, 连续的非字母数字字节折叠成一个 '-',
+// 去掉首尾 '-'。只保留 ASCII 字母/数字, 其余字节 (含 UTF-8 中文) 都当分隔符。
+// txt_slug("Hello,  World!") == "hello-world"; txt_slug("  --A__b  ") == "a-b"
+function txt_slug(string s) -> string {
+    int n = strlen(s)
+    string out = ""
+    int pending = 0
+    int i = 0
+    while (i < n) {
+        if (txt_is_alnum_byte(s[i]) == 1) {
+            int j = i
+            while (j < n) {
+                if (txt_is_alnum_byte(s[j]) == 0) { break }
+                j = j + 1
+            }
+            if (strlen(out) > 0 && pending == 1) { out = out + "-" }
+            out = out + lower(substr(s, i, j - i))
+            pending = 0
+            i = j
+        } else {
+            if (strlen(out) > 0) { pending = 1 }
+            i = i + 1
+        }
+    }
+    return out
+}
+
+// 去掉首尾空白 (空格 / \t / \n / \r); 中间空白原样保留
+function txt_trim(string s) -> string {
+    return trim(s)
+}

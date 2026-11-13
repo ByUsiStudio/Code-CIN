@@ -136,3 +136,71 @@ function stat_is_sorted(int[] a, int n) -> int {
     }
     return 1
 }
+
+// 平均绝对偏差 (以整数均值为基准, 结果截断取整)
+function stat_mad(int[] a, int n) -> int {
+    if (n <= 0) { return 0 }
+    int m = stat_mean(a, n)
+    int s = 0
+    for (int i = 0; i < n; i = i + 1) {
+        int d = a[i] - m
+        if (d < 0) { d = 0 - d }
+        s = s + d
+    }
+    return idiv(s, n)
+}
+
+// 协方差 ×1000 (总体口径, 整数化)
+// cov = (n*sum(xy) - sum(x)*sum(y)) / n^2
+function stat_covariance_x1000(int[] a, int[] b, int n) -> int {
+    if (n <= 0) { return 0 }
+    int sx = 0
+    int sy = 0
+    int sxy = 0
+    for (int i = 0; i < n; i = i + 1) {
+        sx = sx + a[i]
+        sy = sy + b[i]
+        sxy = sxy + a[i] * b[i]
+    }
+    return idiv((n * sxy - sx * sy) * 1000, n * n)
+}
+
+// 一元线性回归斜率 ×1000; 自变量方差为 0 时返回 0
+function stat_linreg_slope_x1000(int[] x, int[] y, int n) -> int {
+    if (n <= 1) { return 0 }
+    int sx = 0
+    int sy = 0
+    int sxy = 0
+    int sxx = 0
+    for (int i = 0; i < n; i = i + 1) {
+        sx = sx + x[i]
+        sy = sy + y[i]
+        sxy = sxy + x[i] * y[i]
+        sxx = sxx + x[i] * x[i]
+    }
+    int den = n * sxx - sx * sx
+    if (den == 0) { return 0 }
+    return idiv((n * sxy - sx * sy) * 1000, den)
+}
+
+// 单点 z 分数 ×100 (以整数均值和总体标准差为基准, 截断取整)
+function stat_zscore_x100(int[] a, int n, int v) -> int {
+    if (n <= 0) { return 0 }
+    int var1000 = stat_variance_x1000(a, n)
+    if (var1000 <= 0) { return 0 }
+    float sd = sqrt(var1000 / 1000.0)
+    int z = (v - stat_mean(a, n)) * 100.0 / sd
+    return z
+}
+
+// 几何平均数 ×1000 (要求所有元素为正; 含非正元素或 n <= 0 返回 0)
+function stat_geomean_x1000(int[] a, int n) -> int {
+    if (n <= 0) { return 0 }
+    float p = 1.0
+    for (int i = 0; i < n; i = i + 1) {
+        if (a[i] <= 0) { return 0 }
+        p = p * a[i]
+    }
+    int g = round(pow(p, 1.0 / n) * 1000.0)
+    return g
+}

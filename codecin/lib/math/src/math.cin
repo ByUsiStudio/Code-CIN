@@ -48,3 +48,48 @@ function i_clamp(int v, int lo, int hi) -> int {
     if (v > hi) { return hi }
     return v
 }
+
+// 角度 -> 弧度
+function f_deg2rad(float d) -> float {
+    return d * 3.14159265358979323846 / 180.0
+}
+
+// 弧度 -> 角度
+function f_rad2deg(float r) -> float {
+    return r * 180.0 / 3.14159265358979323846
+}
+
+// 直角三角形斜边 sqrt(a^2 + b^2)
+function f_hypot(float a, float b) -> float {
+    return sqrt(a * a + b * b)
+}
+
+// |a-b| <= eps 时返回 1, 否则 0
+function f_is_close(float a, float b, float eps) -> int {
+    if (f_abs(a - b) <= eps) { return 1 }
+    return 0
+}
+
+// 最大公约数 (对参数取绝对值; gcd(0, 0) = 0)
+function i_gcd(int a, int b) -> int {
+    int x = a
+    int y = b
+    if (x < 0) { x = 0 - x }
+    if (y < 0) { y = 0 - y }
+    while (y != 0) {
+        int t = x % y
+        x = y
+        y = t
+    }
+    return x
+}
+
+// 最小公倍数 (任一参数为 0 返回 0; 结果非负)
+function i_lcm(int a, int b) -> int {
+    if (a == 0 || b == 0) { return 0 }
+    int x = a
+    int y = b
+    if (x < 0) { x = 0 - x }
+    if (y < 0) { y = 0 - y }
+    return idiv(x, i_gcd(x, y)) * y
+}

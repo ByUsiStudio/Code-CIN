@@ -561,3 +561,214 @@ function codec_reverse_bytes(string s) -> string {
     }
     return out
 }
+
+// ---------------- Base32 / 十六进制转储 / 古典密码 (新增) ----------------
+// 仍是**字节**语义; 输入输出里的字节 0 无法表示 (解码遇 0 返回 "", 与 base64 一致)。
+
+// RFC 4648 base32 编码 (字母表 A-Z2-7, '=' 填充); 空串返回空串
+// 输出长度 = ceil(n / 5) * 8, 末尾按剩余字节补 1..6 个 '='
+function codec_base32_encode(string s) -> string {
+    string a = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567"
+    int n = strlen(s)
+    if (n == 0) { return "" }
+    string out = ""
+    int i = 0
+    while (i + 5 <= n) {
+        int b0 = s[i]
+        int b1 = s[i + 1]
+        int b2 = s[i + 2]
+        int b3 = s[i + 3]
+        int b4 = s[i + 4]
+        out = out + substr(a, b0 >> 3, 1)
+        out = out + substr(a, ((b0 & 7) << 2) | (b1 >> 6), 1)
+        out = out + substr(a, (b1 >> 1) & 31, 1)
+        out = out + substr(a, ((b1 & 1) << 4) | (b2 >> 4), 1)
+        out = out + substr(a, ((b2 & 15) << 1) | (b3 >> 7), 1)
+        out = out + substr(a, (b3 >> 2) & 31, 1)
+        out = out + substr(a, ((b3 & 3) << 3) | (b4 >> 5), 1)
+        out = out + substr(a, b4 & 31, 1)
+        i = i + 5
+    }
+    int rem = n - i
+    if (rem == 1) {
+        int b0 = s[i]
+        out = out + substr(a, b0 >> 3, 1) + substr(a, (b0 & 7) << 2, 1) + "======"
+    } else if (rem == 2) {
+        int b0 = s[i]
+        int b1 = s[i + 1]
+        out = out + substr(a, b0 >> 3, 1) + substr(a, ((b0 & 7) << 2) | (b1 >> 6), 1) + substr(a, (b1 >> 1) & 31, 1) + substr(a, (b1 & 1) << 4, 1) + "===="
+    } else if (rem == 3) {
+        int b0 = s[i]
+        int b1 = s[i + 1]
+        int b2 = s[i + 2]
+        out = out + substr(a, b0 >> 3, 1) + substr(a, ((b0 & 7) << 2) | (b1 >> 6), 1) + substr(a, (b1 >> 1) & 31, 1) + substr(a, ((b1 & 1) << 4) | (b2 >> 4), 1) + substr(a, (b2 & 15) << 1, 1) + "==="
+    } else if (rem == 4) {
+        int b0 = s[i]
+        int b1 = s[i + 1]
+        int b2 = s[i + 2]
+        int b3 = s[i + 3]
+        out = out + substr(a, b0 >> 3, 1) + substr(a, ((b0 & 7) << 2) | (b1 >> 6), 1) + substr(a, (b1 >> 1) & 31, 1) + substr(a, ((b1 & 1) << 4) | (b2 >> 4), 1) + substr(a, ((b2 & 15) << 1) | (b3 >> 7), 1) + substr(a, (b3 >> 2) & 31, 1) + substr(a, (b3 & 3) << 3, 1) + "="
+    }
+    return out
+}
+
+// base32 -> 字节串; 接受带 '=' 的标准形式与无填充形式 (大小写不敏感),
+// 非法字符 / '=' 不在末尾 / 非法数据长度时返回 ""。
+// 与 base64 解码一致: 输出字节 0 无法表示, 遇 0 返回 ""
+function codec_base32_decode(string b) -> string {
+    int n = strlen(b)
+    if (n == 0) { return "" }
+    int i = 0
+    int data_len = 0
+    int pad = 0
+    int seen_pad = 0
+    while (i < n) {
+        int c = b[i]
+        if (c == '=') {
+            seen_pad = 1
+            pad = pad + 1
+            i = i + 1
+            continue
+        }
+        if (seen_pad == 1) { return "" }
+        if (c >= 'A' && c <= 'Z') {
+            data_len = data_len + 1
+        } else if (c >= 'a' && c <= 'z') {
+            data_len = data_len + 1
+        } else if (c >= '2' && c <= '7') {
+            data_len = data_len + 1
+        } else {
+            return ""
+        }
+        i = i + 1
+    }
+    int mod = data_len % 8
+    if (mod == 1 || mod == 3 || mod == 6) { return "" }
+    if (pad > 0 && (n % 8) != 0) { return "" }
+    string out = ""
+    int acc = 0
+    int bits = 0
+    i = 0
+    while (i < data_len) {
+        int c = b[i]
+        int v = 0
+        if (c >= 'A' && c <= 'Z') {
+            v = c - 'A'
+        } else if (c >= 'a' && c <= 'z') {
+            v = c - 'a'
+        } else {
+            v = c - '2' + 26
+        }
+        acc = (acc << 5) | v
+        bits = bits + 5
+        while (bits >= 8) {
+            bits = bits - 8
+            int byte = (acc >> bits) & 255
+            if (byte == 0) { return "" }
+            out = out + codec_chr_of(byte)
+        }
+        acc = acc & 255
+        i = i + 1
+    }
+    return out
+}
+
+// 十六进制转储: 每行 16 字节, 格式 "<8位小写偏移>  <16 组 xx> |<可打印 ASCII>|"
+// 不可打印字节在 ASCII 区显示为 '.', 空行区补空格; 每行以 '\n' 结束 (含末行)。
+// 单次最多处理 256 字节, 超出部分截断并追加一行 "..."。
+// 空串返回空串。
+function codec_hexdump(string s) -> string {
+    int n = strlen(s)
+    if (n == 0) { return "" }
+    int truncated = 0
+    if (n > 256) {
+        n = 256
+        truncated = 1
+    }
+    string out = ""
+    int off = 0
+    while (off < n) {
+        int row_end = off + 16
+        if (row_end > n) { row_end = n }
+        string line = ""
+        int sh = 28
+        while (sh >= 0) {
+            line = line + substr("0123456789abcdef", (off >> sh) & 15, 1)
+            sh = sh - 4
+        }
+        line = line + "  "
+        for (int k = 0; k < 16; k = k + 1) {
+            if (off + k < row_end) {
+                line = line + codec_hex_byte(s[off + k]) + " "
+            } else {
+                line = line + "   "
+            }
+        }
+        line = line + " |"
+        for (int k = 0; k < 16; k = k + 1) {
+            if (off + k < row_end) {
+                int c = s[off + k]
+                if (c >= 32 && c <= 126) {
+                    line = line + substr(s, off + k, 1)
+                } else {
+                    line = line + "."
+                }
+            } else {
+                line = line + " "
+            }
+        }
+        line = line + "|\n"
+        out = out + line
+        off = row_end
+    }
+    if (truncated == 1) { out = out + "...\n" }
+    return out
+}
+
+// 维吉尼亚密码: 只移动 ASCII 字母, 大小写保持; 非字母原样输出且不消耗密钥。
+// 密钥中的非字母字节按 0 位移; 密钥为空时原样返回 s。
+// decrypt == 0 加密, 非 0 解密 (自逆, 密钥相同时可还原)。
+function codec_vigenere(string s, string key, int decrypt) -> string {
+    int kn = strlen(key)
+    if (kn == 0) { return s }
+    string out = ""
+    int n = strlen(s)
+    int ki = 0
+    for (int i = 0; i < n; i = i + 1) {
+        int c = s[i]
+        if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')) {
+            int kc = key[ki % kn]
+            int shift = 0
+            if (kc >= 'A' && kc <= 'Z') { shift = kc - 'A' }
+            if (kc >= 'a' && kc <= 'z') { shift = kc - 'a' }
+            ki = ki + 1
+            int m = shift % 26
+            if (decrypt != 0) { m = (26 - m) % 26 }
+            if (c >= 'A' && c <= 'Z') {
+                out = out + codec_chr_of((c - 'A' + m) % 26 + 'A')
+            } else {
+                out = out + codec_chr_of((c - 'a' + m) % 26 + 'a')
+            }
+        } else {
+            out = out + substr(s, i, 1)
+        }
+    }
+    return out
+}
+
+// Atbash 密码: A<->Z, a<->z, 其它字节原样; 自逆 (加密 = 解密)
+function codec_atbash(string s) -> string {
+    string out = ""
+    int n = strlen(s)
+    for (int i = 0; i < n; i = i + 1) {
+        int c = s[i]
+        if (c >= 'A' && c <= 'Z') {
+            out = out + codec_chr_of('Z' - (c - 'A'))
+        } else if (c >= 'a' && c <= 'z') {
+            out = out + codec_chr_of('z' - (c - 'a'))
+        } else {
+            out = out + substr(s, i, 1)
+        }
+    }
+    return out
+}

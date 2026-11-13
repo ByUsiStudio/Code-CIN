@@ -1,6 +1,9 @@
 // Code CIN 官方标准库: 排序与查找 (sort)
 // 用法: import "sort.cin"
 
+// 归并排序的临时缓冲区 (库作用域, 供 sort_merge 使用)
+int sort_tmp[256]
+
 // 是否已升序有序
 function sort_is_sorted(int[] a, int n) -> int {
     for (int i = 1; i < n; i = i + 1) {
@@ -90,4 +93,147 @@ function bin_search(int[] a, int n, int v) -> int {
         }
     }
     return -1
+}
+
+// 自底向上归并排序 (原地, 升序); n > 256 时退化为插入排序
+function sort_merge(int[] a, int n) -> void {
+    if (n <= 1) { return }
+    if (n > 256) {
+        sort_insertion(a, n)
+        return
+    }
+    int width = 1
+    while (width < n) {
+        int lo = 0
+        while (lo < n) {
+            int mid = lo + width
+            if (mid > n) { mid = n }
+            int hi = mid + width
+            if (hi > n) { hi = n }
+            int i = lo
+            int j = mid
+            int k = lo
+            while (i < mid && j < hi) {
+                if (a[i] <= a[j]) {
+                    sort_tmp[k] = a[i]
+                    i = i + 1
+                } else {
+                    sort_tmp[k] = a[j]
+                    j = j + 1
+                }
+                k = k + 1
+            }
+            while (i < mid) {
+                sort_tmp[k] = a[i]
+                i = i + 1
+                k = k + 1
+            }
+            while (j < hi) {
+                sort_tmp[k] = a[j]
+                j = j + 1
+                k = k + 1
+            }
+            for (int t = lo; t < hi; t = t + 1) { a[t] = sort_tmp[t] }
+            lo = lo + width * 2
+        }
+        width = width * 2
+    }
+}
+
+// 堆排序 (原地, 升序); 不依赖 heap.cin
+function sort_heap(int[] a, int n) -> void {
+    if (n <= 1) { return }
+    for (int i = idiv(n, 2) - 1; i >= 0; i = i - 1) {
+        int root1 = i
+        int done1 = 0
+        while (done1 == 0) {
+            int l = 2 * root1 + 1
+            int r = 2 * root1 + 2
+            int best = root1
+            if (l < n && a[l] > a[best]) { best = l }
+            if (r < n && a[r] > a[best]) { best = r }
+            if (best == root1) {
+                done1 = 1
+            } else {
+                int t1 = a[root1]
+                a[root1] = a[best]
+                a[best] = t1
+                root1 = best
+            }
+        }
+    }
+    for (int end = n - 1; end > 0; end = end - 1) {
+        int t2 = a[0]
+        a[0] = a[end]
+        a[end] = t2
+        int root2 = 0
+        int done2 = 0
+        while (done2 == 0) {
+            int l = 2 * root2 + 1
+            int r = 2 * root2 + 2
+            int best = root2
+            if (l < end && a[l] > a[best]) { best = l }
+            if (r < end && a[r] > a[best]) { best = r }
+            if (best == root2) {
+                done2 = 1
+            } else {
+                int t3 = a[root2]
+                a[root2] = a[best]
+                a[best] = t3
+                root2 = best
+            }
+        }
+    }
+}
+
+// 降序排序 (先升序再整体反转, 原地)
+function sort_desc(int[] a, int n) -> void {
+    if (n <= 1) { return }
+    sort_quick_all(a, n)
+    int i = 0
+    int j = n - 1
+    while (i < j) {
+        int t = a[i]
+        a[i] = a[j]
+        a[j] = t
+        i = i + 1
+        j = j - 1
+    }
+}
+
+// 对区间 [lo, hi) 升序排序 (原地, 越界下标自动钳制)
+function sort_range(int[] a, int lo, int hi) -> void {
+    if (lo < 0) { lo = 0 }
+    if (hi <= lo) { return }
+    sort_quick(a, lo, hi - 1)
+}
+
+// 首个 >= v 的下标 (数组需升序); 全部 < v 时返回 n
+function bin_lower_bound(int[] a, int n, int v) -> int {
+    int lo = 0
+    int hi = n
+    while (lo < hi) {
+        int mid = idiv(lo + hi, 2)
+        if (a[mid] < v) {
+            lo = mid + 1
+        } else {
+            hi = mid
+        }
+    }
+    return lo
+}
+
+// 首个 > v 的下标 (数组需升序); 全部 <= v 时返回 n
+function bin_upper_bound(int[] a, int n, int v) -> int {
+    int lo = 0
+    int hi = n
+    while (lo < hi) {
+        int mid = idiv(lo + hi, 2)
+        if (a[mid] <= v) {
+            lo = mid + 1
+        } else {
+            hi = mid
+        }
+    }
+    return lo
 }

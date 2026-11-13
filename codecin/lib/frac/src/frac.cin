@@ -250,3 +250,60 @@ function fr_to_float(Frac a) -> float {
     }
     return a.num / a.den
 }
+
+// 倒数 1/a; a 为 0 时返回 0/1 并置错误标志
+function fr_recip(Frac a) -> Frac {
+    Frac r
+    if (a.num == 0) {
+        fr_err = 1
+        r.num = 0
+        r.den = 1
+        return r
+    }
+    r.num = a.den
+    r.den = a.num
+    fr_norm(r)
+    return r
+}
+
+// 整数次幂 a^e (e 可为负, 负幂取倒数); 快速幂实现
+function fr_pow(Frac a, int e) -> Frac {
+    if (e == 0) { return fr_make(1, 1) }
+    int neg = 0
+    if (e < 0) {
+        neg = 1
+        e = 0 - e
+    }
+    Frac base
+    base.num = a.num
+    base.den = a.den
+    Frac r = fr_make(1, 1)
+    while (e > 0) {
+        if (e % 2 == 1) { r = fr_mul(r, base) }
+        base = fr_mul(base, base)
+        e = idiv(e, 2)
+    }
+    if (neg == 1) { r = fr_recip(r) }
+    return r
+}
+
+// 保留 places 位小数后的浮点近似 (places 钳制到 0..9)
+function fr_to_decimal(Frac a, int places) -> float {
+    float v = fr_to_float(a)
+    if (places <= 0) {
+        int q = v
+        return q
+    }
+    if (places > 9) { places = 9 }
+    int f = 1
+    for (int i = 0; i < places; i = i + 1) { f = f * 10 }
+    return round(v * f) / f
+}
+
+// 与浮点数比较: -1 (a < x) / 0 / 1 (a > x)
+function fr_compare_float(Frac a, float x) -> int {
+    float v = fr_to_float(a)
+    if (v < x) { return -1 }
+    if (v > x) { return 1 }
+    return 0
+}

@@ -65,3 +65,62 @@ function hash_bucket(int h, int buckets) -> int {
 function hash_string_bucket(string s, int buckets) -> int {
     return hash_bucket(hash_fnv1a(s), buckets)
 }
+
+// ---------------- CRC / Adler / 混合散列 (新增) ----------------
+// 全部按 64 位整数槽运算并显式掩码, 结果不依赖溢出行为; 纯函数, 无全局状态。
+
+// CRC-32 (IEEE 802.3, 反射多项式 0xEDB88320, 初值/异或值均为 0xFFFFFFFF)
+// 返回无符号 32 位结果 (0..0xFFFFFFFF); 空串返回 0
+function hash_crc32(string s) -> int {
+    int crc = 0xFFFFFFFF
+    int n = strlen(s)
+    for (int i = 0; i < n; i = i + 1) {
+        crc = (crc ^ s[i]) & 0xFFFFFFFF
+        for (int k = 0; k < 8; k = k + 1) {
+            if ((crc & 1) == 1) {
+                crc = ((crc >> 1) ^ 0xEDB88320) & 0xFFFFFFFF
+            } else {
+                crc = (crc >> 1) & 0xFFFFFFFF
+            }
+        }
+    }
+    return (crc ^ 0xFFFFFFFF) & 0xFFFFFFFF
+}
+
+// Adler-32 (mod 65521): 低 16 位为 a (字节和 + 1), 高 16 位为 b (前缀和);
+// 空串返回 1 (a = 1, b = 0)
+function hash_adler32(string s) -> int {
+    int a = 1
+    int b = 0
+    int n = strlen(s)
+    for (int i = 0; i < n; i = i + 1) {
+        a = (a + s[i]) % 65521
+        b = (b + a) % 65521
+    }
+    return (b << 16) | a
+}
+
+// 64 位雪崩混合 (MurmurHash3 fmix64 风格): 打散低位规律性输入,
+// 与 hash_int (splitmix64 风格) 使用不同常量, 两者可互补使用
+function hash_mix64(int x) -> int {
+    int z = x & 0xFFFFFFFFFFFFFFFF
+    z = (z ^ (z >> 33)) * 0xFF51AFD7ED558CCD
+    z = z & 0xFFFFFFFFFFFFFFFF
+    z = (z ^ (z >> 33)) * 0xC4CEB9FE1A85EC53
+    z = z & 0xFFFFFFFFFFFFFFFF
+    return z ^ (z >> 33)
+}
+
+// 字节串 -> 桶下标: 先做 64 位 FNV-1a (初值 0x9E3779B97F4A7C15), 再做 hash_mix64 雪崩,
+// 最后映射到 [0, buckets); buckets <= 0 返回 0。
+// 与 hash_string_bucket 的区别: 多一步雪崩混合, 低位分布更均匀。
+function hash_bytes_bucket(string s, int buckets) -> int {
+    int h = 0x9E3779B97F4A7C15
+    int n = strlen(s)
+    for (int i = 0; i < n; i = i + 1) {
+        h = h ^ s[i]
+        h = h * 0x100000001B3
+        h = h & 0xFFFFFFFFFFFFFFFF
+    }
+    return hash_bucket(hash_mix64(h), buckets)
+}

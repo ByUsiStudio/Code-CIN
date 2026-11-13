@@ -1,6 +1,12 @@
 // Code CIN 官方标准库: Termux API 便捷封装 (termux)
 // 用法: import "termux.cin"
-// 说明: 需 termux-api 命令 + Termux:API 应用; 非 Termux 环境下调用返回 -1/空串。
+// 说明: 需 termux-api 命令 + Termux:API 应用; 非 Termux 环境下调用返回 -1/空串
+//       (不抛异常), 可先用 tx_ok() 探测; `--sandbox` 下宿主调用会被拦截。
+// 前缀: tx_
+// 依赖内建: termux_available / termux_notify / termux_* 系列,
+//           以及 Android/Termux 扩展 (termux_call / termux_share / termux_torch /
+//           termux_volume / termux_brightness / termux_camera_photo /
+//           termux_fingerprint / termux_sensor / android_intent)。
 import "json.cin"
 
 // Termux API 是否可用 (1/0)
@@ -115,4 +121,68 @@ function tx_alert(string title, string content) -> int {
     int r = termux_notify(title, content)
     termux_vibrate(200)
     return r
+}
+
+// ---------------- Android / Termux 扩展 (薄封装) ----------------
+
+// 拨打电话 (termux-telephony-call); 0 成功 / -1 不可用
+function tx_call(string number) -> int {
+    return termux_call(number)
+}
+
+// 通过系统分享面板分享文件 (termux-share); 0 成功 / -1 不可用
+function tx_share(string path) -> int {
+    return termux_share(path)
+}
+
+// 手电筒开关 (on 非 0 为开); 0 成功 / -1 不可用
+function tx_torch(int on) -> int {
+    return termux_torch(on)
+}
+
+// 设置音量: stream 为 "music" / "call" / "alarm" / "notification" /
+// "ring" / "system" 等, level 为 0..15 (设备相关); 0 成功 / -1 不可用
+function tx_volume(string stream, int level) -> int {
+    return termux_volume(stream, level)
+}
+
+// 设置屏幕亮度: level 0..255; 0 成功 / -1 不可用
+function tx_brightness(int level) -> int {
+    return termux_brightness(level)
+}
+
+// 用后置摄像头拍照并保存到 path; 0 成功 / -1 不可用
+function tx_photo(string path) -> int {
+    return termux_camera_photo(path)
+}
+
+// 指纹验证 (原始 JSON 文本, 不可用为空串)
+function tx_fingerprint() -> string {
+    return termux_fingerprint()
+}
+
+// 读取一次传感器数据 (原始 JSON 文本, 不可用为空串);
+// name 如 "accelerometer" / "light" / "gyroscope" 等
+function tx_sensor(string name) -> string {
+    return termux_sensor(name)
+}
+
+// 发起系统 Intent: action 如 "android.intent.action.VIEW",
+// uri 可空串 (如 "https://example.com"); 0 成功 / -1 不可用
+function tx_intent(string action, string uri) -> int {
+    return android_intent(action, uri)
+}
+
+// 当前 WiFi 的 IP 地址 (不可用为空串)
+function tx_wifi_ip() -> string {
+    string j = termux_wifi_info()
+    if (strlen(j) == 0) { return "" }
+    return j_str(j, "ip")
+}
+
+// 电池健康状态字符串 (如 "GOOD" / "OVERHEAT"; 不可用为空串)
+function tx_battery_health() -> string {
+    string j = termux_battery()
+    if (strlen(j) == 0) { return "" }
+    return j_str(j, "health")
 }

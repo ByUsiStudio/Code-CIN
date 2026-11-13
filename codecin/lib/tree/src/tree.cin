@@ -254,3 +254,73 @@ function tree_postorder_str() -> string {
     }
     return out
 }
+
+// ---------------- 追加: 求和 / 区间计数 / 深度 / 内部节点 / BST 校验 ----------------
+
+// 所有键之和; 空树返回 0
+function tree_sum() -> int {
+    int s = 0
+    for (int i = 0; i < tree_count; i = i + 1) {
+        s = s + tree_key[i]
+    }
+    return s
+}
+
+// 键落在闭区间 [lo, hi] 内的节点个数; 空树返回 0
+function tree_count_range(int lo, int hi) -> int {
+    int c = 0
+    for (int i = 0; i < tree_count; i = i + 1) {
+        if (tree_key[i] >= lo && tree_key[i] <= hi) { c = c + 1 }
+    }
+    return c
+}
+
+// 键 k 的深度 (根为 0, 每下一层加 1); 不在树中返回 -1
+function tree_depth_of(int k) -> int {
+    if (tree_root < 0) { return -1 }
+    int cur = tree_root
+    int d = 0
+    while (cur >= 0) {
+        if (k == tree_key[cur]) { return d }
+        if (k < tree_key[cur]) {
+            cur = tree_left[cur]
+        } else {
+            cur = tree_right[cur]
+        }
+        d = d + 1
+    }
+    return -1
+}
+
+// 内部节点个数 (至少有一个孩子); 空树返回 0
+function tree_count_internal() -> int {
+    int c = 0
+    for (int i = 0; i < tree_count; i = i + 1) {
+        if (tree_left[i] >= 0 || tree_right[i] >= 0) { c = c + 1 }
+    }
+    return c
+}
+
+// 二叉搜索树性质校验 (中序必须严格递增); 空树返回 1
+function tree_is_bst() -> int {
+    int prev = 0
+    int first = 1
+    int sp = 0
+    int cur = tree_root
+    while (sp > 0 || cur >= 0) {
+        while (cur >= 0) {
+            tree_aux_node[sp] = cur
+            sp = sp + 1
+            cur = tree_left[cur]
+        }
+        sp = sp - 1
+        int nd = tree_aux_node[sp]
+        if (first == 0) {
+            if (tree_key[nd] <= prev) { return 0 }
+        }
+        prev = tree_key[nd]
+        first = 0
+        cur = tree_right[nd]
+    }
+    return 1
+}

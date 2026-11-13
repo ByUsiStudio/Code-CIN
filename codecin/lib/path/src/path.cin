@@ -12,9 +12,7 @@
 // 因此**同名用户函数永远不会被调用** (无原生库时直接报 "host builtins ... require
 // the native Go runtime")。本库把这三个纯字符串版本命名为
 //   path_str_join / path_str_basename / path_str_dirname
-// 其余函数名与任务规格完全一致 (path_sep_posix / path_is_sep / path_ext / path_stem /
-// path_normalize / path_is_absolute / path_trim_sep / path_split_count /
-// path_split_get / path_common_prefix / path_within / path_change_ext)。
+// 需要真实文件系统能力时请使用 io.cin 的 io_abs / io_tmpdir / io_is_dir。
 //
 // 分隔符: '/' 与 '\' 等价 (两种都识别), 路径总是按 Unix 风格 ('/') 输出。
 // 容量常量:
@@ -369,4 +367,31 @@ function path_change_ext(string p, string newext) -> string {
     if (strlen(body) > 0) { return keep + body + "/" + stem + ext }
     if (path_is_absolute(p) == 1) { return "/" + stem + ext }
     return stem + ext
+}
+
+// ---------------- 纯字符串补充 (新增) ----------------
+// 以下函数全部为纯字符串实现, 不访问文件系统, 也不会让本库失去“纯 CIN”分类。
+
+// 是否**POSIX 根**绝对路径: 只看首字节是否为 '/' (或 '\'), 盘符形式 "C:\a" 返回 0。
+// 与 path_is_absolute 的差别: 后者也认盘符, 本函数更严格 (适合拼 URL/Unix 路径)
+function path_is_abs(string p) -> int {
+    if (strlen(p) > 0 && path_is_sep(p[0]) == 1) { return 1 }
+    return 0
+}
+
+// 三段拼接: path_join3(a, b, c) 等价 path_str_join(path_str_join(a, b), c)
+// 任一段为空按 path_str_join 规则跳过; c 为绝对路径时忽略 a/b
+function path_join3(string a, string b, string c) -> string {
+    return path_str_join(path_str_join(a, b), c)
+}
+
+// 去掉扩展名后的**完整路径** (目录部分保留):
+//   "a/b/c.txt" -> "a/b/c"; "a/b" -> "a/b"; "/a.txt" -> "/a"; "" -> ""
+// "." / ".." 等特殊基名不做扩展名处理, 目录形式 "a/b/" -> "a/b"
+function path_stem_full(string p) -> string {
+    string stem = path_stem(p)
+    string dir = path_str_dirname(p)
+    if (strlen(dir) == 0) { return stem }
+    if (strcmp(dir, "/") == 0) { return "/" + stem }
+    return dir + "/" + stem
 }

@@ -146,3 +146,172 @@ function val_is_hex_color(string s) -> int {
     }
     return 1
 }
+
+// ---------------- 常见格式校验 (新增) ----------------
+// 全部为**ASCII 简化校验**: 只认 ASCII 字符, 不做 IDN / 国际化域名,
+// 也不做 DNS 真实存在性检查; 长度按字节 (strlen) 计算。
+
+// 邮箱: local@domain; 恰好一个 '@'; local 长度 1..64,
+// 允许 A-Za-z0-9 与 . _ - +; domain 长度 1..253、至少含一个 '.',
+// 每个标签非空且只含 A-Za-z0-9 与 '-', 标签首尾不能是 '-'
+function val_is_email(string s) -> int {
+    int n = strlen(s)
+    if (n == 0 || n > 254) { return 0 }
+    int at = -1
+    int ats = 0
+    for (int i = 0; i < n; i = i + 1) {
+        if (s[i] == '@') {
+            ats = ats + 1
+            at = i
+        }
+    }
+    if (ats != 1) { return 0 }
+    if (at < 1 || at > 64) { return 0 }
+    for (int i = 0; i < at; i = i + 1) {
+        int c = s[i]
+        if (val_is_alnum(c) == 0) {
+            if (c != '.' && c != '_' && c != '-' && c != '+') { return 0 }
+        }
+    }
+    int ds = at + 1
+    int dlen = n - ds
+    if (dlen < 1 || dlen > 253) { return 0 }
+    int label_start = ds
+    int dots = 0
+    for (int i = ds; i <= n; i = i + 1) {
+        if (i == n || s[i] == '.') {
+            int ll = i - label_start
+            if (ll < 1) { return 0 }
+            if (s[label_start] == '-' || s[i - 1] == '-') { return 0 }
+            for (int k = label_start; k < i; k = k + 1) {
+                int c = s[k]
+                if (val_is_alnum(c) == 0 && c != '-') { return 0 }
+            }
+            if (i < n) {
+                dots = dots + 1
+                label_start = i + 1
+            }
+        }
+    }
+    if (dots < 1) { return 0 }
+    return 1
+}
+
+// URL: scheme "://" authority [path] [?query] [#fragment]
+//   * scheme 首字符必须是字母, 其余为 A-Za-z0-9 或 + - .;
+//   * 整体不得含空格或控制/非 ASCII 字节 (只允许 33..126 的可打印 ASCII);
+//   * scheme 之后到 '/' '?' '#' 之前必须有非空 authority。
+// 不做逐段合法性检查 (如端口范围、百分号转义完整性)。
+function val_is_url(string s) -> int {
+    int n = strlen(s)
+    if (n == 0) { return 0 }
+    for (int i = 0; i < n; i = i + 1) {
+        int c = s[i]
+        if (c <= 32 || c >= 127) { return 0 }
+    }
+    int p = indexof(s, "://")
+    if (p < 1) { return 0 }
+    if (val_is_alpha(s[0]) == 0) { return 0 }
+    for (int i = 1; i < p; i = i + 1) {
+        int c = s[i]
+        if (val_is_alnum(c) == 0) {
+            if (c != '+' && c != '-' && c != '.') { return 0 }
+        }
+    }
+    int hs = p + 3
+    if (hs >= n) { return 0 }
+    int he = hs
+    while (he < n) {
+        int c = s[he]
+        if (c == '/' || c == '?' || c == '#') { break }
+        he = he + 1
+    }
+    if (he == hs) { return 0 }
+    return 1
+}
+
+// IPv4 点分十进制: 恰好 4 段, 每段 0..255 的十进制数字;
+// 不接受前导 0 的多位数字 ("01"), 不接受空段与尾随 '.'
+function val_is_ipv4(string s) -> int {
+    int n = strlen(s)
+    if (n == 0) { return 0 }
+    int i = 0
+    int parts = 0
+    while (i < n) {
+        int digits = 0
+        int val = 0
+        int first = -1
+        while (i < n && s[i] != '.') {
+            int c = s[i]
+            if (val_is_digit(c) == 0) { return 0 }
+            if (first < 0) { first = c }
+            val = val * 10 + (c - '0')
+            digits = digits + 1
+            if (val > 255) { return 0 }
+            i = i + 1
+        }
+        if (digits == 0) { return 0 }
+        if (digits > 1 && first == '0') { return 0 }
+        parts = parts + 1
+        if (i < n) {
+            i = i + 1
+            if (i >= n) { return 0 }
+        }
+    }
+    if (parts != 4) { return 0 }
+    return 1
+}
+
+// 日期 "YYYY-MM-DD" (公历, 年份 0001..9999), 含闰年判断:
+// 能被 4 整除且不能被 100 整除, 或能被 400 整除的年份二月有 29 天
+function val_is_date(string s) -> int {
+    if (strlen(s) != 10) { return 0 }
+    if (s[4] != '-' || s[7] != '-') { return 0 }
+    for (int i = 0; i < 10; i = i + 1) {
+        if (i == 4 || i == 7) { continue }
+        if (val_is_digit(s[i]) == 0) { return 0 }
+    }
+    int y = (s[0] - '0') * 1000 + (s[1] - '0') * 100 + (s[2] - '0') * 10 + (s[3] - '0')
+    int m = (s[5] - '0') * 10 + (s[6] - '0')
+    int d = (s[8] - '0') * 10 + (s[9] - '0')
+    if (y < 1) { return 0 }
+    if (m < 1 || m > 12) { return 0 }
+    if (d < 1) { return 0 }
+    int leap = 0
+    if ((y % 4 == 0 && y % 100 != 0) || y % 400 == 0) { leap = 1 }
+    int days = 31
+    if (m == 4 || m == 6 || m == 9 || m == 11) { days = 30 }
+    if (m == 2) { days = 28 + leap }
+    if (d > days) { return 0 }
+    return 1
+}
+
+// UUID: 36 字节, 连字符固定在第 8/13/18/23 位 (4-4-4-4-12 十六进制分组),
+// 其余必须是十六进制字符
+function val_is_uuid(string s) -> int {
+    if (strlen(s) != 36) { return 0 }
+    for (int i = 0; i < 36; i = i + 1) {
+        if (i == 8 || i == 13 || i == 18 || i == 23) {
+            if (s[i] != '-') { return 0 }
+        } else {
+            if (val_is_hex(s[i]) == 0) { return 0 }
+        }
+    }
+    return 1
+}
+
+// TCP/UDP 端口: 纯十进制数字, 1..65535;
+// 不接受空串、符号、前导 0 ("080") 与 0
+function val_is_port(string s) -> int {
+    int n = strlen(s)
+    if (n < 1 || n > 5) { return 0 }
+    if (n > 1 && s[0] == '0') { return 0 }
+    int v = 0
+    for (int i = 0; i < n; i = i + 1) {
+        int c = s[i]
+        if (val_is_digit(c) == 0) { return 0 }
+        v = v * 10 + (c - '0')
+    }
+    if (v < 1 || v > 65535) { return 0 }
+    return 1
+}

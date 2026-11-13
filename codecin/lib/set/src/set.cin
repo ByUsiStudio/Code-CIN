@@ -267,3 +267,81 @@ function set_to_str(int which) -> string {
     }
     return out + "}"
 }
+
+// ---------------- 追加: 对称差 / 不相交 / 导出数组 / 区间增删 / 后继 ----------------
+
+// dst = a ^ b (对称差); 1 成功, 0 表示有非法槽 (dst 可与 a / b 为同一个槽)
+function set_sym_diff_into(int dst, int a, int b) -> int {
+    if (set_valid(dst) == 0 || set_valid(a) == 0 || set_valid(b) == 0) { return 0 }
+    for (int w = 0; w < 2; w = w + 1) {
+        set_data[dst * 2 + w] = set_data[a * 2 + w] ^ set_data[b * 2 + w]
+    }
+    return 1
+}
+
+// a 与 b 是否不相交 (没有公共元素); 1/0; 有非法槽返回 0
+function set_is_disjoint(int a, int b) -> int {
+    if (set_valid(a) == 0 || set_valid(b) == 0) { return 0 }
+    for (int w = 0; w < 2; w = w + 1) {
+        if ((set_data[a * 2 + w] & set_data[b * 2 + w]) != 0) { return 0 }
+    }
+    return 1
+}
+
+// 把元素按升序写入 out (out 至少 128 个槽), 返回元素个数; which 非法返回 -1
+function set_to_array(int which, int[] out) -> int {
+    if (set_valid(which) == 0) { return -1 }
+    int n = 0
+    for (int v = 0; v < 128; v = v + 1) {
+        if (set_raw_test(which, v) == 1) {
+            out[n] = v
+            n = n + 1
+        }
+    }
+    return n
+}
+
+// 把闭区间 [lo, hi] 内尚不存在的元素加入; 返回新增个数。
+//   lo/hi 自动钳制到 [0, 127]; 钳制后 hi < lo 返回 0; which 非法返回 -1
+function set_add_range(int which, int lo, int hi) -> int {
+    if (set_valid(which) == 0) { return -1 }
+    int a = lo
+    int b = hi
+    if (a < 0) { a = 0 }
+    if (b > 127) { b = 127 }
+    if (b < a) { return 0 }
+    int n = 0
+    for (int v = a; v <= b; v = v + 1) {
+        if (set_add(which, v) == 1) { n = n + 1 }
+    }
+    return n
+}
+
+// 把闭区间 [lo, hi] 内的元素全部删除; 返回真正删掉的个数
+//   lo/hi 自动钳制到 [0, 127]; 钳制后 hi < lo 返回 0; which 非法返回 -1
+function set_remove_range(int which, int lo, int hi) -> int {
+    if (set_valid(which) == 0) { return -1 }
+    int a = lo
+    int b = hi
+    if (a < 0) { a = 0 }
+    if (b > 127) { b = 127 }
+    if (b < a) { return 0 }
+    int n = 0
+    for (int v = a; v <= b; v = v + 1) {
+        if (set_remove(which, v) == 1) { n = n + 1 }
+    }
+    return n
+}
+
+// 大于等于 from 的最小元素; 没有返回 -1; which 非法返回 -1; from < 0 视为 0
+function set_next(int which, int from) -> int {
+    if (set_valid(which) == 0) { return -1 }
+    int i = from
+    if (i < 0) { i = 0 }
+    if (i > 127) { return -1 }
+    while (i < 128) {
+        if (set_raw_test(which, i) == 1) { return i }
+        i = i + 1
+    }
+    return -1
+}
