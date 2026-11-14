@@ -27,8 +27,6 @@ Python 仅保留 CLI、日志与工程管理。本次同时把版本真源、Go 
 - PE 控制台输出、AArch64 真实运行、GUI / 音频 / 画布 / HTTP / DNS 未完成。
 - `--native` 与 `mkn build --native` 均依赖 Go 工具链现编 `cincc`。
 
-## [Unreleased]
-
 ### 文档 (Docs)
 
 - 新增 Windows PE 后端（部分可用）：`cincc -target x86_64-windows` 产出
