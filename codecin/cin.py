@@ -20,9 +20,11 @@
 """
 
 import fnmatch
+import glob
 import os
 import re
 import struct
+import sys
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Set, Tuple
 
@@ -310,6 +312,8 @@ BUILTIN_MIN_ARGS = {
     'upper': 1, 'lower': 1,
     'trim': 1, 'ltrim': 1, 'rtrim': 1, 'atoi': 1,
     'time': 0, 'input': 0,
+    # 通用系统调用: syscall(nr, a0..a4) 直接按 ISA SYS 号调用宿主能力
+    'syscall': 1,
 }
 BUILTIN_MIN_ARGS.update({k: v[1] for k, v in HOST_BUILTINS.items()})
 
@@ -620,6 +624,99 @@ _PKG_NAME_RE = re.compile(r'^[A-Za-z][A-Za-z0-9_-]{0,63}$')
 def _is_relative_import(name: str) -> bool:
     """``import "./x.cin"`` / ``import "../x.cin"`` 视为相对引用。"""
     return name.startswith(_RELATIVE_PREFIXES)
+
+
+#: 平台专用源码后缀: ``foo_win.cin`` / ``foo_linux.cin`` / ``foo_macos.cin``
+#: / ``foo_android.cin``。
+_PLATFORM_SUFFIXES = ('win', 'linux', 'macos', 'android')
+
+
+def _host_platform() -> str:
+    """编译期平台名 (``win`` / ``linux`` / ``macos`` / ``android``)。
+
+    可用 ``CIN_TARGET_PLATFORM`` 覆盖 (交叉构建或测试时显式指定平台文件)。
+    Android/Termux 同时满足 ``sys.platform == 'linux'``, 这里优先判为 android。
+    """
+    override = os.environ.get('CIN_TARGET_PLATFORM', '').strip().lower()
+    if override in _PLATFORM_SUFFIXES:
+        return override
+    if sys.platform.startswith('win'):
+        return 'win'
+    if sys.platform == 'darwin':
+        return 'macos'
+    if 'android' in sys.platform:
+        return 'android'
+    if sys.platform.startswith('linux'):
+        if (os.environ.get('TERMUX_VERSION')
+                or 'com.termux' in os.environ.get('PREFIX', '')):
+            return 'android'
+        return 'linux'
+    return 'linux'
+
+
+def _platform_suffix(path: str) -> Optional[str]:
+    """返回文件名中的平台后缀 (``foo_win.cin`` -> ``win``); 无则 None。"""
+    stem = os.path.splitext(os.path.basename(path))[0]
+    for suffix in _PLATFORM_SUFFIXES:
+        if stem.lower().endswith('_' + suffix):
+            return suffix
+    return None
+
+
+def _platform_variant(path: str, platform: str) -> Optional[str]:
+    """给 ``dir/foo.cin`` 找出当前平台专用文件 ``dir/foo_<platform>.cin``。
+
+    ``path`` 本身已带平台后缀时: 与当前平台一致则原样返回, 否则返回 None
+    (表示该文件属于其它平台)。
+    """
+    if os.path.splitext(path)[1].lower() != '.cin':
+        return None
+    suffix = _platform_suffix(path)
+    if suffix is not None:
+        return path if suffix == platform else None
+    cand = f'{os.path.splitext(path)[0]}_{platform}.cin'
+    if os.path.isfile(cand):
+        return cand
+    return None
+
+
+def _resolve_relative_imports(name: str, source_dir: str) -> List[str]:
+    """解析相对 import, 支持 ``*``/``?`` 通配与平台专用文件。
+
+    通配模式 (如 ``import "./src/*.cin"``):
+      * 按路径排序展开, 只保留 ``.cin`` 文件;
+      * 属于其它平台的 ``foo_<平台>.cin`` 被排除, 当前平台的专用文件优先于
+        同名 ``foo.cin`` (按去掉平台后缀后的路径去重)。
+
+    普通相对路径 (如 ``import "./foo.cin"``):
+      * 存在 ``foo_<当前平台>.cin`` 时优先使用, 否则回退 ``foo.cin``。
+    """
+    platform = _host_platform()
+    pattern = os.path.normpath(os.path.join(source_dir, name))
+    if any(ch in name for ch in '*?['):
+        matches = sorted(glob.glob(pattern))
+        chosen: Dict[str, str] = {}
+        for path in matches:
+            if not os.path.isfile(path) or not path.lower().endswith('.cin'):
+                continue
+            suffix = _platform_suffix(path)
+            if suffix is not None and suffix != platform:
+                continue
+            base = path
+            if suffix is not None:
+                stem = path[:-len('.cin')]
+                base = stem[:-len(suffix) - 1] + '.cin'
+            prev = chosen.get(base)
+            if prev is None or suffix == platform:
+                chosen[base] = path
+        return [chosen[key] for key in sorted(chosen)]
+
+    variant = _platform_variant(pattern, platform)
+    if variant is not None:
+        return [variant]
+    if os.path.isfile(pattern):
+        return [pattern]
+    return []
 
 
 def _cin_path_dirs() -> List[str]:
@@ -1067,8 +1164,9 @@ def _resolve_import(name: str, source_dir: str) -> List[str]:
     """
     if _is_relative_import(name):
         cand = os.path.normpath(os.path.join(source_dir, name))
-        if os.path.isfile(cand):
-            return [cand]
+        targets = _resolve_relative_imports(name, source_dir)
+        if targets:
+            return targets
         raise CompilerError(
             f"Import file not found: {name!r} (相对引用, 已查找 {cand})")
 
@@ -3973,7 +4071,7 @@ class CodeGen:
         if name in ('sin', 'cos', 'tan', 'sqrt', 'pow', 'floor', 'ceil', 'round'):
             return 'float'
         if name in ('strlen', 'strcmp', 'rand', 'time', 'abs', 'input',
-                    'idiv', 'atoi'):
+                    'idiv', 'atoi', 'syscall'):
             return 'int'
         if name in ('strcpy', 'int_to_str', 'itoa', 'float_to_str', 'ftoa',
                     'bool_to_str', 'substr', 'upper', 'lower',
@@ -3989,6 +4087,31 @@ class CodeGen:
         for i in range(len(args) - 1, -1, -1):
             self.emit('POP', self.reg(i))
         self.emit('SYS', self.imm(sys_id))
+
+    def _gen_raw_syscall(self, args: list) -> str:
+        """``syscall(nr, a0..a4)``: 按运行期 SYS 号直接调用宿主能力。
+
+        宿主能力只用 x0-x5, SYS 号放在 x7 以免与参数冲突。
+        """
+        if len(args) > 6:
+            raise CompilerError(
+                f"syscall() accepts at most 6 arguments (nr + 5), "
+                f"got {len(args)}")
+        # 先求值 SYS 号并压栈, 再求值参数: 参数表达式可能复用 x0 等寄存器,
+        # 先压栈保证 SYS 号不被覆盖。
+        self.gen_value(args[0])
+        self.emit('PUSH', self.reg(0))
+        for a in args[1:]:
+            self.gen_value(a)
+            self.emit('PUSH', self.reg(0))
+        n = len(args) - 1
+        for i in range(n - 1, -1, -1):
+            self.emit('POP', self.reg(i))
+        for i in range(n, 5):
+            self.emit('MOV', self.reg(i), self.imm(0))
+        self.emit('POP', self.reg(7))
+        self.emit('SYS', self.reg(7))
+        return 'int'
 
     def _gen_call(self, name: str, args: list):
         # 用户自定义函数**优先于同名内建** (含宿主能力内建)。
@@ -4168,6 +4291,9 @@ class CodeGen:
             self.gen_value(args[0])
             self.emit('SYS', self.imm(Syscall.ATOI))
             return 'int'
+        # ---- 通用系统调用: 按运行期 SYS 号直接调用 (不做平台封装) ----
+        if name == 'syscall':
+            return self._gen_raw_syscall(args)
         # ---- 宿主能力 (表驱动): 音频 / 画布 / 系统交互 / Termux API ----
         host = HOST_BUILTINS.get(name)
         if host is not None:

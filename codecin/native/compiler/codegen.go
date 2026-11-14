@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
+	"sort"
 	"strings"
 
 	"codecin-native/ir"
@@ -1761,7 +1763,7 @@ func (c *compiler) builtinRetType(name string) *Type {
 	switch name {
 	case "sin", "cos", "tan", "sqrt", "pow", "floor", "ceil", "round":
 		return scalarT(kFloat)
-	case "strlen", "strcmp", "rand", "time", "abs", "input", "idiv", "atoi":
+	case "strlen", "strcmp", "rand", "time", "abs", "input", "idiv", "atoi", "syscall":
 		return scalarT(kInt)
 	case "strcpy", "int_to_str", "itoa", "float_to_str", "ftoa", "bool_to_str",
 		"substr", "upper", "lower", "trim", "ltrim", "rtrim":
@@ -1789,6 +1791,8 @@ var builtinMinArgs = func() map[string]int {
 		"upper": 1, "lower": 1,
 		"trim": 1, "ltrim": 1, "rtrim": 1, "atoi": 1,
 		"time": 0, "input": 0,
+		// 通用系统调用: syscall(nr, a0..a4) 直接按 ISA SYS 号调用宿主能力
+		"syscall": 1,
 	}
 	for name, hb := range hostBuiltins {
 		m[name] = hb.nargs
@@ -1812,6 +1816,12 @@ func (c *compiler) genCall(name string, args []*Node) *Type {
 			c.emit("OUT", c.imm(10))
 		}
 		return scalarT(kVoid)
+	}
+
+	if name == "syscall" {
+		// 动态 SYS 号需要运行期分派; 机器码后端在编译期就确定了宿主调用。
+		c.failf("syscall() 仅支持默认 Go 引擎运行时 (--native 机器码后端不支持动态 SYS 号)")
+		return scalarT(kInt)
 	}
 
 	mathUnary := map[string]int64{"sqrt": SysSQRT, "sin": SysSIN, "cos": SysCOS, "tan": SysTAN}
@@ -2150,6 +2160,106 @@ func Compile(source, filename string, bounds bool) (*ir.Program, error) {
 
 var importRe = regexp.MustCompile(`^import\s+["']([^"']+)["']\s*;?\s*$`)
 
+// ==================== 相对 import: 通配 + 平台专用文件 ====================
+
+var cinPlatformSuffixes = []string{"win", "linux", "macos", "android"}
+
+func isRelativeImport(target string) bool {
+	return strings.HasPrefix(target, "./") || strings.HasPrefix(target, "../") ||
+		strings.HasPrefix(target, ".\\") || strings.HasPrefix(target, "..\\")
+}
+
+// hostPlatform 编译期平台名 (与 Python 侧 cin.py: _host_platform 保持一致)。
+func hostPlatform() string {
+	if v := strings.ToLower(strings.TrimSpace(os.Getenv("CIN_TARGET_PLATFORM"))); v == "win" ||
+		v == "linux" || v == "macos" || v == "android" {
+		return v
+	}
+	switch runtime.GOOS {
+	case "windows":
+		return "win"
+	case "darwin":
+		return "macos"
+	case "android":
+		return "android"
+	case "linux":
+		if os.Getenv("TERMUX_VERSION") != "" || strings.Contains(os.Getenv("PREFIX"), "com.termux") {
+			return "android"
+		}
+		return "linux"
+	}
+	return "linux"
+}
+
+func cinPlatformSuffix(path string) string {
+	stem := strings.TrimSuffix(filepath.Base(path), filepath.Ext(path))
+	for _, s := range cinPlatformSuffixes {
+		if strings.HasSuffix(strings.ToLower(stem), "_"+s) {
+			return s
+		}
+	}
+	return ""
+}
+
+func cinBaseWithoutPlatform(path string) string {
+	s := cinPlatformSuffix(path)
+	if s == "" {
+		return path
+	}
+	stem := strings.TrimSuffix(path, filepath.Ext(path))
+	return stem[:len(stem)-len(s)-1] + filepath.Ext(path)
+}
+
+// platformVariant 给 foo.cin 找出 foo_<platform>.cin; 已带后缀时仅当同平台才返回。
+func platformVariant(path, platform string) string {
+	if !strings.EqualFold(filepath.Ext(path), ".cin") {
+		return ""
+	}
+	if s := cinPlatformSuffix(path); s != "" {
+		if s == platform {
+			return path
+		}
+		return ""
+	}
+	cand := strings.TrimSuffix(path, filepath.Ext(path)) + "_" + platform + ".cin"
+	if fi, e := os.Stat(cand); e == nil && !fi.IsDir() {
+		return cand
+	}
+	return ""
+}
+
+// expandImportPattern 展开 `*` / `?` 通配, 排除其它平台专用文件, 当前平台专用
+// 文件优先于同名基础文件 (按去掉平台后缀后的路径去重并按路径排序)。
+func expandImportPattern(dir, target, platform string) []string {
+	matches, _ := filepath.Glob(filepath.Join(dir, target))
+	sort.Strings(matches)
+	chosen := map[string]string{}
+	for _, m := range matches {
+		fi, e := os.Stat(m)
+		if e != nil || fi.IsDir() || !strings.HasSuffix(strings.ToLower(m), ".cin") {
+			continue
+		}
+		s := cinPlatformSuffix(m)
+		if s != "" && s != platform {
+			continue
+		}
+		base := cinBaseWithoutPlatform(m)
+		if _, ok := chosen[base]; !ok || s == platform {
+			chosen[base] = m
+		}
+	}
+	keys := make([]string, 0, len(chosen))
+	for k := range chosen {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	out := make([]string, 0, len(keys))
+	for _, k := range keys {
+		out = append(out, chosen[k])
+	}
+	return out
+}
+
 // CompileFile 读取 .cin 文件并展开 import, 然后编译。
 func CompileFile(path, libDir string) (*ir.Program, error) {
 	source, err := loadProgramSource(path, libDir)
@@ -2193,32 +2303,53 @@ func loadProgramSource(path, libDir string) (string, error) {
 			m := importRe.FindStringSubmatch(line)
 			if m != nil {
 				target := m[1]
-				var candidates []string
-				candidates = append(candidates, filepath.Join(filepath.Dir(rp), target))
-				if libDir != "" {
-					candidates = append(candidates, filepath.Join(libDir, target))
-				}
-				if filepath.Base(libDir) == "lib" {
-					candidates = append(candidates, filepath.Join(filepath.Dir(libDir), target))
-				}
-				resolved := ""
-				for _, cand := range candidates {
-					if fi, e := os.Stat(cand); e == nil && !fi.IsDir() {
-						resolved = cand
-						break
+				platform := hostPlatform()
+				var resolved []string
+				if isRelativeImport(target) {
+					dir := filepath.Dir(rp)
+					if strings.ContainsAny(target, "*?[") {
+						resolved = expandImportPattern(dir, target, platform)
+						if len(resolved) == 0 {
+							return fmt.Errorf("Import pattern matched no .cin file: %q", target)
+						}
+					} else if v := platformVariant(filepath.Join(dir, target), platform); v != "" {
+						resolved = []string{v}
+					} else {
+						resolved = []string{filepath.Join(dir, target)}
+					}
+				} else {
+					var candidates []string
+					candidates = append(candidates, filepath.Join(filepath.Dir(rp), target))
+					if libDir != "" {
+						candidates = append(candidates, filepath.Join(libDir, target))
+					}
+					if filepath.Base(libDir) == "lib" {
+						candidates = append(candidates, filepath.Join(filepath.Dir(libDir), target))
+					}
+					for _, cand := range candidates {
+						if v := platformVariant(cand, platform); v != "" {
+							resolved = []string{v}
+							break
+						}
+						if fi, e := os.Stat(cand); e == nil && !fi.IsDir() {
+							resolved = []string{cand}
+							break
+						}
 					}
 				}
-				if resolved == "" {
+				if len(resolved) == 0 {
 					return fmt.Errorf("Import file not found: %q", target)
 				}
-				rr, e := filepath.Abs(resolved)
-				if e == nil {
-					if r2, e2 := filepath.EvalSymlinks(rr); e2 == nil {
-						rr = r2
+				for _, r := range resolved {
+					rr, e := filepath.Abs(r)
+					if e == nil {
+						if r2, e2 := filepath.EvalSymlinks(rr); e2 == nil {
+							rr = r2
+						}
 					}
-				}
-				if err := collect(rr); err != nil {
-					return err
+					if err := collect(rr); err != nil {
+						return err
+					}
 				}
 				continue
 			}

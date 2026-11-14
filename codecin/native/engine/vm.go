@@ -418,10 +418,14 @@ func RunV2(opts *RunOptions) *Result {
 		if !opcodeSupported(ins.opcode) {
 			return finish(StatusUnsupported, "")
 		}
-		// 未知 SYS 功能号: 直接报错 (解释器已删除, 无回退路径)
+		// 未知 SYS 功能号: 直接报错 (解释器已删除, 无回退路径)。
+		// 功能号可以是立即数, 也可以是寄存器 (syscall(nr, ...) 运行期分派)。
 		if ins.opcode == opSYS {
-			if len(ins.args) == 0 || ins.args[0].kind != kindImm ||
-				!syscallSupported(uint64(ins.args[0].value)) {
+			if len(ins.args) == 0 {
+				return finish(StatusError, "SYS requires a call id")
+			}
+			id, ok := vm.val(ins.args[0])
+			if !ok || !syscallSupported(id) {
 				return finish(StatusError, fmt.Sprintf(
 					"unsupported SYS call id: %d", ins.args[0].value))
 			}
@@ -1013,10 +1017,17 @@ func (vm *vmState) execute(ins instruction) (bool, string) {
 		sv := int64(vm.reg(rn))
 		vm.setReg(rd, uint64(sv>>(amt&63))&mask64)
 	case opSYS:
-		if len(args) == 0 || args[0].kind != kindImm {
-			return false, "SYS requires an immediate call id"
+		if len(args) == 0 {
+			return false, "SYS requires a call id"
 		}
-		if e := vm.doSyscall(uint64(args[0].value)); e != "" {
+		id, ok := vm.val(args[0])
+		if !ok {
+			return false, "SYS requires an immediate or register call id"
+		}
+		if !syscallSupported(id) {
+			return false, fmt.Sprintf("unsupported SYS call id: %d", int64(id))
+		}
+		if e := vm.doSyscall(id); e != "" {
 			return false, e
 		}
 	default:
