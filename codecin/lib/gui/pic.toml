@@ -1,7 +1,7 @@
 # 由 script/sync_stdlib_packages.py 生成，请勿手工编辑。
 [package]
 name = "gui"
-version = "8.0.0"
+version = "8.0.1"
 description = "Code CIN 官方标准库: GUI 窗口 + 画布绘图助手"
 license = "MIT"
 authors = ["ByUsi Studio"]
