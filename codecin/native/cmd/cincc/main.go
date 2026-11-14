@@ -7,6 +7,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"strings"
 
 	"codecin-native/compiler"
 	"codecin-native/mc"
@@ -32,6 +33,12 @@ func main() {
 	}
 	prog, err := compiler.CompileFile(flag.Arg(0), "")
 	if err != nil {
+		// CompileFile 会展开 import; 源码含 import 时回退到 Compile 只会报
+		// 与真实原因无关的解析错误, 直接把原始错误报告给用户。
+		if strings.Contains(string(src), "import ") {
+			fmt.Fprintf(os.Stderr, "cincc: 编译失败: %v\n", err)
+			os.Exit(1)
+		}
 		prog, err = compiler.Compile(string(src), flag.Arg(0), false)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "cincc: 编译失败: %v\n", err)
