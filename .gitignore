@@ -83,3 +83,4 @@ aotout/
 !/.github/*
 /更新计划.md
 *.exe
+/codecin/native/cincc
