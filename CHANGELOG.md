@@ -5,6 +5,59 @@
 
 ---
 
+## [8.1.0] - 2026-11-14
+
+### 发布说明 (Release 8.1.0)
+
+这次把 SYS 从「只能写死在语言内建里」变成源码可直接调度：新增
+`syscall(nr, ...)` / `syscall_str(nr, ...)`，按运行期功能号分派宿主能力，
+还没封装成内建的系统调用不必等编译器更新。相对 `import` 同时学会两件事——
+通配展开与 `_win` / `_linux` / `_macos` / `_android` 平台专用文件择优，一份
+源码可以各自带平台实现。此外修掉了 `cincc` 在含 `import` 源码上报错跑偏的
+问题。
+
+**新增**
+- 通用系统调用 `syscall(nr, a0..a4)`：按运行期 **ISA SYS 号**直接分派宿主
+  能力，最多 6 个实参（功能号 + 5 个），返回 `int`；`syscall_str(...)` 是同
+  一次调用，但把返回的 `x0` 当字符串（新堆指针）使用。不做平台封装，参数
+  适配与平台差异完全交给源码。
+- 参数布置：宿主能力只读 `x0`–`x5`，功能号放 `x7` 以免被实参覆盖；实参先
+  求值入栈再回填，未给出的补 0。
+- 相对 `import` 支持 `*` / `?` / `[` 通配：按路径排序展开、去重，只收
+  `.cin`，多文件项目不必逐条维护 import；模式无匹配时报
+  `Import pattern matched no .cin file`。
+- 平台专用源码 `foo_win.cin` / `foo_linux.cin` / `foo_macos.cin` /
+  `foo_android.cin`：导入 `foo.cin` 时优先取当前平台文件，缺失才回退
+  `foo.cin`；通配展开时排除其它平台文件，并按去掉平台后缀的路径去重。
+- 平台判定可用 `CIN_TARGET_PLATFORM`（`win` / `linux` / `macos` /
+  `android`）覆盖，便于交叉构建与测试；Termux 判为 `android` 优先于
+  `linux`。
+
+**变更 (Changed)**
+- VM 的 `SYS` 指令接受寄存器形式的功能号（此前只认立即数），运行期按寄存器
+  值分派，`syscall()` 的动态功能号才得以成立；错误信息统一为
+  `SYS requires a call id` 与 `unsupported SYS call id: N`。
+- `codecin/cin.py` 与 `codecin/native/compiler` 的 import 解析逻辑对齐，
+  同一份源码在默认 Go 引擎与 `cincc` 下解析出相同的文件集合。
+- 版本号 8.1.0：`codecin/__init__.py` 的 `__version__` 与
+  `codecin/native/engine/version_gen.go` 的 `BuildVersion` 同步。
+
+**修复 (Fixed)**
+- 含 `import` 的源码编译失败时，`cincc` 不再回退 `Compile` 而报出与真实原因
+  无关的解析错误，改为直接输出 `CompileFile` 的原始错误。
+
+**移除 (Removed)**
+- `build_whl.sh` / `build_whl.bat`：跨平台纯 Python wheel 打包脚本，打包流程
+  已由 PEP 517 工具链承担。
+
+**注意**
+- `syscall` / `syscall_str` 依赖运行期分派，只在默认 Go 引擎可用。
+  `--native`（cincc 机器码后端）在编译期直接报错；`--build-backend auto`
+  会回退 Go 引擎，`--build-backend c` 报 `SYS 功能号必须是常量`，均不静默
+  降级。
+- 功能号仍受引擎白名单约束（`id <= 159`），超出报 `unsupported SYS call
+  id`，不是任意数字都能调。
+
 ## [8.0.1] - 2026-11-14
 
 ### 发布说明 (Release 8.0.1)
