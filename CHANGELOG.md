@@ -5,6 +5,28 @@
 
 ---
 
+## [8.0.0] - 2026-11-14
+
+### 发布说明 (Release 8.0.0)
+
+8.0.0 标记编译架构切换完成第一阶段：**CIN → Go 编译器（cincc）→ 目标机器码**，
+Python 仅保留 CLI、日志与工程管理。本次同时把版本真源、Go 侧常量与 41 个
+内置库 `pic.toml` 统一到 8.0.0。
+
+**新增**
+- x86-64 后端（ELF）覆盖：控制台、字符串全套、数组/struct/全局、分支与循环、
+  函数与实参、多文件 `import`、`malloc`、时间/随机/休眠、文件与目录、
+  TCP 与 UDP（均在 WSL 真跑验证）。
+- Windows PE32+ 后端骨架：`cincc -target x86_64-windows`，本机验证
+  `return 42` / `CALL+RET` 的退出码；控制台输出暂未稳定，明确报错。
+- AArch64 后端骨架（`e_machine=0xB7`），仅结构校验。
+- `docs/native-backend.md`（交接文档）与 `docs/roadmap.md`（后续路线图）。
+
+**已知限制（后续目标）**
+- 未移除自带指令集：`.asm` / BIN / UCBC / `.crom` / VM / 内部 opcode IR 仍在。
+- PE 控制台输出、AArch64 真实运行、GUI / 音频 / 画布 / HTTP / DNS 未完成。
+- `--native` 与 `mkn build --native` 均依赖 Go 工具链现编 `cincc`。
+
 ## [Unreleased]
 
 ### 文档 (Docs)
