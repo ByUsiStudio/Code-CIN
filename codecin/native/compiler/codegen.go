@@ -1766,7 +1766,7 @@ func (c *compiler) builtinRetType(name string) *Type {
 	case "strlen", "strcmp", "rand", "time", "abs", "input", "idiv", "atoi", "syscall":
 		return scalarT(kInt)
 	case "strcpy", "int_to_str", "itoa", "float_to_str", "ftoa", "bool_to_str",
-		"substr", "upper", "lower", "trim", "ltrim", "rtrim":
+		"substr", "upper", "lower", "trim", "ltrim", "rtrim", "syscall_str":
 		return scalarT(kString)
 	}
 	return nil
@@ -1792,7 +1792,7 @@ var builtinMinArgs = func() map[string]int {
 		"trim": 1, "ltrim": 1, "rtrim": 1, "atoi": 1,
 		"time": 0, "input": 0,
 		// 通用系统调用: syscall(nr, a0..a4) 直接按 ISA SYS 号调用宿主能力
-		"syscall": 1,
+		"syscall": 1, "syscall_str": 1,
 	}
 	for name, hb := range hostBuiltins {
 		m[name] = hb.nargs
@@ -1818,7 +1818,7 @@ func (c *compiler) genCall(name string, args []*Node) *Type {
 		return scalarT(kVoid)
 	}
 
-	if name == "syscall" {
+	if name == "syscall" || name == "syscall_str" {
 		// 动态 SYS 号需要运行期分派; 机器码后端在编译期就确定了宿主调用。
 		c.failf("syscall() 仅支持默认 Go 引擎运行时 (--native 机器码后端不支持动态 SYS 号)")
 		return scalarT(kInt)

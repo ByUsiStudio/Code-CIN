@@ -313,7 +313,7 @@ BUILTIN_MIN_ARGS = {
     'trim': 1, 'ltrim': 1, 'rtrim': 1, 'atoi': 1,
     'time': 0, 'input': 0,
     # 通用系统调用: syscall(nr, a0..a4) 直接按 ISA SYS 号调用宿主能力
-    'syscall': 1,
+    'syscall': 1, 'syscall_str': 1,
 }
 BUILTIN_MIN_ARGS.update({k: v[1] for k, v in HOST_BUILTINS.items()})
 
@@ -4075,7 +4075,7 @@ class CodeGen:
             return 'int'
         if name in ('strcpy', 'int_to_str', 'itoa', 'float_to_str', 'ftoa',
                     'bool_to_str', 'substr', 'upper', 'lower',
-                    'trim', 'ltrim', 'rtrim'):
+                    'trim', 'ltrim', 'rtrim', 'syscall_str'):
             return 'string'
         return None
 
@@ -4088,10 +4088,11 @@ class CodeGen:
             self.emit('POP', self.reg(i))
         self.emit('SYS', self.imm(sys_id))
 
-    def _gen_raw_syscall(self, args: list) -> str:
-        """``syscall(nr, a0..a4)``: 按运行期 SYS 号直接调用宿主能力。
+    def _gen_raw_syscall(self, args: list, ret: str = 'int') -> str:
+        """``syscall(nr, a0..a4)`` / ``syscall_str``: 按运行期 SYS 号调用宿主能力。
 
         宿主能力只用 x0-x5, SYS 号放在 x7 以免与参数冲突。
+        ``ret='string'`` 时把 x0 的新堆指针按字符串使用 (syscall_str)。
         """
         if len(args) > 6:
             raise CompilerError(
@@ -4111,7 +4112,7 @@ class CodeGen:
             self.emit('MOV', self.reg(i), self.imm(0))
         self.emit('POP', self.reg(7))
         self.emit('SYS', self.reg(7))
-        return 'int'
+        return ret
 
     def _gen_call(self, name: str, args: list):
         # 用户自定义函数**优先于同名内建** (含宿主能力内建)。
@@ -4293,7 +4294,9 @@ class CodeGen:
             return 'int'
         # ---- 通用系统调用: 按运行期 SYS 号直接调用 (不做平台封装) ----
         if name == 'syscall':
-            return self._gen_raw_syscall(args)
+            return self._gen_raw_syscall(args, 'int')
+        if name == 'syscall_str':
+            return self._gen_raw_syscall(args, 'string')
         # ---- 宿主能力 (表驱动): 音频 / 画布 / 系统交互 / Termux API ----
         host = HOST_BUILTINS.get(name)
         if host is not None:
