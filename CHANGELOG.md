@@ -5,6 +5,39 @@
 
 ---
 
+## [8.0.1] - 2026-11-14
+
+### 发布说明 (Release 8.0.1)
+
+本次补上原生引擎的执行统计签名。程序由 Go 引擎一次性跑完后，之前只回传
+`steps`，于是 `--debug` 的热指令、周期分布、内存读写、分支准确率全是占位值。
+8.0.1 让引擎把真实计数一并回传，旧库仍可正常工作。
+
+**新增**
+- 原生 v2 结果尾部新增可选统计块：头部第 4 字节写入 magic `0xA5`，
+  之后依次是 `mem_reads` / `mem_writes` / `branches` / `branch_hits` /
+  `branch_total` 五个 `u64` 与 256 槽操作码直方图。该字节在旧布局中是恒 0 的
+  padding，旧 Python 解析器读完 `err` 即停止，因此布局**向后兼容**。
+- Python 侧 `codecin/native.py` 依据 magic 解析统计尾部，
+  `codecin/stats.py` 新增 `Statistics.apply_native_stats()`，用真实直方图生成
+  热指令与周期分布；分支用与旧实现一致的 2-bit 饱和计数器统计。
+- 引擎侧 `isBranchOpcode` / `noteBranch`：CALL/RET 与各平台条件分支都计入，
+  初始计数器为 2（预测跳转）。
+- 回归用例：`tests/test_native_stats.py`、Go 侧 `TestExecutionStats`。
+
+**变更 (Changed)**
+- `InstructionProfiler.record()` 增加 `count` 参数，可按直方图批量记账。
+- `BranchPredictor.get_accuracy()` 在无分支样本时返回 `None`，
+  报告显示 `N/A`，不再伪造 `100%`；旧原生库（只回传 `steps`）同样显示
+  `N/A`，并提示重建原生库。
+- 版本号 8.0.1：`codecin/__init__.py` 的 `__version__` 与
+  `codecin/native/engine/version_gen.go` 的 `BuildVersion` 同步。
+
+**注意**
+- 统计尾部需要新版 `codecin-native` 动态库。仅更新 Python 包时
+  `--debug` 会显示 `N/A`，执行本身不受影响；重建方式为
+  `codecin/native/build.ps1`。
+
 ## [8.0.0] - 2026-11-14
 
 ### 发布说明 (Release 8.0.0)
