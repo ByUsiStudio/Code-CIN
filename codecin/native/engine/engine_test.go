@@ -46,6 +46,66 @@ func TestEncodeRunRoundTrip(t *testing.T) {
 	}
 }
 
+// TestExecutionStats 锁定原生引擎随结果回传的执行统计:
+// 逐操作码直方图、内存读写次数、分支数与预测命中率必须来自真实执行,
+// 不能再用占位项 ("?") 或恒 0 的计数器糊弄 --debug 报告。
+func TestExecutionStats(t *testing.T) {
+	prog := ir.Program{
+		Instructions: []ir.Instr{
+			{Op: "MOV", Args: []ir.Operand{ir.Reg(0), ir.Imm(0)}},
+			{Op: "MOV", Args: []ir.Operand{ir.Reg(1), ir.Imm(0)}},
+			{Op: "MOV", Args: []ir.Operand{ir.Reg(3), ir.Imm(5)}},
+			{Op: "BEQ", Args: []ir.Operand{ir.Reg(1), ir.Reg(3), ir.Label("done")}}, // loop
+			{Op: "ADD", Args: []ir.Operand{ir.Reg(0), ir.Reg(1)}},
+			{Op: "STORE", Args: []ir.Operand{ir.Reg(0), ir.Mem(-1, 0x100)}},
+			{Op: "LOAD", Args: []ir.Operand{ir.Reg(2), ir.Mem(-1, 0x100)}},
+			{Op: "INC", Args: []ir.Operand{ir.Reg(1)}},
+			{Op: "JMP", Args: []ir.Operand{ir.Label("loop")}},
+			{Op: "HALT"}, // done
+		},
+		Labels:     map[string]int{"loop": 3, "done": 9},
+		DataLabels: map[string]int{},
+	}
+	bc, err := EncodeProgram(prog, 0)
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	mem := make([]byte, 4096)
+	res := Run(bc, mem, 0, int64(len(mem)-8), int64(len(mem)/2), nil, 1000)
+	if res == nil || res.Status != StatusOK {
+		t.Fatalf("运行失败: %+v", res)
+	}
+
+	var counted uint64
+	for _, n := range res.OpCounts {
+		counted += n
+	}
+	if counted != res.Steps {
+		t.Fatalf("操作码计数总和 %d != steps %d", counted, res.Steps)
+	}
+	if res.OpCounts[opMOV] != 3 {
+		t.Fatalf("MOV 计数 = %d, 期望 3", res.OpCounts[opMOV])
+	}
+	if res.OpCounts[opSTORE] != 5 || res.OpCounts[opLOAD] != 5 {
+		t.Fatalf("内存指令计数异常: STORE=%d LOAD=%d, 期望各 5",
+			res.OpCounts[opSTORE], res.OpCounts[opLOAD])
+	}
+	if res.MemWrites < 5 {
+		t.Fatalf("MemWrites = %d, 期望 >= 5", res.MemWrites)
+	}
+	if res.MemReads < 5 {
+		t.Fatalf("MemReads = %d, 期望 >= 5", res.MemReads)
+	}
+	if res.Branches != 11 || res.BranchTotal != 11 {
+		t.Fatalf("分支计数异常: branches=%d total=%d, 期望各 11",
+			res.Branches, res.BranchTotal)
+	}
+	if res.BranchHits >= res.BranchTotal {
+		t.Fatalf("预测命中率不应恒为 100%% (hits=%d total=%d)",
+			res.BranchHits, res.BranchTotal)
+	}
+}
+
 func TestDecodeRejectsMalformedInput(t *testing.T) {
 	valid, err := EncodeProgram(tinyProgram(), 0)
 	if err != nil {

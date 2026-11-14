@@ -25,13 +25,25 @@ import (
 //   err_len u16 | err ...
 
 // v2 结果缓冲布局 (与 codecin/native.py _parse_result_v2 严格一致):
-//   status u8 | NZCV 标志 u8 (bit0=N bit1=Z bit2=C bit3=V) | streamed u8 | pad u8
-//   pc u64  sp u64  heap_ptr u64  steps u64
-//   regs 33×u64
-//   vec  32×4×f64
-//   seg_count u64 | 每段: addr u64 + len u64 + data (脏段, 按地址升序)
-//   out_len u64 | out ...
-//   err_len u16 | err ...
+//
+//	status u8 | NZCV 标志 u8 (bit0=N bit1=Z bit2=C bit3=V) | streamed u8 | stats magic u8
+//	pc u64  sp u64  heap_ptr u64  steps u64
+//	regs 33×u64
+//	vec  32×4×f64
+//	seg_count u64 | 每段: addr u64 + len u64 + data (脏段, 按地址升序)
+//	out_len u64 | out ...
+//	err_len u16 | err ...
+//	[可选] 统计尾部 (stats magic = 0xA5 时存在):
+//	  mem_reads u64 | mem_writes u64 | branches u64 |
+//	  branch_hits u64 | branch_total u64 | op_counts 256×u64
+//
+// 第 4 字节在旧布局里是 padding (恒 0), 因此新增统计尾部对旧 Python
+// 解析器完全透明 (它读完 err 就结束); 新解析器据 magic 判断是否读取。
+const (
+	resultStatsMagic  = 0xA5
+	resultStatsFields = 5
+	resultOpcodeSlots = 256
+)
 
 // v2 请求缓冲布局 (与 codecin/native.py _build_request_v2 严格一致):
 //   bc_len u32 | bc ...
@@ -194,12 +206,16 @@ func marshalResultV2(res *engine.Result) unsafe.Pointer {
 	for _, s := range segs {
 		segsBytes += 16 + len(s.Data)
 	}
-	total := head + segsBytes + 8 + len(out) + 2 + len(errb)
+	total := head + segsBytes + 8 + len(out) + 2 + len(errb) +
+		(resultStatsFields+resultOpcodeSlots)*8
 	buf := make([]byte, total)
 
 	buf[0] = status
 	buf[1] = flg
 	buf[2] = streamed
+	if res != nil {
+		buf[3] = resultStatsMagic
+	}
 	pos := 4
 	binary.LittleEndian.PutUint64(buf[pos:], pc)
 	binary.LittleEndian.PutUint64(buf[pos+8:], sp)
@@ -231,6 +247,25 @@ func marshalResultV2(res *engine.Result) unsafe.Pointer {
 	binary.LittleEndian.PutUint16(buf[pos:], uint16(len(errb)))
 	pos += 2
 	copy(buf[pos:], errb)
+	pos += len(errb)
+
+	// 统计尾部 (magic 已写入头部; 旧解析器读到 err 即停止, 不受影响)
+	if res != nil {
+		binary.LittleEndian.PutUint64(buf[pos:], res.MemReads)
+		pos += 8
+		binary.LittleEndian.PutUint64(buf[pos:], res.MemWrites)
+		pos += 8
+		binary.LittleEndian.PutUint64(buf[pos:], res.Branches)
+		pos += 8
+		binary.LittleEndian.PutUint64(buf[pos:], res.BranchHits)
+		pos += 8
+		binary.LittleEndian.PutUint64(buf[pos:], res.BranchTotal)
+		pos += 8
+		for i := 0; i < resultOpcodeSlots; i++ {
+			binary.LittleEndian.PutUint64(buf[pos:], res.OpCounts[i])
+			pos += 8
+		}
+	}
 
 	cbuf := C.malloc(C.size_t(total))
 	if cbuf == nil {

@@ -26,9 +26,9 @@ class BranchPredictor:
         if predicted == actual:
             self.correct_predictions += 1
 
-    def get_accuracy(self) -> float:
+    def get_accuracy(self) -> Optional[float]:
         if self.total_predictions == 0:
-            return 1.0
+            return None
         return self.correct_predictions / self.total_predictions
 
 
@@ -95,7 +95,11 @@ class PerformanceCounters:
         table.add_column("Metric")
         table.add_column("Value")
         for key, value in stats.items():
-            if key in ('branch_accuracy', 'cache_hit_rate'):
+            if key == 'branch_accuracy':
+                label = "Branch Accuracy"
+                text = "N/A" if value is None else f"{value * 100:.1f}%"
+                table.add_row(label, text)
+            elif key == 'cache_hit_rate':
                 table.add_row(key.replace('_', ' ').title(), f"{value * 100:.1f}%")
             elif key == 'ipc':
                 table.add_row("Instructions Per Cycle", f"{value:.2f}")
@@ -117,8 +121,8 @@ class InstructionProfiler:
             'LB': 4, 'LH': 4, 'LW': 4, 'SB': 4, 'SH': 4, 'SW': 4,
         }
 
-    def record(self, opcode: str) -> None:
-        self.cycles[opcode] += self.latency.get(opcode, 1)
+    def record(self, opcode: str, count: int = 1) -> None:
+        self.cycles[opcode] += self.latency.get(opcode, 1) * count
 
     def get_total_cycles(self) -> int:
         return sum(self.cycles.values())
@@ -127,6 +131,8 @@ class InstructionProfiler:
         if console is None:
             return
         total = self.get_total_cycles()
+        if total <= 0:
+            return
         table = Table(title="Instruction Cycle Profile")
         table.add_column("Instruction")
         table.add_column("Cycles")
@@ -151,6 +157,9 @@ class Statistics:
         self.inst_profiler = InstructionProfiler()
         self.hot_instructions: Dict[str, int] = defaultdict(int)
         self.performance_counters = PerformanceCounters()
+        # 原生库是否回传了真实统计 (逐操作码/内存/分支)。
+        # 旧库只回传 steps: 此时宁可显示 N/A, 也不要伪造 0 或 "?"。
+        self.native_stats = False
 
     def start(self):
         self.start_time = time.time()
@@ -180,6 +189,43 @@ class Statistics:
     def record_branch(self, pc: int, taken: bool, predicted: bool):
         self.performance_counters.record_branch_result(pc, taken, predicted)
 
+    def apply_native_stats(self, *, steps: int,
+                           opcode_counts: Dict[str, int],
+                           memory_reads: int, memory_writes: int,
+                           branches: int, branch_hits: int,
+                           branch_total: int) -> None:
+        """写入原生引擎回传的整程序统计 (一次性, 不做逐指令记账)。
+
+        opcode_counts 是真实执行直方图; 周期按 InstructionProfiler 的延迟表
+        由指令数换算, 与旧版逐指令统计口径一致。内存/分支计数来自引擎。
+        """
+        self.native_stats = True
+        self.instruction_count = steps
+        self.opcode_count.clear()
+        self.opcode_count.update(opcode_counts)
+        self.hot_instructions.clear()
+        self.hot_instructions.update(opcode_counts)
+        self.memory_reads = memory_reads
+        self.memory_writes = memory_writes
+
+        self.inst_profiler.cycles.clear()
+        for op, count in opcode_counts.items():
+            self.inst_profiler.record(op, count)
+        total_cycles = self.inst_profiler.get_total_cycles()
+
+        counters = self.performance_counters
+        counters.counters['instructions'] = steps
+        counters.counters['cycles'] = total_cycles
+        counters.counters['branches'] = branches
+        counters.counters['branch_mispredictions'] = max(
+            0, branch_total - branch_hits)
+        counters.counters['memory_reads'] = memory_reads
+        counters.counters['memory_writes'] = memory_writes
+        counters.counters['flops'] = sum(
+            opcode_counts.get(op, 0) for op in Constants.FP_OPS)
+        counters.branch_predictor.correct_predictions = branch_hits
+        counters.branch_predictor.total_predictions = branch_total
+
     def get_hot_instructions(self, top_n: int = 10) -> List[Tuple[str, int]]:
         return sorted(self.hot_instructions.items(),
                       key=lambda x: x[1], reverse=True)[:top_n]
@@ -195,19 +241,29 @@ class Statistics:
         table.add_column("Value")
         table.add_row("Engine", "Go native" if native_used else "Go native (未加载)")
         table.add_row("Total Instructions", str(self.instruction_count))
-        table.add_row("Total Cycles", str(self.inst_profiler.get_total_cycles()))
-        if self.instruction_count > 0:
-            table.add_row("CPI (Cycles/Inst)",
-                          f"{self.inst_profiler.get_total_cycles() / self.instruction_count:.2f}")
+        if self.native_stats:
+            table.add_row("Total Cycles", str(self.inst_profiler.get_total_cycles()))
+            if self.instruction_count > 0:
+                table.add_row("CPI (Cycles/Inst)",
+                              f"{self.inst_profiler.get_total_cycles() / self.instruction_count:.2f}")
         table.add_row("Execution Time", f"{self.execution_time:.4f}s")
         if self.execution_time > 0:
             table.add_row("Instructions/sec",
                           f"{self.instruction_count / self.execution_time:,.0f}")
-        table.add_row("Memory Reads", str(self.memory_reads))
-        table.add_row("Memory Writes", str(self.memory_writes))
+        if self.native_stats:
+            table.add_row("Memory Reads", str(self.memory_reads))
+            table.add_row("Memory Writes", str(self.memory_writes))
+        else:
+            table.add_row("Memory Reads", "N/A")
+            table.add_row("Memory Writes", "N/A")
 
         perf_stats = self.performance_counters.get_stats()
-        table.add_row("Branch Accuracy", f"{perf_stats['branch_accuracy'] * 100:.1f}%")
+        accuracy = perf_stats['branch_accuracy']
+        table.add_row("Branch Accuracy",
+                      f"{accuracy * 100:.1f}%" if accuracy is not None else "N/A")
+        if not self.native_stats:
+            table.add_row("Profiling",
+                          "N/A (原生库未回传统计, 请重建 codecin-native)")
 
         if cache_stats:
             table.add_row("Cache Hit Rate", f"{cache_stats.get('hit_rate', 0) * 100:.1f}%")
@@ -227,4 +283,5 @@ class Statistics:
             console.print(str(op_table))
 
         self.inst_profiler.display_report(console)
-        self.performance_counters.display(console)
+        if self.native_stats:
+            self.performance_counters.display(console)

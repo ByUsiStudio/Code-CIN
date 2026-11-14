@@ -254,15 +254,23 @@ class CPU:
             for addr, data in result['segments']:
                 self.memory.write_block(addr, data)
         if 'steps' in result:
-            # 原生 VM 整程序执行完毕: 统计一次性批量写入
+            # 原生 VM 整程序执行完毕: 统计一次性批量写入。
+            # 新原生库还会回传逐操作码直方图、内存读写与分支计数;
+            # 旧库只有 steps, 此时保持 native_stats=False (显示 N/A, 不伪造)。
             steps = int(result.get('steps') or 0)
-            limit = self.config.max_instructions
-            counted = steps if limit <= 0 else min(steps, limit)
-            self.stats.instruction_count = steps
-            self.stats.opcode_count.clear()
-            self.stats.hot_instructions['?'] += counted
-            self.stats.inst_profiler.cycles['?'] += counted
-            self.stats.performance_counters.counters['instructions'] += counted
+            if 'opcode_counts' in result:
+                self.stats.apply_native_stats(
+                    steps=steps,
+                    opcode_counts=result.get('opcode_counts') or {},
+                    memory_reads=int(result.get('mem_reads') or 0),
+                    memory_writes=int(result.get('mem_writes') or 0),
+                    branches=int(result.get('branches') or 0),
+                    branch_hits=int(result.get('branch_hits') or 0),
+                    branch_total=int(result.get('branch_total') or 0),
+                )
+            else:
+                self.stats.instruction_count = steps
+                self.stats.performance_counters.counters['instructions'] = steps
 
     def run(self) -> None:
         self.running = True

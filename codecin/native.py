@@ -309,6 +309,7 @@ class NativeEngine:
         status = head[0]
         flg = head[1]
         streamed = bool(head[2])
+        has_stats = head[3] == 0xA5  # 新库的统计尾部标记 (旧布局此字节为 0)
         pc, sp, heap_ptr, steps = struct.unpack_from('<QQQQ', head, 4)
         off = 36
         regs_raw = ctypes.string_at(base + off, 33 * 8)
@@ -334,6 +335,32 @@ class NativeEngine:
         off += 2
         err_msg = ctypes.string_at(base + off, err_len).decode(
             'utf-8', 'replace') if err_len else ''
+
+        # 可选统计尾部 (新原生库才有): 内存/分支计数 + 256 个操作码槽位。
+        exec_stats: Dict[str, Any] = {}
+        if has_stats:
+            off += err_len
+            raw = ctypes.string_at(base + off, (5 + 256) * 8)
+            mem_reads, mem_writes, branches, branch_hits, branch_total = \
+                struct.unpack_from('<5Q', raw, 0)
+            counts = struct.unpack_from('<256Q', raw, 5 * 8)
+            opcode_counts: Dict[str, int] = {}
+            for op_val, count in enumerate(counts):
+                if not count:
+                    continue
+                try:
+                    name = Opcode(op_val).name
+                except ValueError:
+                    name = f'OP{op_val}'
+                opcode_counts[name] = count
+            exec_stats = {
+                'opcode_counts': opcode_counts,
+                'mem_reads': mem_reads,
+                'mem_writes': mem_writes,
+                'branches': branches,
+                'branch_hits': branch_hits,
+                'branch_total': branch_total,
+            }
 
         regs = list(struct.unpack('<33Q', regs_raw))
         vec_flat = struct.unpack(f'<{32 * 4}d', vec_raw)
@@ -361,6 +388,7 @@ class NativeEngine:
             'output': out_data.decode('utf-8', 'replace'),
             'streamed': streamed,
             'error': error,
+            **exec_stats,
         }
 
     # ---------------- CROM ----------------

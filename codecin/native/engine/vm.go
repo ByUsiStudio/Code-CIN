@@ -68,6 +68,16 @@ type vmState struct {
 	// 脏页位图 (稀疏内存回传用): 64KB 页, 每 bit 一页。
 	dirtyBits  []uint64
 	lastHTTPSt int64 // 最近一次 http_req 的状态码 (-1 无请求)
+
+	// 执行统计 (随结果回传; v2 结果尾部可选块, 旧解析器会忽略)。
+	// 逐指令直方图是之前缺失的关键: 只有 steps 无法生成热指令/周期分布。
+	opCounts    [256]uint64
+	memReads    uint64
+	memWrites   uint64
+	branches    uint64
+	branchHits  uint64        // 分支预测命中次数
+	branchTotal uint64        // 分支预测总次数
+	branchPred  map[int]uint8 // pc -> 2-bit 饱和计数器 (与 Python 旧实现一致)
 }
 
 // dirtyPageBits 每页一个 bit; 1 GiB 内存 = 16384 页 = 2 KiB 位图。
@@ -76,6 +86,7 @@ const dirtyPageShift = 16 // 2^16 = 64 KiB
 // touch 标记 [addr, addr+n) 覆盖的页为脏 (写内存必须经过这里)。
 // 位图不足时自动扩容 (手工构造的 vmState / 高地址写入均安全)。
 func (vm *vmState) touch(addr, n uint64) {
+	vm.memWrites++
 	if n == 0 {
 		n = 1
 	}
@@ -200,6 +211,15 @@ type Result struct {
 	ErrMsg   string
 	Segments []MemSeg // 脏页合并段 (稀疏内存回传)
 	MemSize  int64
+
+	// 执行统计 (v2 结果尾部可选块): 逐操作码计数 + 内存/分支统计。
+	// 这些计数在解释循环中顺手累加, 不改变执行语义。
+	OpCounts    [256]uint64
+	MemReads    uint64
+	MemWrites   uint64
+	Branches    uint64
+	BranchHits  uint64
+	BranchTotal uint64
 }
 
 // RunOptions 是 RunV2 的参数。
@@ -329,6 +349,8 @@ func RunV2(opts *RunOptions) *Result {
 			vm.touch(seg.Addr, uint64(len(seg.Data)))
 		}
 	}
+	// 初始内存段是"装载"而非程序写入, 不计入运行期内存写统计。
+	vm.memWrites = 0
 
 	// 键盘监听可能切换终端 raw mode, 任何出口都必须恢复 (幂等)
 	defer keyboardRestore()
@@ -355,6 +377,13 @@ func RunV2(opts *RunOptions) *Result {
 			Streamed: vm.outDirect,
 			ErrMsg:   errMsg,
 			MemSize:  memSize,
+
+			OpCounts:    vm.opCounts,
+			MemReads:    vm.memReads,
+			MemWrites:   vm.memWrites,
+			Branches:    vm.branches,
+			BranchHits:  vm.branchHits,
+			BranchTotal: vm.branchTotal,
 		}
 		r.Flags.N, r.Flags.Z, r.Flags.C, r.Flags.V = vm.flags.N, vm.flags.Z, vm.flags.C, vm.flags.V
 		r.Segments = vm.dirtySegments()
@@ -398,11 +427,16 @@ func RunV2(opts *RunOptions) *Result {
 			}
 		}
 		// 与解释器一致: 先自增 pc
+		pcBefore := vm.pc
 		vm.pc++
 		vm.steps++
+		vm.opCounts[ins.opcode]++
 		halt, err := vm.execute(ins)
 		if err != "" {
 			return finish(StatusError, err)
+		}
+		if isBranchOpcode(ins.opcode) {
+			vm.noteBranch(pcBefore, vm.pc != pcBefore+1)
 		}
 		if halt {
 			return finish(StatusOK, "")
@@ -526,6 +560,7 @@ func (vm *vmState) readQ(addr uint64) (uint64, string) {
 	if e := vm.checkAddr(addr, 8); e != "" {
 		return 0, e
 	}
+	vm.memReads++
 	return binary.LittleEndian.Uint64(vm.mem[addr : addr+8]), ""
 }
 
@@ -626,6 +661,7 @@ func formatFloat(f float64) string {
 }
 
 func (vm *vmState) readCString(addr uint64) string {
+	vm.memReads++
 	var sb strings.Builder
 	for addr < uint64(len(vm.mem)) {
 		ch := vm.mem[addr]
@@ -652,6 +688,46 @@ func (vm *vmState) sysBuffer() uint64 {
 	idx := vm.sysIdx % 8
 	vm.sysIdx++
 	return vm.heapPtr + 2048 + uint64(idx)*64
+}
+
+// isBranchOpcode 判断指令是否改变控制流 (统计分支数/预测命中率用)。
+// 与 Python 侧 Constants.BRANCH_OPS 保持一致 (CALL/RET 也计入)。
+func isBranchOpcode(op uint8) bool {
+	switch op {
+	case opJMP, opJZ, opJNZ, opJE, opJL, opJG,
+		opCALL, opRET, opBL, opBR, opB,
+		opCBZ, opCBNZ, opTBZ, opTBNZ,
+		opBEQ, opBNE, opBLT, opBGE, opBLTU, opBGEU,
+		opJAL, opJALR:
+		return true
+	}
+	return false
+}
+
+// noteBranch 记录一次分支结果, 并用 2-bit 饱和计数器模拟预测。
+// 初值与 Python 旧 BranchPredictor 一致: 2 = 预测跳转。
+func (vm *vmState) noteBranch(pc int, taken bool) {
+	if vm.branchPred == nil {
+		vm.branchPred = make(map[int]uint8)
+	}
+	counter, ok := vm.branchPred[pc]
+	if !ok {
+		counter = 2
+	}
+	predicted := counter >= 2
+	if predicted == taken {
+		vm.branchHits++
+	}
+	vm.branches++
+	vm.branchTotal++
+	if taken {
+		if counter < 3 {
+			counter++
+		}
+	} else if counter > 0 {
+		counter--
+	}
+	vm.branchPred[pc] = counter
 }
 
 func (vm *vmState) execute(ins instruction) (bool, string) {
@@ -810,6 +886,7 @@ func (vm *vmState) execute(ins instruction) (bool, string) {
 		if e := vm.checkAddr(addr, 4); e != "" {
 			return false, e
 		}
+		vm.memReads++
 		v := uint64(binary.LittleEndian.Uint32(vm.mem[addr : addr+4]))
 		vm.setReg(int(args[0].value), v)
 	case opLW:
@@ -820,6 +897,7 @@ func (vm *vmState) execute(ins instruction) (bool, string) {
 		if e := vm.checkAddr(addr, 4); e != "" {
 			return false, e
 		}
+		vm.memReads++
 		v := int64(binary.LittleEndian.Uint32(vm.mem[addr : addr+4]))
 		if v&0x80000000 != 0 {
 			v -= 1 << 32
@@ -863,6 +941,7 @@ func (vm *vmState) execute(ins instruction) (bool, string) {
 		if e := vm.checkAddr(addr, 1); e != "" {
 			return false, e
 		}
+		vm.memReads++
 		v := int64(vm.mem[addr])
 		if v&0x80 != 0 {
 			v -= 256
@@ -876,6 +955,7 @@ func (vm *vmState) execute(ins instruction) (bool, string) {
 		if e := vm.checkAddr(addr, 2); e != "" {
 			return false, e
 		}
+		vm.memReads++
 		v := int64(binary.LittleEndian.Uint16(vm.mem[addr : addr+2]))
 		if v&0x8000 != 0 {
 			v -= 65536

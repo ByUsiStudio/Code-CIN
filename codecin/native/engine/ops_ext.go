@@ -99,6 +99,7 @@ func (vm *vmState) execExt(ins instruction) (bool, string) {
 		if e := vm.checkAddr(addr, 4); e != "" {
 			return false, e
 		}
+		vm.memReads++
 		vm.setReg(int(args[0].value), uint64(binary.LittleEndian.Uint32(vm.mem[addr:addr+4])))
 	case opSTR:
 		addr, e := vm.loadStoreAddr(args[1])
@@ -295,6 +296,7 @@ func (vm *vmState) execExt(ins instruction) (bool, string) {
 		if e := vm.checkAddr(addr, 4); e != "" {
 			return false, e
 		}
+		vm.memReads++
 		f := math.Float32frombits(binary.LittleEndian.Uint32(vm.mem[addr : addr+4]))
 		vm.setVecScalar(int(args[0].value), float64(f))
 	case opSTRS:
@@ -338,6 +340,7 @@ func (vm *vmState) execExt(ins instruction) (bool, string) {
 		if e := vm.checkAddr(addr, 16); e != "" {
 			return false, e
 		}
+		vm.memReads++
 		data := vm.mem[addr : addr+16 : addr+16]
 		vm.vec[int(args[0].value)&31] = [4]float64{
 			float64(math.Float32frombits(binary.LittleEndian.Uint32(data[0:4]))),
