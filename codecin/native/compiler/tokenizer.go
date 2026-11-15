@@ -25,7 +25,7 @@ var keywords = map[string]bool{
 	"default": true, "break": true, "continue": true, "true": true, "false": true,
 	"int": true, "float": true, "bool": true, "string": true, "void": true,
 	"char": true, "short": true, "long": true, "unsigned": true,
-	"enum": true,
+	"enum": true, "const": true,
 	"set":  true, "add": true, "subtract": true, "multiply": true, "divide": true,
 	"increment": true, "decrement": true,
 }

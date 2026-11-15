@@ -2,7 +2,11 @@
 // 它将 CIN 源码编译为 ir.Program, 与 Python CINCompiler 的产物逐字节一致。
 package compiler
 
-import "codecin-native/ir"
+import (
+	"math"
+
+	"codecin-native/ir"
+)
 
 // ---------------- 类型系统 ----------------
 
@@ -117,6 +121,58 @@ type DeclItem struct {
 	ArrayLit *Node
 }
 
+// ---------------- 编译期命名常量 (const) ----------------
+
+// constKind 是 const 常量的值类别, 与声明时的类型一一对应。
+type constKind uint8
+
+const (
+	cInt constKind = iota
+	cFloat
+	cBool
+	cString
+)
+
+// constDef 是一个 `const <类型> 名字 = <常量表达式>` 声明的常量。
+//
+// 命名常量是**纯编译期**对象: 不占数据段、不产生初始化指令, 因此可以出现在
+// 数组维度、全局初始化器与任意表达式里 (与 Python 侧 self.consts 对齐)。
+type constDef struct {
+	kind constKind
+	i    int64
+	f    float64
+	b    bool
+	s    string
+}
+
+// typ 返回常量的 CIN 类型。
+func (v constDef) typ() *Type {
+	switch v.kind {
+	case cFloat:
+		return scalarT(kFloat)
+	case cBool:
+		return scalarT(kBool)
+	case cString:
+		return scalarT(kString)
+	}
+	return scalarT(kInt)
+}
+
+// raw 返回常量作为机器字的表示: 整数/布尔直接给值, 浮点给 IEEE-754 位模式。
+// 字符串常量没有机器字表示, 得由调用方取数据段地址 (见 genVarValue)。
+func (v constDef) raw() int64 {
+	switch v.kind {
+	case cFloat:
+		return int64(math.Float64bits(v.f))
+	case cBool:
+		if v.b {
+			return 1
+		}
+		return 0
+	}
+	return v.i
+}
+
 // ---------------- 编译上下文 ----------------
 
 // compiler 持有整个编译过程的可变状态。
@@ -126,6 +182,7 @@ type compiler struct {
 	functions map[string]*FuncDef
 	globals   []*GlobalVar
 	enums     map[string]int64 // 枚举成员 -> 编译期整数常量 (来自 parser)
+	consts    map[string]constDef // const 命名常量 -> 类型 + 值 (来自 parser)
 
 	// 代码生成状态
 	res      *ir.Program
@@ -208,6 +265,7 @@ func newCompiler(filename string, bounds bool) *compiler {
 			DataLabels: map[string]int{},
 		},
 		enums:      map[string]int64{},
+		consts:     map[string]constDef{},
 		heapStr:    map[string]int{},
 		filename:   filename,
 		bounds:     bounds,

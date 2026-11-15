@@ -78,8 +78,41 @@ func (e *Encoder) emitITOA() {
 }
 
 
-const memSize = 1 << 30 // VM 地址空间 (mmap 惰性分配)
+// emitF64Round 生成 SYS 32/33/34 (FLOOR/CEIL/ROUND) 的取整序列, 结果按
+// double 位模式写回 R0。
+//
+// 走 SSE2 的 cvttsd2si + cvtsi2sd + ucomisd, 不用 SSE4.1 的 roundsd: 后者
+// 在没有该扩展的 CPU 上直接 #UD, 而机器码后端没有做 CPU 特性探测的余地。
+// ROUND 按 ISA 表的定义实现为 floor(x + 0.5)。
+func (e *Encoder) emitF64Round(id int) {
+	e.raw(0xF2, 0x0F, 0x10, 0x04, 0x25); e.imm32(regAddr(0)) // movsd xmm0, [R0]
+	if id == 34 {
+		e.raw(0x48, 0xB8); e.imm64(0x3FE0000000000000) // mov rax, 0.5 的位模式
+		e.raw(0x66, 0x48, 0x0F, 0x6E, 0xC8)            // movq xmm1, rax
+		e.raw(0xF2, 0x0F, 0x58, 0xC1)                  // addsd xmm0, xmm1
+	}
+	e.raw(0xF2, 0x48, 0x0F, 0x2C, 0xC0) // cvttsd2si rax, xmm0 (向零截断)
+	e.raw(0xF2, 0x48, 0x0F, 0x2A, 0xC8) // cvtsi2sd xmm1, rax (转回 double)
+	e.raw(0x66, 0x0F, 0x2E, 0xC8)       // ucomisd xmm1, xmm0
+	e.raw(0x0F, 0x8A); jpPos := e.imm32Pos() // jp done: NaN 保持截断值
+	if id == 33 {
+		// ceil: 截断值已经 >= x 就不用修正
+		e.raw(0x0F, 0x83); skipPos := e.imm32Pos() // jae done
+		e.raw(0x48, 0x83, 0xC0, 0x01)              // inc rax
+		e.raw(0xF2, 0x48, 0x0F, 0x2A, 0xC8)        // cvtsi2sd xmm1, rax
+		e.patchRel(skipPos, len(e.code))
+	} else {
+		// floor: 截断值已经 <= x 就不用修正
+		e.raw(0x0F, 0x86); skipPos := e.imm32Pos() // jbe done
+		e.raw(0x48, 0x83, 0xE8, 0x01)              // dec rax
+		e.raw(0xF2, 0x48, 0x0F, 0x2A, 0xC8)        // cvtsi2sd xmm1, rax
+		e.patchRel(skipPos, len(e.code))
+	}
+	e.patchRel(jpPos, len(e.code))
+	e.raw(0xF2, 0x0F, 0x11, 0x0C, 0x25); e.imm32(regAddr(0)) // movsd [R0], xmm1
+}
 
+const memSize = 1 << 30 // VM 地址空间 (mmap 惰性分配)
 // memSizeWin 是 Windows 下提交的 VM 内存大小。
 // Linux 的 mmap 是惰性分配, 1 GiB 也不占物理页; VirtualAlloc 提交多少就实占
 // 多少, 所以按 64 MiB 提交 —— 覆盖内置标准库的实际用量。
@@ -163,6 +196,109 @@ func (e *Encoder) storeMem(rs, base int, off int32) {
 	e.vmAddr(base, off)
 	e.raw(0x48, 0x8B, 0x14, 0x25); e.imm32(regAddr(rs)) // mov rdx, [Rs]
 	e.raw(0x48, 0x89, 0x10)             // mov [rax], rdx
+}
+
+// shiftOp 编码 SHL/SHR/ASR。
+//
+// IR 有两种形状: 两操作数 (rd, 计数) 表示 rd 自身移位, 三操作数
+// (rd, rs, 计数) 表示 rd = rs 移位。计数可以是寄存器或立即数; x86 的移位
+// 指令本身按 64 位操作数把计数掩到低 6 位, 与 VM 的 ``v & 63`` 一致。
+func (e *Encoder) shiftOp(op string, ins ir.Instr) error {
+	var rd, rs int
+	var cnt ir.Operand
+	switch len(ins.Args) {
+	case 2:
+		if ins.Args[0].Kind != "reg" {
+			return fmt.Errorf("%s: 需要 reg, reg|imm", op)
+		}
+		rd, rs, cnt = int(ins.Args[0].V), int(ins.Args[0].V), ins.Args[1]
+	case 3:
+		if ins.Args[0].Kind != "reg" || ins.Args[1].Kind != "reg" {
+			return fmt.Errorf("%s: 需要 reg, reg, reg|imm", op)
+		}
+		rd, rs, cnt = int(ins.Args[0].V), int(ins.Args[1].V), ins.Args[2]
+	default:
+		return fmt.Errorf("%s: 需要 2 或 3 个操作数", op)
+	}
+	e.loadReg(rs)
+	switch cnt.Kind {
+	case "reg":
+		e.raw(0x48, 0x8B, 0x0C, 0x25) // mov rcx, [Rcnt]
+		e.imm32(regAddr(int(cnt.V)))
+		switch op {
+		case "SHL":
+			e.raw(0x48, 0xD3, 0xE0) // shl rax, cl
+		case "SHR":
+			e.raw(0x48, 0xD3, 0xE8) // shr rax, cl
+		default:
+			e.raw(0x48, 0xD3, 0xF8) // sar rax, cl (算术右移, 保留符号)
+		}
+	case "imm":
+		v := byte(cnt.V & 63)
+		switch op {
+		case "SHL":
+			e.raw(0x48, 0xC1, 0xE0, v) // shl rax, imm8
+		case "SHR":
+			e.raw(0x48, 0xC1, 0xE8, v) // shr rax, imm8
+		default:
+			e.raw(0x48, 0xC1, 0xF8, v) // sar rax, imm8
+		}
+	default:
+		return fmt.Errorf("%s: 计数需要 reg 或 imm", op)
+	}
+	e.storeReg(rd)
+	return nil
+}
+
+// logicOp 编码 ANDI/ORI/XORI: rd = rs op src。
+//
+// 立即数放不进 int32 时改走寄存器形式, 避免 ``op rax, imm32`` 的符号扩展
+// 把 0xFFFFFFFF 变成全 1 掩码。
+func (e *Encoder) logicOp(op string, ins ir.Instr) error {
+	if len(ins.Args) != 3 || ins.Args[0].Kind != "reg" || ins.Args[1].Kind != "reg" {
+		return fmt.Errorf("%s: 需要 reg, reg, reg|imm", op)
+	}
+	rd, rs, src := int(ins.Args[0].V), int(ins.Args[1].V), ins.Args[2]
+	e.loadReg(rs)
+	switch src.Kind {
+	case "imm":
+		if src.V > 0x7FFFFFFF || src.V < -0x80000000 {
+			e.raw(0x48, 0xBA) // mov rdx, imm64
+			e.imm64(src.V)
+			switch op {
+			case "ANDI":
+				e.raw(0x48, 0x21, 0xD0) // and rax, rdx
+			case "ORI":
+				e.raw(0x48, 0x09, 0xD0) // or rax, rdx
+			default:
+				e.raw(0x48, 0x31, 0xD0) // xor rax, rdx
+			}
+			break
+		}
+		switch op {
+		case "ANDI":
+			e.raw(0x48, 0x25) // and rax, imm32
+		case "ORI":
+			e.raw(0x48, 0x0D) // or rax, imm32
+		default:
+			e.raw(0x48, 0x35) // xor rax, imm32
+		}
+		e.imm32(int32(src.V))
+	case "reg":
+		switch op {
+		case "ANDI":
+			e.raw(0x48, 0x23, 0x04, 0x25) // and rax, [abs32]
+		case "ORI":
+			e.raw(0x48, 0x0B, 0x04, 0x25) // or rax, [abs32]
+		default:
+			e.raw(0x48, 0x33, 0x04, 0x25) // xor rax, [abs32]
+		}
+		e.imm32(regAddr(int(src.V)))
+	default:
+		return fmt.Errorf("%s: 第三个操作数需要 reg 或 imm", op)
+	}
+	e.storeReg(rd)
+	return nil
 }
 
 
@@ -507,13 +643,16 @@ func EncodeWin(p *ir.Program, textRVA uint32, iat map[string]uint32) ([]byte, er
 // 另走 CreateFileA/WinSock 一整套封装, 暂未实现 —— 明确报错好过生成跑飞
 // 的二进制。
 var winSyscalls = map[int64]bool{
+	0: true, 2: true, // SQRT/ABS
 	6: true, 7: true, 8: true, 9: true, // FADD/FSUB/FMUL/FDIV
+	10: true,           // FCMP
 	11: true, 12: true, // FTOI/ITOF
 	13: true, 14: true, // RAND/SRAND
 	15: true, 16: true, 17: true, // TIME/STRLEN/STRCMP
 	20: true,                  // MALLOC
 	22: true, 23: true, 24: true, 25: true, 26: true, // ITOA/FTOA/PRINT_STR/STR_CONCAT/BOOL_STR
 	28: true, 29: true, 30: true, 31: true, // SUBSTR/INDEXOF/TOUPPER/TOLOWER
+	32: true, 33: true, 34: true, // FLOOR/CEIL/ROUND
 	35: true, 36: true, 37: true, 38: true, // ATOI/TRIM/LTRIM/RTRIM
 	63: true, 89: true, // OSNAME/TEMPDIR
 	91: true, 92: true, // TIMEMS/SLEEPMS
@@ -729,6 +868,53 @@ func encodeWith(p *ir.Program, e *Encoder) ([]byte, error) {
 			e.loadReg(int(ins.Args[1].V))
 			e.raw(0x48, 0x05); e.imm32(int32(ins.Args[2].V))
 			e.storeReg(int(ins.Args[0].V))
+		case "SHL", "SHR", "ASR":
+			if err := e.shiftOp(ins.Op, ins); err != nil {
+				return nil, err
+			}
+		case "ANDI", "ORI", "XORI":
+			if err := e.logicOp(ins.Op, ins); err != nil {
+				return nil, err
+			}
+		case "MVN":
+			if len(ins.Args) != 2 || ins.Args[0].Kind != "reg" {
+				return nil, fmt.Errorf("MVN: 需要 reg, reg|imm")
+			}
+			if ins.Args[1].Kind == "reg" {
+				e.loadReg(int(ins.Args[1].V))
+			} else if ins.Args[1].Kind == "imm" {
+				e.raw(0x48, 0xB8) // mov rax, imm64
+				e.imm64(ins.Args[1].V)
+			} else {
+				return nil, fmt.Errorf("MVN: 第二个操作数需要 reg 或 imm")
+			}
+			e.raw(0x48, 0xF7, 0xD0) // not rax
+			e.storeReg(int(ins.Args[0].V))
+		case "LB", "LH", "LW":
+			// 窄读: 与 VM 一致, 先按有符号扩展, 需要无符号时由后续 ANDI 掩码。
+			if len(ins.Args) != 2 || ins.Args[0].Kind != "reg" {
+				return nil, fmt.Errorf("%s: 需要 reg, mem|reg", ins.Op)
+			}
+			rd, src := int(ins.Args[0].V), ins.Args[1]
+			switch src.Kind {
+			case "mem":
+				e.vmAddr(int(src.V), int32(src.Off))
+			case "reg":
+				e.raw(0x4C, 0x89, 0xF8) // mov rax, r15
+				e.raw(0x48, 0x03, 0x04, 0x25)
+				e.imm32(regAddr(int(src.V)))
+			default:
+				return nil, fmt.Errorf("%s: 第二个操作数需要 mem 或 reg", ins.Op)
+			}
+			switch ins.Op {
+			case "LB":
+				e.raw(0x48, 0x0F, 0xBE, 0x00) // movsx rax, byte [rax]
+			case "LH":
+				e.raw(0x48, 0x0F, 0xBF, 0x00) // movsx rax, word [rax]
+			default:
+				e.raw(0x48, 0x63, 0x00) // movsxd rax, dword [rax]
+			}
+			e.storeReg(rd)
 		case "LD", "SD":
 			if len(ins.Args) != 2 || ins.Args[1].Kind != "mem" {
 				return nil, fmt.Errorf("%s: 需要 reg, mem", ins.Op)
@@ -836,6 +1022,33 @@ func encodeWith(p *ir.Program, e *Encoder) ([]byte, error) {
 				if err := e.emitWriteStdout(); err != nil {
 					return nil, err
 				}
+			case 0: // SQRT: R0 = sqrt(double(R0)) 的位模式 (sqrtsd 是精确的)
+				e.raw(0xF2, 0x0F, 0x10, 0x04, 0x25); e.imm32(regAddr(0)) // movsd xmm0, [R0]
+				e.raw(0xF2, 0x0F, 0x51, 0xC0)                             // sqrtsd xmm0, xmm0
+				e.raw(0xF2, 0x0F, 0x11, 0x04, 0x25); e.imm32(regAddr(0)) // movsd [R0], xmm0
+			case 2: // ABS: R0 = |int64(R0)| (无分支: 用符号掩码取反加一)
+				e.loadReg(0)
+				e.raw(0x48, 0x89, 0xC2)       // mov rdx, rax
+				e.raw(0x48, 0xC1, 0xFA, 0x3F) // sar rdx, 63
+				e.raw(0x48, 0x31, 0xD0)       // xor rax, rdx
+				e.raw(0x48, 0x29, 0xD0)       // sub rax, rdx
+				e.storeReg(0)
+			case 10: // FCMP: R0 = -1 / 0 / 1
+				e.raw(0xF2, 0x0F, 0x10, 0x04, 0x25); e.imm32(regAddr(0)) // movsd xmm0, [R0]
+				e.raw(0xF2, 0x0F, 0x10, 0x0C, 0x25); e.imm32(regAddr(1)) // movsd xmm1, [R1]
+				e.raw(0x31, 0xC0)             // xor eax, eax (默认相等)
+				e.raw(0x66, 0x0F, 0x2E, 0xC1) // ucomisd xmm0, xmm1
+				e.raw(0x0F, 0x8A); fpDone := e.imm32Pos() // jp done (无序/NaN 记 0)
+				e.raw(0x0F, 0x97, 0xC1) // seta cl  (cl = xmm0 > xmm1)
+				e.raw(0x0F, 0x92, 0xC2) // setb dl  (dl = xmm0 < xmm1)
+				e.raw(0x0F, 0xB6, 0xC9) // movzx ecx, cl
+				e.raw(0x0F, 0xB6, 0xD2) // movzx edx, dl
+				e.raw(0x29, 0xD1)       // sub ecx, edx
+				e.raw(0x48, 0x63, 0xC1) // movsxd rax, ecx
+				e.patchRel(fpDone, len(e.code))
+				e.storeReg(0)
+			case 32, 33, 34: // FLOOR/CEIL/ROUND: R0 = 取整后的 double 位模式
+				e.emitF64Round(int(ins.Args[0].V))
 			case 12: // ITOF: R0 = double(R0) 的位模式
 				e.loadReg(0)
 				e.raw(0xF2, 0x48, 0x0F, 0x2A, 0xC0) // cvtsi2sd xmm0, rax

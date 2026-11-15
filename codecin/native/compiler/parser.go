@@ -17,6 +17,9 @@ type parser struct {
 	enums     map[string]int64 // 枚举成员名 -> 编译期整数值 (可被后续成员引用)
 	enumTypes map[string]bool  // 已声明的枚举类型名 (裸类型名等价于 int)
 	rangeID   int              // 范围 for 隐藏局部名序号 ($rf<id>p / $rf<id>e)
+
+	// const 命名常量 (纯编译期): 名字 -> 类型 + 值
+	consts map[string]constDef
 }
 
 func (p *parser) peek() Token {
@@ -141,8 +144,22 @@ func (p *parser) parseDims() ([]int, error) {
 	for p.peek().kind == "LBRACKET" {
 		p.next()
 		num := 0
-		if p.peek().kind == "NUMBER" {
+		switch p.peek().kind {
+		case "NUMBER":
 			num = int(p.next().ival)
+		case "IDENT":
+			// 数组维度可以是 const 整数常量 (Python 侧同样允许)。
+			tok := p.next()
+			v, ok := p.constIntValue(tok.sval)
+			if !ok {
+				return nil, fmt.Errorf(
+					"Constant expression uses non-constant name '%s' at %s "+
+						"(hint: array lengths must be compile-time constants; "+
+						"declare it as `const int %s = ...`; variable-length arrays "+
+						"are not supported — use a fixed-size array plus a count variable)",
+					tok.sval, p.locTok(tok), tok.sval)
+			}
+			num = v
 		}
 		if _, err := p.expect("RBRACKET"); err != nil {
 			return nil, err
@@ -164,6 +181,10 @@ func (p *parser) parseProgram() (map[string]*StructDef, []*GlobalVar, map[string
 	for p.peek().kind != "EOF" {
 		if p.peek().kind == "IDENT" && p.peek().sval == "struct" {
 			if err := p.parseStruct(structs); err != nil {
+				return nil, nil, nil, nil, nil, err
+			}
+		} else if p.peek().kind == "IDENT" && p.peek().sval == "const" {
+			if err := p.parseConst(); err != nil {
 				return nil, nil, nil, nil, nil, err
 			}
 		} else if p.peek().kind == "IDENT" && p.peek().sval == "enum" {
@@ -345,6 +366,303 @@ func (p *parser) evalEnumConst(n *Node, mname string) (*big.Int, error) {
 	}
 	return nil, fmt.Errorf("Enum member %s initializer must be an integer "+
 		"constant expression at %s", mname, p.loc())
+}
+
+// ---------------- const 命名常量 ----------------
+
+// parseConst 解析 `const <类型> 名字 = <常量表达式> [, ...]` (全局或局部)。
+//
+// 与 Python 侧 _parse_const_decl 对齐: 命名常量是纯编译期的 —— 不占数据段、
+// 不产生任何指令, 因此可以直接用作数组维度与全局初始化器。
+func (p *parser) parseConst() error {
+	p.next() // const
+	if t := p.peek(); t.kind != "IDENT" || !baseTypeWords[t.sval] {
+		return fmt.Errorf(
+			"const needs a scalar type (int/float/bool/string) at %s", p.loc())
+	}
+	vtype, err := p.parseType()
+	if err != nil {
+		return err
+	}
+	for {
+		nameTok, err := p.expect("IDENT")
+		if err != nil {
+			return err
+		}
+		name := nameTok.sval
+		if keywords[name] {
+			return fmt.Errorf("Invalid const name '%s' at %s",
+				name, p.locTok(nameTok))
+		}
+		if _, dup := p.enums[name]; dup {
+			return fmt.Errorf("Name '%s' is already an enum member at %s",
+				name, p.locTok(nameTok))
+		}
+		if _, dup := p.consts[name]; dup {
+			return fmt.Errorf("Duplicate const: %s at %s", name, p.locTok(nameTok))
+		}
+		if _, err := p.expect("ASSIGN"); err != nil {
+			return err
+		}
+		expr, err := p.parseAssign()
+		if err != nil {
+			return err
+		}
+		v, err := p.evalConst(expr)
+		if err != nil {
+			return err
+		}
+		cv, err := coerceConst(name, vtype, v)
+		if err != nil {
+			return err
+		}
+		p.consts[name] = cv
+		if !p.accept("COMMA") {
+			break
+		}
+	}
+	p.accept("SEMI")
+	return nil
+}
+
+// coerceConst 按声明类型规范化常量值 (int 向零截断、bool 取非零、float 提升)。
+func coerceConst(name string, vtype *Type, v constDef) (constDef, error) {
+	switch vtype.Kind {
+	case kString:
+		if v.kind != cString {
+			return v, fmt.Errorf("const string %s must be initialized with a string", name)
+		}
+		return v, nil
+	case kFloat:
+		switch v.kind {
+		case cString:
+			return v, fmt.Errorf("const float %s must be initialized with a number", name)
+		case cFloat:
+			return v, nil
+		case cBool:
+			if v.b {
+				return constDef{kind: cFloat, f: 1}, nil
+			}
+			return constDef{kind: cFloat, f: 0}, nil
+		}
+		return constDef{kind: cFloat, f: float64(v.i)}, nil
+	case kBool:
+		switch v.kind {
+		case cString:
+			return v, fmt.Errorf("const bool %s must be initialized with a number", name)
+		case cBool:
+			return v, nil
+		case cFloat:
+			return constDef{kind: cBool, b: v.f != 0}, nil
+		}
+		return constDef{kind: cBool, b: v.i != 0}, nil
+	}
+	switch v.kind {
+	case cString:
+		return v, fmt.Errorf("const int %s must be initialized with a number", name)
+	case cBool:
+		if v.b {
+			return constDef{kind: cInt, i: 1}, nil
+		}
+		return constDef{kind: cInt, i: 0}, nil
+	case cFloat:
+		return constDef{kind: cInt, i: int64(v.f)}, nil
+	}
+	return v, nil
+}
+
+// evalConst 在编译期求值常量表达式, 支持 int / float / bool / string 及其算术
+// 与位运算 (字符串只支持 `+`), 与 Python 侧 _const_value_ast 的规则一致。
+func (p *parser) evalConst(n *Node) (constDef, error) {
+	switch n.Kind {
+	case "num":
+		if n.IsFloat {
+			return constDef{kind: cFloat, f: n.Num}, nil
+		}
+		return constDef{kind: cInt, i: n.Ival}, nil
+	case "bool":
+		return constDef{kind: cBool, b: n.Bool}, nil
+	case "str":
+		return constDef{kind: cString, s: n.Str}, nil
+	case "var":
+		if v, ok := p.consts[n.Name]; ok {
+			return v, nil
+		}
+		if v, ok := p.enums[n.Name]; ok {
+			return constDef{kind: cInt, i: v}, nil
+		}
+		return constDef{}, fmt.Errorf(
+			"Constant expression uses non-constant name '%s' at %s "+
+				"(hint: array lengths must be compile-time constants; "+
+				"declare it as `const int %s = ...`; variable-length arrays "+
+				"are not supported — use a fixed-size array plus a count variable)",
+			n.Name, p.loc(), n.Name)
+	case "neg":
+		v, err := p.evalConst(n.A)
+		if err != nil {
+			return v, err
+		}
+		switch v.kind {
+		case cString:
+			return v, fmt.Errorf("Cannot negate a string constant")
+		case cFloat:
+			return constDef{kind: cFloat, f: -v.f}, nil
+		case cBool:
+			if v.b {
+				return constDef{kind: cInt, i: -1}, nil
+			}
+			return constDef{kind: cInt, i: 0}, nil
+		}
+		return constDef{kind: cInt, i: -v.i}, nil
+	case "bitnot":
+		v, err := p.evalConst(n.A)
+		if err != nil {
+			return v, err
+		}
+		switch v.kind {
+		case cInt:
+			return constDef{kind: cInt, i: ^v.i}, nil
+		case cBool:
+			if v.b {
+				return constDef{kind: cInt, i: ^int64(1)}, nil
+			}
+			return constDef{kind: cInt, i: ^int64(0)}, nil
+		}
+		return v, fmt.Errorf("Bitwise NOT requires an integer constant, got %s",
+			constTypeName(v))
+	case "not":
+		v, err := p.evalConst(n.A)
+		if err != nil {
+			return v, err
+		}
+		switch v.kind {
+		case cString:
+			return constDef{kind: cBool, b: v.s == ""}, nil
+		case cFloat:
+			return constDef{kind: cBool, b: v.f == 0}, nil
+		case cBool:
+			return constDef{kind: cBool, b: !v.b}, nil
+		}
+		return constDef{kind: cBool, b: v.i == 0}, nil
+	case "binop":
+		return p.evalConstBinop(n)
+	}
+	return constDef{}, fmt.Errorf("Not a constant expression at %s", p.loc())
+}
+
+func (p *parser) evalConstBinop(n *Node) (constDef, error) {
+	op := n.Op
+	switch op {
+	case "+", "-", "*", "/", "%", "<<", ">>", "&", "|", "^":
+	default:
+		return constDef{}, fmt.Errorf(
+			"Operator '%s' is not allowed in a constant expression at %s",
+			op, p.loc())
+	}
+	a, err := p.evalConst(n.A)
+	if err != nil {
+		return a, err
+	}
+	b, err := p.evalConst(n.B)
+	if err != nil {
+		return b, err
+	}
+	if a.kind == cString || b.kind == cString {
+		if op == "+" && a.kind == cString && b.kind == cString {
+			return constDef{kind: cString, s: a.s + b.s}, nil
+		}
+		return constDef{}, fmt.Errorf("String constants only support the '+' operator")
+	}
+	if a.kind == cFloat || b.kind == cFloat {
+		if op != "+" && op != "-" && op != "*" && op != "/" {
+			return constDef{}, fmt.Errorf("Operator '%s' requires integer constants", op)
+		}
+		x, y := constFloat(a), constFloat(b)
+		switch op {
+		case "+":
+			return constDef{kind: cFloat, f: x + y}, nil
+		case "-":
+			return constDef{kind: cFloat, f: x - y}, nil
+		case "*":
+			return constDef{kind: cFloat, f: x * y}, nil
+		}
+		if y == 0 {
+			return constDef{}, fmt.Errorf("Constant expression divides by zero")
+		}
+		return constDef{kind: cFloat, f: x / y}, nil
+	}
+	x, y := constInt(a), constInt(b)
+	if (op == "/" || op == "%") && y == 0 {
+		return constDef{}, fmt.Errorf("Constant expression divides by zero")
+	}
+	var r int64
+	switch op {
+	case "+":
+		r = x + y
+	case "-":
+		r = x - y
+	case "*":
+		r = x * y
+	case "/":
+		r = x / y // Go 与 Python 的 _trunc_div 一致: 向零截断
+	case "%":
+		r = x % y
+	case "<<":
+		r = x << uint(y&63)
+	case ">>":
+		r = x >> uint(y&63)
+	case "&":
+		r = x & y
+	case "|":
+		r = x | y
+	default:
+		r = x ^ y
+	}
+	return constDef{kind: cInt, i: r}, nil
+}
+
+func constInt(v constDef) int64 {
+	if v.kind == cBool {
+		if v.b {
+			return 1
+		}
+		return 0
+	}
+	return v.i
+}
+
+func constFloat(v constDef) float64 {
+	switch v.kind {
+	case cFloat:
+		return v.f
+	case cBool:
+		if v.b {
+			return 1
+		}
+		return 0
+	}
+	return float64(v.i)
+}
+
+func constTypeName(v constDef) string {
+	switch v.kind {
+	case cFloat:
+		return "float"
+	case cBool:
+		return "bool"
+	case cString:
+		return "string"
+	}
+	return "int"
+}
+
+// constIntValue 返回常量名对应的整数值 (用于数组维度); 不是整数常量时 ok=false。
+func (p *parser) constIntValue(name string) (int, bool) {
+	v, ok := p.consts[name]
+	if !ok || (v.kind != cInt && v.kind != cBool) {
+		return 0, false
+	}
+	return int(constInt(v)), true
 }
 
 func (p *parser) parseStruct(structs map[string]*StructDef) error {
@@ -586,6 +904,12 @@ func (p *parser) parseStmt() (*Node, error) {
 		return &Node{Kind: "block", List: body}, nil
 	case t.kind == "IDENT" && t.sval == "assert":
 		return p.parseAssert()
+	case t.kind == "IDENT" && t.sval == "const":
+		// 局部 const: 纯编译期, 不产生任何语句。
+		if err := p.parseConst(); err != nil {
+			return nil, err
+		}
+		return &Node{Kind: "block"}, nil
 	case t.kind == "IDENT" && t.sval == "return":
 		p.next()
 		var expr *Node

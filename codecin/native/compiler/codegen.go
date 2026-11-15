@@ -264,6 +264,14 @@ func (c *compiler) constValue(n *Node) (*Type, int64, error) {
 			// 枚举成员: 编译期整数常量 (可用于全局初始化与 case 标签)
 			return scalarT(kInt), v, nil
 		}
+		if v, ok := c.consts[n.Name]; ok {
+			// const 命名常量: 纯编译期对象, 直接折叠成字面量。
+			// 字符串常量在数据段里的地址就是它的机器字。
+			if v.kind == cString {
+				return scalarT(kString), int64(c.dataString(v.s)), nil
+			}
+			return v.typ(), v.raw(), nil
+		}
 	case "neg":
 		inner := n.A
 		if inner.Kind == "num" {
@@ -1117,6 +1125,15 @@ func (c *compiler) genVarValue(name string) *Type {
 		c.emit("MOV", c.reg(0), c.imm(v))
 		return scalarT(kInt)
 	}
+	if v, ok := c.consts[name]; ok {
+		// const 命名常量: 直接发射字面量 (字符串发数据段地址)
+		if v.kind == cString {
+			c.emit("MOV", c.reg(0), c.imm(int64(c.dataString(v.s))))
+		} else {
+			c.emit("MOV", c.reg(0), c.imm(v.raw()))
+		}
+		return v.typ()
+	}
 	t := c.varType(name)
 	if t == nil {
 		return nil
@@ -1141,6 +1158,10 @@ func (c *compiler) genLvalueAddr(n *Node) {
 	case "var":
 		if _, ok := c.enums[n.Name]; ok {
 			c.failf("Cannot assign to enum member: %s (constants are read-only)", n.Name)
+			return
+		}
+		if _, ok := c.consts[n.Name]; ok {
+			c.failf("Cannot assign to const: %s (constants are read-only)", n.Name)
 			return
 		}
 		c.mustAddrVar(n.Name)
@@ -1302,6 +1323,9 @@ func (c *compiler) exprType(n *Node) *Type {
 	case "var":
 		if _, ok := c.enums[n.Name]; ok {
 			return scalarT(kInt)
+		}
+		if v, ok := c.consts[n.Name]; ok {
+			return v.typ()
 		}
 		return c.varType(n.Name)
 	case "member":
@@ -2135,6 +2159,7 @@ func Compile(source, filename string, bounds bool) (*ir.Program, error) {
 		filename:  filename,
 		enums:     map[string]int64{},
 		enumTypes: map[string]bool{},
+		consts:    map[string]constDef{},
 	}
 	structs, globals, functions, funcOrder, enums, err := p.parseProgram()
 	if err != nil {
@@ -2144,6 +2169,7 @@ func Compile(source, filename string, bounds bool) (*ir.Program, error) {
 	c.globals = globals
 	c.functions = functions
 	c.enums = enums
+	c.consts = p.consts
 
 	c.layoutGlobals(globals)
 	c.emitGlobalsInit(globals)
