@@ -128,10 +128,7 @@ func (e *Encoder) prologue(writes []ir.DataWrite) error {
 // Win64 ABI 要求调用点 rsp 16 字节对齐, 且调用者提供 32 字节 shadow space。
 // 入口 rsp ≡ 8 (mod 16), 因此 ``sub rsp, 0x28`` 之后恰为 16 的倍数。
 func (e *Encoder) prologueWin() error {
-	// 入口 rsp 的对齐取决于 loader 版本, 直接 and 到 16 字节边界最稳:
-	// 进程不会再 ret 回 kernel32 (退出走 ExitProcess), 丢掉原 rsp 无副作用。
-	e.raw(0x48, 0x83, 0xE4, 0xF0)                              // and rsp, -16
-	e.raw(0x48, 0x83, 0xEC, 0x30)                              // sub rsp, 0x30 (16 的倍数, 且容得下第 5 参数)
+	e.raw(0x48, 0x83, 0xEC, 0x28)                              // sub rsp, 0x28
 	e.raw(0xB9); e.imm32(-11)                                  // mov ecx, STD_OUTPUT_HANDLE
 	if err := e.callIAT("GetStdHandle"); err != nil {
 		return err
@@ -145,10 +142,6 @@ func (e *Encoder) prologueWin() error {
 		return err
 	}
 	e.raw(0x49, 0x89, 0xC7)  // mov r15, rax
-	e.raw(0x4C, 0x89, 0xF9)  // TEMP DIAG: mov rcx, r15
-	if err := e.callIAT("ExitProcess"); err != nil {
-		return err
-	}
 	return nil
 }
 // vmAddr 计算 rax = r15 + R[base] + off。
@@ -767,9 +760,9 @@ func encodeWith(p *ir.Program, e *Encoder) ([]byte, error) {
 				return nil, err
 			}
 			if e.isWin() {
-				// Win64 ABI: 调用点 rsp 必须 16 字节对齐, 且 caller 要备好
-				// 32 字节 shadow space。宿主 call 只压 8 字节, 不补这一手的话
-				// 进到函数体里 rsp 就偏了 8, 函数内再调 kernel32 就崩。
+				// Win64 ABI: 调用点 rsp 要 16 字节对齐, 且 caller 备好 32 字节
+				// shadow space (第 5 个参数落在 [rsp+0x20])。宿主 call 只压
+				// 8 字节返回地址, 所以这块在 call 之前减、返回之后加回去。
 				e.raw(0x48, 0x83, 0xEC, 0x28) // sub rsp, 0x28
 			}
 			e.raw(0x48, 0x83, 0x2C, 0x25) // sub qword [R32], 8 (VM 返回槽)
@@ -777,13 +770,13 @@ func encodeWith(p *ir.Program, e *Encoder) ([]byte, error) {
 			e.raw(0x08)
 			e.raw(0xE8)
 			fixups = append(fixups, fix{e.imm32Pos(), name})
+			if e.isWin() {
+				e.raw(0x48, 0x83, 0xC4, 0x28) // add rsp, 0x28
+			}
 		case "RET":
 			e.raw(0x48, 0x83, 0x04, 0x25) // add qword [R32], 8
 			e.imm32(regAddr(32))
 			e.raw(0x08)
-			if e.isWin() {
-				e.raw(0x48, 0x83, 0xC4, 0x28) // add rsp, 0x28
-			}
 			e.raw(0xC3)
 		case "PUSH":
 			if len(ins.Args) != 1 || ins.Args[0].Kind != "reg" {
