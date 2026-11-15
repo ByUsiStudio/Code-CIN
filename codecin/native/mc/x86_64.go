@@ -145,13 +145,10 @@ func (e *Encoder) prologueWin() error {
 		return err
 	}
 	e.raw(0x49, 0x89, 0xC7)  // mov r15, rax
-	e.raw(0x48, 0x85, 0xC0)  // test rax, rax
-	e.raw(0x75, 0x0B)        // jne ok (跳过 mov ecx,99 + call ExitProcess 共 11 字节)
-	e.raw(0xB9); e.imm32(99) // mov ecx, 99
+	e.raw(0x4C, 0x89, 0xF9)  // TEMP DIAG: mov rcx, r15
 	if err := e.callIAT("ExitProcess"); err != nil {
 		return err
 	}
-	e.raw(0xEB, 0xFE) // 悬停
 	return nil
 }
 // vmAddr 计算 rax = r15 + R[base] + off。
