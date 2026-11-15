@@ -785,7 +785,8 @@ var winSyscalls = map[int64]bool{
 	35: true, 36: true, 37: true, 38: true, // ATOI/TRIM/LTRIM/RTRIM
 	// 文件 / 目录 (实现在 win64_fileio.go)
 	51: true, 52: true, 53: true, 54: true, 55: true, 56: true, 57: true,
-	66: true, 85: true, 86: true, 87: true, 88: true, 90: true,
+	58: true, 66: true, 84: true, 85: true, 86: true, 87: true, 88: true,
+	90: true,
 	63: true, 89: true, // OSNAME/TEMPDIR
 	91: true, 92: true, // TIMEMS/SLEEPMS
 	137: true, // ALLOCFRAME

@@ -48,6 +48,10 @@ var winImports = peImport{DLL: "kernel32.dll", Names: []string{
 	"GetFileTime",              // SYS 88 FILEMTIME
 	"GetCurrentDirectoryA",     // SYS 66 CWD
 	"SetCurrentDirectoryA",     // SYS 90 CHDIR
+	"FindFirstFileA",           // SYS 58 DIRLIST
+	"FindNextFileA",            // SYS 58 DIRLIST
+	"FindClose",                // SYS 58 DIRLIST
+	"CopyFileA",                // SYS 84 FILECOPY
 }}
 
 // dataOffWin 把宿主虚地址换算成 .data 内的偏移。

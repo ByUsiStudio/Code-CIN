@@ -22,19 +22,19 @@ const (
 
 // Win32 常量 (只放这里用到的)。
 const (
-	winGenericRead     = 0x80000000
-	winGenericWrite    = 0x40000000
-	winFileAppendData  = 0x00000004
-	winShareAll        = 3  // FILE_SHARE_READ | FILE_SHARE_WRITE
-	winCreateAlways    = 2  // CREATE_ALWAYS
-	winOpenExisting    = 3  // OPEN_EXISTING
-	winOpenAlways      = 4  // OPEN_ALWAYS
-	winAttrNormal      = 0x80
-	winInvalidHandle   = -1
-	winInvalidAttr     = -1
-	winAttrDirectory   = 0x10
-	winFiletimePerSec  = 10000000     // FILETIME 单位 100ns
-	winFiletimeEpoch   = 11644473600  // 1601-01-01 到 1970-01-01 的秒数
+	winGenericRead    = 0x80000000
+	winGenericWrite   = 0x40000000
+	winFileAppendData = 0x00000004
+	winShareAll       = 3 // FILE_SHARE_READ | FILE_SHARE_WRITE
+	winCreateAlways   = 2 // CREATE_ALWAYS
+	winOpenExisting   = 3 // OPEN_EXISTING
+	winOpenAlways     = 4 // OPEN_ALWAYS
+	winAttrNormal     = 0x80
+	winInvalidHandle  = -1
+	winInvalidAttr    = -1
+	winAttrDirectory  = 0x10
+	winFiletimePerSec = 10000000    // FILETIME 单位 100ns
+	winFiletimeEpoch  = 11644473600 // 1601-01-01 到 1970-01-01 的秒数
 )
 
 // winSyscall 实现 Windows 独有的文件/目录功能号。
@@ -56,8 +56,12 @@ func (e *Encoder) winSyscall(nr int64) (handled bool, err error) {
 		return true, e.winFileSize()
 	case 57:
 		return true, e.winMkdir()
+	case 58:
+		return true, e.winDirList()
 	case 66:
 		return true, e.winCwd()
+	case 84:
+		return true, e.winFileCopy()
 	case 85:
 		return true, e.winFileMove()
 	case 86:
@@ -96,12 +100,17 @@ func (e *Encoder) winCreateFile(pathReg int, access int64, disposition int32) er
 	e.raw(0x48, 0x83, 0xEC, 0x40) // sub rsp, 0x40
 	e.vmAddr(pathReg, 0)          // rax = 路径宿主指针
 	e.raw(0x48, 0x89, 0xC1)       // mov rcx, rax (lpFileName)
-	e.raw(0x48, 0xBA); e.imm64(access)  // mov rdx, access
-	e.raw(0x41, 0xB8); e.imm32(winShareAll) // r8d = 共享模式
-	e.raw(0x45, 0x31, 0xC9)                 // xor r9d, r9d (安全属性 = NULL)
-	e.raw(0x48, 0xC7, 0x44, 0x24, 0x20); e.imm32(disposition)
-	e.raw(0x48, 0xC7, 0x44, 0x24, 0x28); e.imm32(winAttrNormal)
-	e.raw(0x48, 0xC7, 0x44, 0x24, 0x30); e.imm32(0) // 模板文件 = NULL
+	e.raw(0x48, 0xBA)
+	e.imm64(access) // mov rdx, access
+	e.raw(0x41, 0xB8)
+	e.imm32(winShareAll)    // r8d = 共享模式
+	e.raw(0x45, 0x31, 0xC9) // xor r9d, r9d (安全属性 = NULL)
+	e.raw(0x48, 0xC7, 0x44, 0x24, 0x20)
+	e.imm32(disposition)
+	e.raw(0x48, 0xC7, 0x44, 0x24, 0x28)
+	e.imm32(winAttrNormal)
+	e.raw(0x48, 0xC7, 0x44, 0x24, 0x30)
+	e.imm32(0) // 模板文件 = NULL
 	if err := e.callIAT("CreateFileA"); err != nil {
 		return err
 	}
@@ -116,7 +125,8 @@ func (e *Encoder) winFileRead() error {
 	e.loadReg(0)
 	e.storeReg(7) // R7 = 路径
 
-	e.raw(0x48, 0xC7, 0xC0); e.imm32(65536)
+	e.raw(0x48, 0xC7, 0xC0)
+	e.imm32(65536)
 	e.storeReg(0)
 	e.emitMalloc()
 	e.loadReg(0)
@@ -137,10 +147,13 @@ func (e *Encoder) winFileRead() error {
 	e.loadReg(9)
 	e.raw(0x48, 0x89, 0xC1) // rcx = hFile
 	e.vmAddr(8, 0)
-	e.raw(0x48, 0x89, 0xC2)                     // rdx = 缓冲区
-	e.raw(0x41, 0xB8); e.imm32(65535)           // r8d = 最多读多少
-	e.raw(0x41, 0xB9); e.imm32(int32(winScratch)) // r9d = &bytesRead
-	e.raw(0x48, 0xC7, 0x44, 0x24, 0x20); e.imm32(0) // lpOverlapped = NULL
+	e.raw(0x48, 0x89, 0xC2) // rdx = 缓冲区
+	e.raw(0x41, 0xB8)
+	e.imm32(65535) // r8d = 最多读多少
+	e.raw(0x41, 0xB9)
+	e.imm32(int32(winScratch)) // r9d = &bytesRead
+	e.raw(0x48, 0xC7, 0x44, 0x24, 0x20)
+	e.imm32(0) // lpOverlapped = NULL
 	if err := e.callIAT("ReadFile"); err != nil {
 		return err
 	}
@@ -148,7 +161,8 @@ func (e *Encoder) winFileRead() error {
 	// buf[bytesRead] = 0
 	e.vmAddr(8, 0)
 	e.raw(0x48, 0x89, 0xC1) // rcx = 缓冲区
-	e.raw(0x8B, 0x14, 0x25); e.imm32(int32(winScratch)) // edx = bytesRead
+	e.raw(0x8B, 0x14, 0x25)
+	e.imm32(int32(winScratch))    // edx = bytesRead
 	e.raw(0xC6, 0x04, 0x11, 0x00) // mov byte [rcx+rdx], 0
 
 	e.loadReg(9)
@@ -193,9 +207,11 @@ func (e *Encoder) winFileWrite(appendMode bool) error {
 	e.vmAddr(8, 0)
 	e.raw(0x48, 0x89, 0xC2) // rdx = 数据
 	e.loadReg(10)
-	e.raw(0x49, 0x89, 0xC0)                     // r8 = 长度
-	e.raw(0x41, 0xB9); e.imm32(int32(winScratch)) // r9d = &written
-	e.raw(0x48, 0xC7, 0x44, 0x24, 0x20); e.imm32(0)
+	e.raw(0x49, 0x89, 0xC0) // r8 = 长度
+	e.raw(0x41, 0xB9)
+	e.imm32(int32(winScratch)) // r9d = &written
+	e.raw(0x48, 0xC7, 0x44, 0x24, 0x20)
+	e.imm32(0)
 	if err := e.callIAT("WriteFile"); err != nil {
 		return err
 	}
@@ -216,9 +232,10 @@ func (e *Encoder) winFileExists() error {
 	if err := e.winCallRax1("GetFileAttributesA"); err != nil {
 		return err
 	}
-	e.raw(0x3D); e.imm32(winInvalidAttr) // cmp eax, INVALID_FILE_ATTRIBUTES
-	e.raw(0x0F, 0x95, 0xC0)              // setne al
-	e.raw(0x0F, 0xB6, 0xC0)              // movzx eax, al
+	e.raw(0x3D)
+	e.imm32(winInvalidAttr) // cmp eax, INVALID_FILE_ATTRIBUTES
+	e.raw(0x0F, 0x95, 0xC0) // setne al
+	e.raw(0x0F, 0xB6, 0xC0) // movzx eax, al
 	e.storeReg(0)
 	return nil
 }
@@ -246,8 +263,9 @@ func (e *Encoder) winFileSize() error {
 	e.storeReg(9)
 
 	e.loadReg(9)
-	e.raw(0x48, 0x89, 0xC1)               // rcx = hFile
-	e.raw(0xBA); e.imm32(int32(winScratch3)) // edx = &li (零扩展即绝对地址)
+	e.raw(0x48, 0x89, 0xC1) // rcx = hFile
+	e.raw(0xBA)
+	e.imm32(int32(winScratch3)) // edx = &li (零扩展即绝对地址)
 	if err := e.callIAT("GetFileSizeEx"); err != nil {
 		return err
 	}
@@ -256,12 +274,14 @@ func (e *Encoder) winFileSize() error {
 		return err
 	}
 
-	e.raw(0x48, 0x8B, 0x04, 0x25); e.imm32(int32(winScratch3)) // rax = li.QuadPart
+	e.raw(0x48, 0x8B, 0x04, 0x25)
+	e.imm32(int32(winScratch3)) // rax = li.QuadPart
 	e.raw(0xE9)
 	jDone := e.imm32Pos()
 
 	e.patchRel(jFail, len(e.code))
-	e.raw(0x48, 0xB8); e.imm64(-1) // 打不开: -1
+	e.raw(0x48, 0xB8)
+	e.imm64(-1) // 打不开: -1
 
 	e.patchRel(jDone, len(e.code))
 	e.storeReg(0)
@@ -283,13 +303,15 @@ func (e *Encoder) winMkdir() error {
 // winCwd: SYS 66 CWD -> R0 = 当前目录。
 func (e *Encoder) winCwd() error {
 	const size = 4096
-	e.raw(0x48, 0xC7, 0xC0); e.imm32(size)
+	e.raw(0x48, 0xC7, 0xC0)
+	e.imm32(size)
 	e.storeReg(0)
 	e.emitMalloc()
 	e.loadReg(0)
 	e.storeReg(8) // R8 = 缓冲区
 
-	e.raw(0xB9); e.imm32(size) // ecx = 缓冲区长度
+	e.raw(0xB9)
+	e.imm32(size) // ecx = 缓冲区长度
 	e.vmAddr(8, 0)
 	e.raw(0x48, 0x89, 0xC2) // rdx = 缓冲区
 	if err := e.callIAT("GetCurrentDirectoryA"); err != nil {
@@ -329,7 +351,8 @@ func (e *Encoder) winIsDir() error {
 	if err := e.winCallRax1("GetFileAttributesA"); err != nil {
 		return err
 	}
-	e.raw(0x3D); e.imm32(winInvalidAttr) // cmp eax, INVALID_FILE_ATTRIBUTES
+	e.raw(0x3D)
+	e.imm32(winInvalidAttr) // cmp eax, INVALID_FILE_ATTRIBUTES
 	e.raw(0x0F, 0x84)
 	jFail := e.imm32Pos()
 	e.raw(0xA8, winAttrDirectory) // test al, FILE_ATTRIBUTE_DIRECTORY
@@ -365,7 +388,8 @@ func (e *Encoder) winFileMtime() error {
 	e.raw(0x48, 0x89, 0xC1) // rcx = hFile
 	e.raw(0x31, 0xD2)       // xor edx, edx (创建时间 = NULL)
 	e.raw(0x45, 0x31, 0xC0) // xor r8d, r8d (访问时间 = NULL)
-	e.raw(0x49, 0xC7, 0xC1); e.imm32(int32(winScratch3)) // r9 = &ft
+	e.raw(0x49, 0xC7, 0xC1)
+	e.imm32(int32(winScratch3)) // r9 = &ft
 	if err := e.callIAT("GetFileTime"); err != nil {
 		return err
 	}
@@ -374,12 +398,15 @@ func (e *Encoder) winFileMtime() error {
 		return err
 	}
 
-	e.raw(0x48, 0x8B, 0x04, 0x25); e.imm32(int32(winScratch3)) // rax = ft
-	e.raw(0x31, 0xD2)                                          // xor edx, edx
-	e.raw(0x48, 0xB9); e.imm64(winFiletimePerSec)              // rcx = 1e7
-	e.raw(0x48, 0xF7, 0xF1)                                    // div rcx
-	e.raw(0x48, 0xB9); e.imm64(winFiletimeEpoch)               // rcx = 11644473600
-	e.raw(0x48, 0x29, 0xC8)                                    // sub rax, rcx
+	e.raw(0x48, 0x8B, 0x04, 0x25)
+	e.imm32(int32(winScratch3)) // rax = ft
+	e.raw(0x31, 0xD2)           // xor edx, edx
+	e.raw(0x48, 0xB9)
+	e.imm64(winFiletimePerSec) // rcx = 1e7
+	e.raw(0x48, 0xF7, 0xF1)    // div rcx
+	e.raw(0x48, 0xB9)
+	e.imm64(winFiletimeEpoch) // rcx = 11644473600
+	e.raw(0x48, 0x29, 0xC8)   // sub rax, rcx
 	e.raw(0xE9)
 	jDone := e.imm32Pos()
 
@@ -398,5 +425,159 @@ func (e *Encoder) winChdir() error {
 		return err
 	}
 	e.winOkResult()
+	return nil
+}
+
+// winFileCopy: SYS 84 FILECOPY(src=R0, dst=R1)。
+//
+// 直接用 CopyFileA, 不自己开两个句柄搬字节 —— 大文件也不必在 VM 里过一遍。
+func (e *Encoder) winFileCopy() error {
+	e.vmAddr(0, 0)
+	e.raw(0x48, 0x89, 0xC1) // rcx = src
+	e.vmAddr(1, 0)
+	e.raw(0x48, 0x89, 0xC2) // rdx = dst
+	e.raw(0x45, 0x31, 0xC0) // xor r8d, r8d (bFailIfExists = FALSE)
+	if err := e.callIAT("CopyFileA"); err != nil {
+		return err
+	}
+	e.winOkResult()
+	return nil
+}
+
+// winDirList: SYS 58 DIRLIST(path=R0) -> 换行分隔的条目, 失败为空串。
+//
+// 流程: 把路径拼成 "路径\*" 的通配串 -> FindFirstFileA / FindNextFileA 遍历
+// -> 每条的名字从 WIN32_FIND_DATAA 的偏移 44 (cFileName) 开始。R14 始终保存
+// 「当前写入位置」这个 VM 地址, 因此不需要跨 API 调用保活 rdi。
+//
+// 与引擎的 dir_list 对齐: "." 与 ".." 不计入结果。
+func (e *Encoder) winDirList() error {
+	const (
+		findDataSize = 320 // sizeof(WIN32_FIND_DATAA)
+		outSize      = 65536
+		nameOff      = 44 // offsetof(WIN32_FIND_DATAA, cFileName)
+	)
+
+	e.loadReg(0)
+	e.storeReg(7) // R7 = 路径
+
+	// ---- 构造通配串: 路径 + "\*" + NUL ----
+	e.loadReg(7)
+	e.emitStrlen() // rax = 路径长度
+	e.storeReg(9)
+	e.raw(0x48, 0x83, 0xC0, 0x03) // add rax, 3
+	e.storeReg(0)
+	e.emitMalloc()
+	e.loadReg(0)
+	e.storeReg(10) // R10 = 通配串
+
+	e.vmAddr(10, 0)
+	e.raw(0x48, 0x89, 0xC7) // rdi = 通配串
+	e.vmAddr(7, 0)
+	e.raw(0x48, 0x89, 0xC6) // rsi = 路径
+	e.raw(0x48, 0x8B, 0x0C, 0x25)
+	e.imm32(regAddr(9))           // rcx = 路径长度
+	e.raw(0xF3, 0xA4)             // rep movsb
+	e.raw(0xC6, 0x07, 0x5C)       // mov byte [rdi], '\'
+	e.raw(0xC6, 0x47, 0x01, 0x2A) // mov byte [rdi+1], '*'
+	e.raw(0xC6, 0x47, 0x02, 0x00) // mov byte [rdi+2], 0
+
+	// ---- FindFirstFileA ----
+	e.raw(0x48, 0xC7, 0xC0)
+	e.imm32(findDataSize)
+	e.storeReg(0)
+	e.emitMalloc()
+	e.loadReg(0)
+	e.storeReg(11) // R11 = WIN32_FIND_DATAA
+
+	e.vmAddr(10, 0)
+	e.raw(0x48, 0x89, 0xC1) // rcx = 通配串
+	e.vmAddr(11, 0)
+	e.raw(0x48, 0x89, 0xC2) // rdx = 查找数据
+	if err := e.callIAT("FindFirstFileA"); err != nil {
+		return err
+	}
+	e.storeReg(12) // R12 = 查找句柄
+
+	// ---- 输出缓冲区 (先落一个 NUL: 打不开目录时返回空串) ----
+	e.raw(0x48, 0xC7, 0xC0)
+	e.imm32(outSize)
+	e.storeReg(0)
+	e.emitMalloc()
+	e.loadReg(0)
+	e.storeReg(8)  // R8 = 输出缓冲区起点
+	e.storeReg(14) // R14 = 写入游标 (VM 地址)
+	e.vmAddr(14, 0)
+	e.raw(0xC6, 0x00, 0x00) // mov byte [rax], 0
+
+	e.loadReg(12)
+	e.raw(0x48, 0x83, 0xF8, 0xFF) // cmp rax, INVALID_HANDLE_VALUE
+	e.raw(0x0F, 0x84)
+	jDone := e.imm32Pos()
+
+	// ---- 每轮: 处理当前 findData, 再取下一个 ----
+	entry := len(e.code)
+	e.vmAddr(11, nameOff)
+	e.raw(0x48, 0x89, 0xC6) // rsi = cFileName
+
+	// 跳过 "." 与 ".."
+	e.raw(0x8A, 0x06) // mov al, [rsi]
+	e.raw(0x3C, 0x2E) // cmp al, '.'
+	e.raw(0x0F, 0x85)
+	jAppend := e.imm32Pos()
+	e.raw(0x8A, 0x46, 0x01) // mov al, [rsi+1]
+	e.raw(0x84, 0xC0)       // test al, al
+	e.raw(0x0F, 0x84)
+	jAdvance := e.imm32Pos()
+	e.raw(0x3C, 0x2E) // cmp al, '.'
+	e.raw(0x0F, 0x84)
+	jAdvance2 := e.imm32Pos()
+
+	// 追加名字: 注意不能把字符放在 al —— vmAddr 会覆盖 rax。
+	e.patchRel(jAppend, len(e.code))
+	copyName := len(e.code)
+	e.raw(0x8A, 0x16) // mov dl, [rsi]
+	e.raw(0x84, 0xD2) // test dl, dl
+	e.raw(0x0F, 0x84)
+	jNameEnd := e.imm32Pos()
+	e.vmAddr(14, 0)
+	e.raw(0x88, 0x10) // mov [rax], dl
+	e.raw(0x48, 0xFF, 0x04, 0x25)
+	e.imm32(regAddr(14))    // inc qword [R14]
+	e.raw(0x48, 0xFF, 0xC6) // inc rsi
+	e.raw(0xE9)
+	e.imm32(int32(copyName - (len(e.code) + 4)))
+	e.patchRel(jNameEnd, len(e.code))
+
+	e.vmAddr(14, 0)
+	e.raw(0xC6, 0x00, 0x0A) // 每条后加换行
+	e.raw(0x48, 0xFF, 0x04, 0x25)
+	e.imm32(regAddr(14)) // inc qword [R14]
+
+	// ---- FindNextFileA ----
+	adv := len(e.code)
+	e.patchRel(jAdvance, adv)
+	e.patchRel(jAdvance2, adv)
+	e.loadReg(12)
+	e.raw(0x48, 0x89, 0xC1) // rcx = 查找句柄
+	e.vmAddr(11, 0)
+	e.raw(0x48, 0x89, 0xC2) // rdx = 查找数据
+	if err := e.callIAT("FindNextFileA"); err != nil {
+		return err
+	}
+	e.raw(0x85, 0xC0) // test eax, eax
+	e.raw(0x0F, 0x85)
+	e.imm32(int32(entry - (len(e.code) + 4))) // 还有下一个 -> 回到 entry
+
+	e.loadReg(12)
+	if err := e.winCallRax1("FindClose"); err != nil {
+		return err
+	}
+
+	e.patchRel(jDone, len(e.code))
+	e.vmAddr(14, 0)
+	e.raw(0xC6, 0x00, 0x00) // 结尾 NUL
+	e.loadReg(8)
+	e.storeReg(0)
 	return nil
 }
