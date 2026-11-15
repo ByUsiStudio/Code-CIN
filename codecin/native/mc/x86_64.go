@@ -1664,6 +1664,16 @@ func encodeWith(p *ir.Program, e *Encoder) ([]byte, error) {
 				e.storeReg(0)
 			case 58: // DIRLIST(path=R0) -> 换行分隔的条目
 				e.linDirList()
+			case 84: // FILECOPY(src=R0, dst=R1)
+				e.linFileCopy()
+			case 85: // FILEMOVE(src=R0, dst=R1)
+				e.linFileMove()
+			case 86: // DIRREMOVE(path=R0)
+				e.linDirRemove()
+			case 87: // ISDIR(path=R0) -> 1/0
+				e.linIsDir()
+			case 88: // FILEMTIME(path=R0) -> 秒数 / -1
+				e.linFileMtime()
 			case 147: // TCPDIAL(host=R0, port=R1) -> fd; 仅支持点分 IPv4
 				e.loadReg(0); e.storeReg(7)   // host vm
 				e.loadReg(1); e.storeReg(8)   // port
