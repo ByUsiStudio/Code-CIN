@@ -7,7 +7,7 @@ import "encoding/binary"
 // 布局: [DOS 头][PE 头 + 可选头][节表][.text][.data][.rdata]
 //
 // ImageBase 固定 0x200000, 而不是链接器默认的 0x140000000: 编码器与
-// Linux 版共用同一套绝对寻址序列 (`` mov rax, [abs32] ``), 该指令只能
+// Linux 版共用同一套绝对寻址序列 (“ mov rax, [abs32] “), 该指令只能
 // 寻址低 4 GiB, 因此 .data 里的寄存器组必须落在 32 位地址空间内。
 // DllCharacteristics=0 关闭 ASLR, 映像始终装载在 ImageBase。
 //
@@ -79,34 +79,34 @@ func buildPE(code []byte, data []byte, dataVSize uint32, imp peImport) (*peLayou
 	// --- PE 签名 + COFF ---
 	copy(buf[0x40:], []byte{'P', 'E', 0, 0})
 	coff := 0x44
-	le.PutUint16(buf[coff:], 0x8664)     // Machine AMD64
-	le.PutUint16(buf[coff+2:], 3)        // NumberOfSections
-	le.PutUint16(buf[coff+16:], 240)     // SizeOfOptionalHeader
-	le.PutUint16(buf[coff+18:], 0x0022)  // EXECUTABLE | LARGE_ADDRESS_AWARE
+	le.PutUint16(buf[coff:], 0x8664)    // Machine AMD64
+	le.PutUint16(buf[coff+2:], 3)       // NumberOfSections
+	le.PutUint16(buf[coff+16:], 240)    // SizeOfOptionalHeader
+	le.PutUint16(buf[coff+18:], 0x0022) // EXECUTABLE | LARGE_ADDRESS_AWARE
 
-	opt := coff + 20 // 0x58
-	le.PutUint16(buf[opt:], 0x20B)                       // PE32+
-	buf[opt+2] = 1                                       // linker version
+	opt := coff + 20               // 0x58
+	le.PutUint16(buf[opt:], 0x20B) // PE32+
+	buf[opt+2] = 1                 // linker version
 	buf[opt+3] = 0
-	le.PutUint32(buf[opt+4:], textSize)                   // SizeOfCode
-	le.PutUint32(buf[opt+8:], dataRaw+rdataSize)          // SizeOfInitializedData
-	le.PutUint32(buf[opt+16:], peTextRVA)                 // AddressOfEntryPoint
-	le.PutUint32(buf[opt+20:], peTextRVA)                 // BaseOfCode
-	le.PutUint64(buf[opt+24:], peBase)                    // ImageBase
-	le.PutUint32(buf[opt+32:], peSectAlign)               // SectionAlignment
-	le.PutUint32(buf[opt+36:], peFileAlign)               // FileAlignment
-	le.PutUint16(buf[opt+40:], 6)                         // MajorOperatingSystemVersion
-	le.PutUint16(buf[opt+48:], 6)                         // MajorSubsystemVersion
-	le.PutUint32(buf[opt+56:], imgSize)                   // SizeOfImage
-	le.PutUint32(buf[opt+60:], peHeadersSize)             // SizeOfHeaders
-	le.PutUint32(buf[opt+64:], 0)                         // CheckSum
-	le.PutUint16(buf[opt+68:], 3)                         // Subsystem: console
-	le.PutUint16(buf[opt+70:], 0)                         // DllCharacteristics: 无 ASLR
-	le.PutUint64(buf[opt+72:], 0x100000)                  // SizeOfStackReserve
-	le.PutUint64(buf[opt+80:], 0x10000)                   // SizeOfStackCommit
-	le.PutUint64(buf[opt+88:], 0x100000)                  // SizeOfHeapReserve
-	le.PutUint64(buf[opt+96:], 0x10000)                   // SizeOfHeapCommit
-	le.PutUint32(buf[opt+108:], 16)                       // NumberOfRvaAndSizes
+	le.PutUint32(buf[opt+4:], textSize)          // SizeOfCode
+	le.PutUint32(buf[opt+8:], dataRaw+rdataSize) // SizeOfInitializedData
+	le.PutUint32(buf[opt+16:], peTextRVA)        // AddressOfEntryPoint
+	le.PutUint32(buf[opt+20:], peTextRVA)        // BaseOfCode
+	le.PutUint64(buf[opt+24:], peBase)           // ImageBase
+	le.PutUint32(buf[opt+32:], peSectAlign)      // SectionAlignment
+	le.PutUint32(buf[opt+36:], peFileAlign)      // FileAlignment
+	le.PutUint16(buf[opt+40:], 6)                // MajorOperatingSystemVersion
+	le.PutUint16(buf[opt+48:], 6)                // MajorSubsystemVersion
+	le.PutUint32(buf[opt+56:], imgSize)          // SizeOfImage
+	le.PutUint32(buf[opt+60:], peHeadersSize)    // SizeOfHeaders
+	le.PutUint32(buf[opt+64:], 0)                // CheckSum
+	le.PutUint16(buf[opt+68:], 3)                // Subsystem: console
+	le.PutUint16(buf[opt+70:], 0)                // DllCharacteristics: 无 ASLR
+	le.PutUint64(buf[opt+72:], 0x100000)         // SizeOfStackReserve
+	le.PutUint64(buf[opt+80:], 0x10000)          // SizeOfStackCommit
+	le.PutUint64(buf[opt+88:], 0x100000)         // SizeOfHeapReserve
+	le.PutUint64(buf[opt+96:], 0x10000)          // SizeOfHeapCommit
+	le.PutUint32(buf[opt+108:], 16)              // NumberOfRvaAndSizes
 
 	// 导入目录在数据目录数组的索引 1
 	impDirOff := opt + 112 + 8
@@ -132,8 +132,8 @@ func buildPE(code []byte, data []byte, dataVSize uint32, imp peImport) (*peLayou
 	if dv := uint32(peDataRVA) - peTextRVA; dv > textVSize {
 		textVSize = dv
 	}
-	putSection(0, ".text", textVSize, peTextRVA, textSize, peHeadersSize, 0x60000020)                  // CODE|EXEC|READ
-	putSection(1, ".data", dataV, peDataRVA, dataRaw, peHeadersSize+textSize, 0xC0000040)           // INITIALIZED|READ|WRITE
+	putSection(0, ".text", textVSize, peTextRVA, textSize, peHeadersSize, 0x60000020)                   // CODE|EXEC|READ
+	putSection(1, ".data", dataV, peDataRVA, dataRaw, peHeadersSize+textSize, 0xC0000040)               // INITIALIZED|READ|WRITE
 	putSection(2, ".rdata", rdataSize, rdataRVA, rdataSize, peHeadersSize+textSize+dataRaw, 0xC0000040) // 装载器要写 IAT
 
 	copy(buf[peHeadersSize:], code)

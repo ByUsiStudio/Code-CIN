@@ -49,7 +49,9 @@ func main() {
 		fmt.Fprintln(os.Stderr, "用法: cincc -o <out> <prog.cin>")
 		os.Exit(2)
 	}
-	if *target != "x86_64-linux" && *target != "aarch64-linux" && *target != "x86_64-windows" {
+	switch *target {
+	case "x86_64-linux", "x86_64-windows", "aarch64-linux", "aarch64-darwin":
+	default:
 		fmt.Fprintf(os.Stderr, "cincc: 暂不支持目标 %s\n", *target)
 		os.Exit(2)
 	}
@@ -93,17 +95,41 @@ func main() {
 	}
 	if *target == "aarch64-linux" {
 		code, err = mc.EncodeAArch64(prog)
-	} else {
-		code, err = mc.Encode(prog)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "cincc: %v\n", err)
+			os.Exit(1)
+		}
+		img, werr := mc.WrapAArch64ELF(prog, code)
+		if werr != nil {
+			fmt.Fprintf(os.Stderr, "cincc: %v\n", werr)
+			os.Exit(1)
+		}
+		if err := os.WriteFile(*out, img, 0o755); err != nil {
+			fmt.Fprintf(os.Stderr, "cincc: 写出失败: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("cincc: %s -> %s (%d 字节, AArch64 ELF)\n", flag.Arg(0), *out, len(img))
+		return
 	}
+	if *target == "aarch64-darwin" {
+		img, werr := mc.WrapMachO(prog)
+		if werr != nil {
+			fmt.Fprintf(os.Stderr, "cincc: %v\n", werr)
+			os.Exit(1)
+		}
+		if err := os.WriteFile(*out, img, 0o755); err != nil {
+			fmt.Fprintf(os.Stderr, "cincc: 写出失败: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("cincc: %s -> %s (%d 字节, Mach-O arm64)\n", flag.Arg(0), *out, len(img))
+		return
+	}
+	code, err = mc.Encode(prog)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "cincc: %v\n", err)
 		os.Exit(1)
 	}
 	img := mc.WrapELF(prog, code)
-	if *target == "aarch64-linux" {
-		img = mc.WrapAArch64ELF(prog, code)
-	}
 	if err := os.WriteFile(*out, img, 0o755); err != nil {
 		fmt.Fprintf(os.Stderr, "cincc: 写出失败: %v\n", err)
 		os.Exit(1)

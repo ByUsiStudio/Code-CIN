@@ -227,8 +227,12 @@ def _run_native(ns: argparse.Namespace, console, program_file: str,
     if explicit_target:
         mapping = {"linux/amd64": "x86_64-linux",
                    "linux/x86_64": "x86_64-linux",
+                   "linux/arm64": "aarch64-linux",
+                   "linux/aarch64": "aarch64-linux",
                    "windows/amd64": "x86_64-windows",
-                   "windows/x86_64": "x86_64-windows"}
+                   "windows/x86_64": "x86_64-windows",
+                   "darwin/arm64": "aarch64-darwin",
+                   "darwin/aarch64": "aarch64-darwin"}
         target = mapping.get(ns.build_target)
         if target is None:
             console.print(Panel(f"cincc 暂不支持目标 {ns.build_target}",

@@ -536,8 +536,12 @@ def _native_target(requested: str | None) -> str | None:
     """
     mapping = {'linux/amd64': 'x86_64-linux',
                'linux/x86_64': 'x86_64-linux',
+               'linux/arm64': 'aarch64-linux',
+               'linux/aarch64': 'aarch64-linux',
                'windows/amd64': 'x86_64-windows',
-               'windows/x86_64': 'x86_64-windows'}
+               'windows/x86_64': 'x86_64-windows',
+               'darwin/arm64': 'aarch64-darwin',
+               'darwin/aarch64': 'aarch64-darwin'}
     if requested:
         target = mapping.get(requested)
         if target is None:

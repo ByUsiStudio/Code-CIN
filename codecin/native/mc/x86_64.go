@@ -1662,6 +1662,8 @@ func encodeWith(p *ir.Program, e *Encoder) ([]byte, error) {
 				e.raw(0xBE); e.imm32(0755)
 				e.raw(0x0F, 0x05)
 				e.storeReg(0)
+			case 58: // DIRLIST(path=R0) -> 换行分隔的条目
+				e.linDirList()
 			case 147: // TCPDIAL(host=R0, port=R1) -> fd; 仅支持点分 IPv4
 				e.loadReg(0); e.storeReg(7)   // host vm
 				e.loadReg(1); e.storeReg(8)   // port
