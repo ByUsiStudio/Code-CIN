@@ -760,6 +760,12 @@ func encodeWith(p *ir.Program, e *Encoder) ([]byte, error) {
 			if err != nil {
 				return nil, err
 			}
+			if e.isWin() {
+				// Win64 ABI: 调用点 rsp 必须 16 字节对齐, 且 caller 要备好
+				// 32 字节 shadow space。宿主 call 只压 8 字节, 不补这一手的话
+				// 进到函数体里 rsp 就偏了 8, 函数内再调 kernel32 就崩。
+				e.raw(0x48, 0x83, 0xEC, 0x28) // sub rsp, 0x28
+			}
 			e.raw(0x48, 0x83, 0x2C, 0x25) // sub qword [R32], 8 (VM 返回槽)
 			e.imm32(regAddr(32))
 			e.raw(0x08)
@@ -769,6 +775,9 @@ func encodeWith(p *ir.Program, e *Encoder) ([]byte, error) {
 			e.raw(0x48, 0x83, 0x04, 0x25) // add qword [R32], 8
 			e.imm32(regAddr(32))
 			e.raw(0x08)
+			if e.isWin() {
+				e.raw(0x48, 0x83, 0xC4, 0x28) // add rsp, 0x28
+			}
 			e.raw(0xC3)
 		case "PUSH":
 			if len(ins.Args) != 1 || ins.Args[0].Kind != "reg" {
