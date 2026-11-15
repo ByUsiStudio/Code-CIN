@@ -144,22 +144,23 @@ func (p *parser) parseDims() ([]int, error) {
 	for p.peek().kind == "LBRACKET" {
 		p.next()
 		num := 0
-		switch p.peek().kind {
-		case "NUMBER":
-			num = int(p.next().ival)
-		case "IDENT":
-			// 数组维度可以是 const 整数常量 (Python 侧同样允许)。
-			tok := p.next()
-			v, ok := p.constIntValue(tok.sval)
-			if !ok {
-				return nil, fmt.Errorf(
-					"Constant expression uses non-constant name '%s' at %s "+
-						"(hint: array lengths must be compile-time constants; "+
-						"declare it as `const int %s = ...`; variable-length arrays "+
-						"are not supported — use a fixed-size array plus a count variable)",
-					tok.sval, p.locTok(tok), tok.sval)
+		if p.peek().kind != "RBRACKET" {
+			// 数组维度是编译期常量表达式: 字面量、const 名字与算术组合都行
+			// (Python 侧同样允许, 例如 `int a[N * 2 + 1]`)。
+			expr, err := p.parseExpr()
+			if err != nil {
+				return nil, err
 			}
-			num = v
+			v, err := p.evalConst(expr)
+			if err != nil {
+				return nil, err
+			}
+			if v.kind != cInt && v.kind != cBool {
+				return nil, fmt.Errorf(
+					"array size must be an integer constant, got %s at %s",
+					constTypeName(v), p.loc())
+			}
+			num = int(constInt(v))
 		}
 		if _, err := p.expect("RBRACKET"); err != nil {
 			return nil, err

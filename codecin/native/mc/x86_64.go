@@ -13,6 +13,7 @@ const (
 	regCount = 33
 	flagOff  = 0x400 // zf at +0x400, lf at +0x401 (相对 dataAddr)
 	itoaBuf  = 0x4F0 // ITOA 缓冲区相对 dataBase 的偏移 (向前增长)
+	ftoaBuf  = 0x600 // FTOA 输出缓冲区相对 dataBase 的偏移 (向后增长, 64 字节)
 	// IR 里的数据地址 (如 0x1000) 会被搬到 dataBase+addr 虚地址。
 	dataBase = 0x410000
 )
@@ -110,6 +111,132 @@ func (e *Encoder) emitF64Round(id int) {
 	}
 	e.patchRel(jpPos, len(e.code))
 	e.raw(0xF2, 0x0F, 0x11, 0x0C, 0x25); e.imm32(regAddr(0)) // movsd [R0], xmm1
+}
+
+// emitFTOA 生成 SYS 23 (FTOA): R0 = 指向 VM 里 NUL 结尾十进制串的地址。
+//
+// 输出格式是"符号 + 整数部分 + 最多 16 位小数并去掉尾随零", 与引擎用的
+// strconv.FormatFloat(f, 'g', -1, 64) 并不逐位一致: 常见值 (0.5 / 3.5 /
+// 1.414213562373095) 输出相同, 循环小数末位可能少一位, 极大/极小值不做
+// 指数改写。NaN 与 ±Inf 按位判定, 输出 "NaN" / "+Inf" / "-Inf"。
+func (e *Encoder) emitFTOA() {
+	// rdi = 写指针 (= r15 + ftoaBuf)
+	e.raw(0x4C, 0x89, 0xF8)             // mov rax, r15
+	e.raw(0x48, 0x05); e.imm32(ftoaBuf) // add rax, ftoaBuf
+	e.raw(0x48, 0x89, 0xC7)             // mov rdi, rax
+
+	// 指数位全 1 才是 NaN / ±Inf, 其余走常规路径。
+	e.loadReg(0)                                   // rax = 位模式
+	e.raw(0x48, 0xBA); e.imm64(0x7FF0000000000000) // mov rdx, 指数掩码
+	e.raw(0x48, 0x89, 0xC1)                        // mov rcx, rax
+	e.raw(0x48, 0x21, 0xD1)                        // and rcx, rdx
+	e.raw(0x48, 0x39, 0xD1)                        // cmp rcx, rdx
+	e.raw(0x0F, 0x85); jNormal := e.imm32Pos()     // jne normal
+	e.raw(0x48, 0xBA); e.imm64(0x000FFFFFFFFFFFFF) // mov rdx, 尾数掩码
+	e.raw(0x48, 0x89, 0xC1)                        // mov rcx, rax
+	e.raw(0x48, 0x21, 0xD1)                        // and rcx, rdx
+	e.raw(0x48, 0x85, 0xC9)                        // test rcx, rcx
+	e.raw(0x0F, 0x85); jNaN := e.imm32Pos()        // jnz nan
+	e.raw(0x48, 0x85, 0xC0)                        // test rax, rax
+	e.raw(0x0F, 0x88); jNegInf := e.imm32Pos()     // js neginf
+
+	// +Inf
+	e.raw(0x48, 0xB8); e.imm64(0x666E492B) // mov rax, "+Inf"
+	e.raw(0x48, 0x89, 0x07)                // mov [rdi], rax
+	e.raw(0xC6, 0x47, 0x04, 0x00)          // mov byte [rdi+4], 0
+	e.raw(0xE9); jPosInfStore := e.imm32Pos()
+
+	e.patchRel(jNaN, len(e.code))
+	e.raw(0x48, 0xB8); e.imm64(0x4E614E) // mov rax, "NaN"
+	e.raw(0x48, 0x89, 0x07)              // mov [rdi], rax
+	e.raw(0xC6, 0x47, 0x03, 0x00)        // mov byte [rdi+3], 0
+	e.raw(0xE9); jNaNStore := e.imm32Pos()
+
+	e.patchRel(jNegInf, len(e.code))
+	e.raw(0x48, 0xB8); e.imm64(0x666E492D) // mov rax, "-Inf"
+	e.raw(0x48, 0x89, 0x07)                // mov [rdi], rax
+	e.raw(0xC6, 0x47, 0x04, 0x00)          // mov byte [rdi+4], 0
+	e.raw(0xE9); jNegInfStore := e.imm32Pos()
+
+	// ---- 常规路径: 符号 + 整数部分 + 小数部分 ----
+	e.patchRel(jNormal, len(e.code))
+	e.raw(0x48, 0x85, 0xC0)                    // test rax, rax
+	e.raw(0x0F, 0x89); jPositive := e.imm32Pos() // jns positive
+	e.raw(0xC6, 0x07, 0x2D)                    // mov byte [rdi], '-'
+	e.raw(0x48, 0xFF, 0xC7)                    // inc rdi
+	e.raw(0x48, 0xB9); e.imm64(0x7FFFFFFFFFFFFFFF) // mov rcx, 清符号位掩码
+	e.raw(0x48, 0x21, 0xC8)                        // and rax, rcx
+	e.patchRel(jPositive, len(e.code))
+	e.raw(0x66, 0x48, 0x0F, 0x6E, 0xC0) // movq xmm0, rax (|x|)
+	e.raw(0xF2, 0x48, 0x0F, 0x2C, 0xC0) // cvttsd2si rax, xmm0 (整数部分)
+	e.raw(0x49, 0x89, 0xC4)             // mov r12, rax
+	e.raw(0xF2, 0x48, 0x0F, 0x2A, 0xC8) // cvtsi2sd xmm1, rax
+	e.raw(0xF2, 0x0F, 0x5C, 0xC1)       // subsd xmm0, xmm1 (小数部分)
+
+	// 整数部分转十进制: 复用 ITOA (它只碰 rax/rdx/rsi/r8/r9, 不动 rdi/r12)
+	e.raw(0x4C, 0x89, 0x24, 0x25); e.imm32(regAddr(0)) // mov [R0], r12
+	e.emitITOA()                                       // R0 = 十进制串的 VM 地址
+	e.raw(0x4C, 0x89, 0xFE)                            // mov rsi, r15
+	e.raw(0x48, 0x03, 0x34, 0x25); e.imm32(regAddr(0)) // add rsi, [R0]
+	copyLoop := len(e.code)
+	e.raw(0x8A, 0x06)                     // mov al, [rsi]
+	e.raw(0x84, 0xC0)                     // test al, al
+	e.raw(0x0F, 0x84); jCopyEnd := e.imm32Pos() // jz copyEnd
+	e.raw(0x88, 0x07)                     // mov [rdi], al
+	e.raw(0x48, 0xFF, 0xC6)               // inc rsi
+	e.raw(0x48, 0xFF, 0xC7)               // inc rdi
+	e.raw(0xE9); jCopyLoop := e.imm32Pos()
+	e.patchRel(jCopyLoop, copyLoop)
+	e.patchRel(jCopyEnd, len(e.code))
+
+	// 小数部分为 0 时直接收尾
+	e.raw(0x66, 0x0F, 0x57, 0xD2)       // xorpd xmm2, xmm2
+	e.raw(0x66, 0x0F, 0x2E, 0xC2)       // ucomisd xmm0, xmm2
+	e.raw(0x0F, 0x84); jIntOnly := e.imm32Pos() // je intOnly
+	e.raw(0xC6, 0x07, 0x2E)             // mov byte [rdi], '.'
+	e.raw(0x48, 0xFF, 0xC7)             // inc rdi
+	e.raw(0x49, 0x89, 0xFD)             // mov r13, rdi (最后一个非零位之后)
+	e.raw(0x49, 0x89, 0xFE)             // mov r14, rdi (小数点之后)
+	e.raw(0x48, 0xC7, 0xC1, 0x10, 0x00, 0x00, 0x00) // mov rcx, 16 (最多 16 位)
+	e.raw(0x48, 0xBA); e.imm64(0x4024000000000000)  // mov rdx, 10.0
+	e.raw(0x66, 0x48, 0x0F, 0x6E, 0xDA)             // movq xmm3, rdx
+	digitLoop := len(e.code)
+	e.raw(0xF2, 0x0F, 0x59, 0xC3)       // mulsd xmm0, xmm3
+	e.raw(0xF2, 0x48, 0x0F, 0x2C, 0xC0) // cvttsd2si rax, xmm0
+	e.raw(0xF2, 0x48, 0x0F, 0x2A, 0xC8) // cvtsi2sd xmm1, rax
+	e.raw(0xF2, 0x0F, 0x5C, 0xC1)       // subsd xmm0, xmm1
+	e.raw(0x04, 0x30)                   // add al, '0'
+	e.raw(0x88, 0x07)                   // mov [rdi], al
+	e.raw(0x48, 0xFF, 0xC7)             // inc rdi
+	e.raw(0x3C, 0x30)                   // cmp al, '0'
+	e.raw(0x74, 0x03)                   // je +3 (非零才记位置)
+	e.raw(0x49, 0x89, 0xFD)             // mov r13, rdi
+	e.raw(0x66, 0x0F, 0x2E, 0xC2)       // ucomisd xmm0, xmm2
+	e.raw(0x0F, 0x84); jFracDone := e.imm32Pos() // je fracDone
+	e.raw(0x48, 0xFF, 0xC9)             // dec rcx
+	e.raw(0x0F, 0x85); jDigit := e.imm32Pos()    // jnz digitLoop
+	e.patchRel(jDigit, digitLoop)
+	e.patchRel(jFracDone, len(e.code))
+
+	// 一个非零小数位都没有 (极小的数): 把小数点也去掉
+	e.raw(0x4D, 0x39, 0xF5)                 // cmp r13, r14
+	e.raw(0x0F, 0x85); jHasDigit := e.imm32Pos() // jne term
+	e.raw(0x49, 0xFF, 0xCD)                 // dec r13
+	e.patchRel(jHasDigit, len(e.code))
+	e.raw(0x41, 0xC6, 0x45, 0x00, 0x00) // mov byte [r13], 0
+	e.raw(0xE9); jFracStore := e.imm32Pos()
+
+	e.patchRel(jIntOnly, len(e.code))
+	e.raw(0xC6, 0x07, 0x00) // mov byte [rdi], 0
+
+	// ---- 收尾: R0 = 缓冲区的 VM 地址 ----
+	store := len(e.code)
+	for _, pos := range []int{jPosInfStore, jNaNStore, jNegInfStore, jFracStore} {
+		e.patchRel(pos, store)
+	}
+	e.raw(0x4C, 0x89, 0xF8)             // mov rax, r15
+	e.raw(0x48, 0x05); e.imm32(ftoaBuf) // add rax, ftoaBuf
+	e.storeReg(0)
 }
 
 const memSize = 1 << 30 // VM 地址空间 (mmap 惰性分配)
@@ -643,7 +770,8 @@ func EncodeWin(p *ir.Program, textRVA uint32, iat map[string]uint32) ([]byte, er
 // 另走 CreateFileA/WinSock 一整套封装, 暂未实现 —— 明确报错好过生成跑飞
 // 的二进制。
 var winSyscalls = map[int64]bool{
-	0: true, 2: true, // SQRT/ABS
+	0: true, 1: true, 2: true, // SQRT/POW/ABS
+	3: true, 4: true, 5: true, // SIN/COS/TAN
 	6: true, 7: true, 8: true, 9: true, // FADD/FSUB/FMUL/FDIV
 	10: true,           // FCMP
 	11: true, 12: true, // FTOI/ITOF
@@ -1022,6 +1150,32 @@ func encodeWith(p *ir.Program, e *Encoder) ([]byte, error) {
 				if err := e.emitWriteStdout(); err != nil {
 					return nil, err
 				}
+			case 1: // POW: R0 = pow(R0, R1) —— x87 的 y*log2(x) 再 2^z
+				e.raw(0xDD, 0x04, 0x25); e.imm32(regAddr(1)) // fld qword [R1] (y)
+				e.raw(0xDD, 0x04, 0x25); e.imm32(regAddr(0)) // fld qword [R0] (x)
+				e.raw(0xD9, 0xF1)                             // fyl2x: st0 = y*log2(x)
+				e.raw(0xD9, 0xC0)                             // fld st0
+				e.raw(0xD9, 0xFC)                             // frndint: st0 = 整数部分
+				e.raw(0xDC, 0xE9)                             // fsub st1, st0: st1 = 小数部分
+				e.raw(0xD9, 0xC9)                             // fxch: st0 = 小数, st1 = 整数
+				e.raw(0xD9, 0xF0)                             // f2xm1: st0 = 2^小数 - 1
+				e.raw(0xD9, 0xE8)                             // fld1: st0 = 1
+				e.raw(0xDE, 0xC1)                             // faddp: st0 = 2^小数
+				e.raw(0xD9, 0xFD)                             // fscale: 乘上 2^整数
+				e.raw(0xDD, 0xD9)                             // fstp st1 (弹出整数部分)
+				e.raw(0xDD, 0x1C, 0x25); e.imm32(regAddr(0)) // fstp qword [R0]
+			case 3, 4, 5: // SIN/COS/TAN: x87 内建三角函数 (|x| 很大时精度退化)
+				e.raw(0xDD, 0x04, 0x25); e.imm32(regAddr(0)) // fld qword [R0]
+				switch ins.Args[0].V {
+				case 3:
+					e.raw(0xD9, 0xFE) // fsin
+				case 4:
+					e.raw(0xD9, 0xFF) // fcos
+				default:
+					e.raw(0xD9, 0xF2) // fptan: st0 = 1.0, st1 = tan
+					e.raw(0xDD, 0xD8) // fstp st0 (丢掉压入的 1.0)
+				}
+				e.raw(0xDD, 0x1C, 0x25); e.imm32(regAddr(0)) // fstp qword [R0]
 			case 0: // SQRT: R0 = sqrt(double(R0)) 的位模式 (sqrtsd 是精确的)
 				e.raw(0xF2, 0x0F, 0x10, 0x04, 0x25); e.imm32(regAddr(0)) // movsd xmm0, [R0]
 				e.raw(0xF2, 0x0F, 0x51, 0xC0)                             // sqrtsd xmm0, xmm0
@@ -1072,12 +1226,8 @@ func encodeWith(p *ir.Program, e *Encoder) ([]byte, error) {
 				}
 				e.raw(0xF2, 0x0F, op, 0x04, 0x25); e.imm32(regAddr(1))
 				e.raw(0xF2, 0x0F, 0x11, 0x04, 0x25); e.imm32(regAddr(0))
-			case 23: // FTOA: 先截断为整数再按十进制输出 (整数场景等价)
-				e.loadReg(0)
-				e.raw(0x66, 0x48, 0x0F, 0x6E, 0xC0) // movq xmm0, rax
-				e.raw(0xF2, 0x48, 0x0F, 0x2C, 0xC0) // cvttsd2si rax, xmm0
-				e.storeReg(0)
-				e.emitITOA()
+			case 23: // FTOA: 真正的十进制小数输出 (见 emitFTOA)
+				e.emitFTOA()
 			case 16: // STRLEN: R0 = len(R0)
 				e.loadReg(0)
 				e.emitStrlen()
