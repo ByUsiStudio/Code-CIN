@@ -5,6 +5,190 @@
 
 ---
 
+## [8.1.2] - 2026-11-15
+
+### 发布说明 (Release 8.1.2)
+
+8.1.2 把 `cincc` 的机器码后端真正做成了能用的东西，同时补上语言侧缺了很久的
+编译期 `const`。
+
+改动最大的是 Windows 后端。`cincc -target x86_64-windows` 过去只是一个骨架：
+只能编码 `MOV`/`ADD`/`SUB`/`OUT`/`HALT` 的直线程序，一碰函数调用、数组或字符串
+就报「不支持」，41 个内置标准库一个也编译不过去。这一版把 x86-64 编码器参数化
+成「同一套指令编码 + 五个落到操作系统的原语按目标分支」，Windows 后端因此直接
+继承了完整的指令集，只额外负责 PE 容器与 `.data` 镜像；同时修掉两处只在
+Windows 上暴露的硬伤（Win64 的 32 字节 shadow space 没人负责、PE 节之间留了
+RVA 空洞导致映像被判无效）。结果是 41 个内置库里 34 个能直接编译出 PE32+，
+函数调用、递归、循环、数组、字符串与全部纯计算 `SYS` 都能跑。
+
+Linux 侧的编码器补上了移位、位运算和按字节读取，`math.cin`、`str.cin`、
+`bits.cin`、`set.cin`、`vec.cin` 不再在半路撞「暂不支持指令」。浮点打印从
+「截断成整数」改成真实的十进制输出（15 位有效小数、去尾零、`NaN`/`±Inf`），
+`sin`/`cos`/`tan`/`pow` 用 x87 指令补齐——此前它们只有引擎能算，机器码路径
+根本算不出来。
+
+此外修掉 8.1.0 留下的三处错：`SYS` 越界报错打印的是寄存器编号而不是功能号；
+`--native` 拿不到内置标准库目录，`import "math.cin"` 在机器码路径上必然失败；
+裸名字 import 在 cincc 里会命中当前目录的同名文件，与默认引擎结论相反。
+
+### 新增 (Added)
+
+**Windows 机器码后端（`cincc -target x86_64-windows`）**
+
+- 从骨架后端升级为完整后端：`mc/x86_64.go` 的编码器按目标参数化
+  （`targetLinux` / `targetWindows`），`Encode` 与 `EncodeWin` 共用同一份指令
+  编码，`mc/win64.go` 只负责声明 `kernel32` 导入表、构造 `.data` 初值、把三个
+  节交给 PE 写出器。此前 Windows 侧需要一份独立的千行编码器才能追平，现在是
+  同一份代码的两个出口。
+- 函数调用与递归可用：Win64 要求 caller 预留 32 字节 shadow space 且 `rsp`
+  16 字节对齐，实现上给每个 `CALL` 目标在函数入口插 `sub rsp, 0x28`、在 `RET`
+  前插 `add rsp, 0x28`（标签偏移必须指向序言起点，否则 `CALL` 会跳过它）。
+- `kernel32` 导入扩到 8 个函数：`GetStdHandle`、`WriteFile`、`ExitProcess`、
+  `VirtualAlloc`、`GetSystemTimeAsFileTime`、`GetTickCount64`、`Sleep`、
+  `GetTempPathA`。控制台输出走 `WriteFile`，VM 内存走 `VirtualAlloc`
+  （64 MiB，Windows 是实提交，不像 `mmap` 那样惰性分配）。
+- 平台相关 `SYS` 分支：`TIME`（`GetSystemTimeAsFileTime` + 换算）、`TIMEMS`
+  （`GetTickCount64`）、`SLEEPMS`（`Sleep`）、`TEMPDIR`（`GetTempPathA`）、
+  `OSNAME` 返回 `"windows"`。
+- PE 布局改为 `ImageBase = 0x200000`、`.text` RVA `0x1000`、`.data` RVA
+  `0x202000`。`.data` 的 RVA 由 `dataAddr - peBase` 反推，寄存器组的绝对地址
+  `0x402000` 因此恰好落在 `.data` 起点，编码器可以继续用 `mov rax, [abs32]`
+  访问虚拟寄存器。
+- 未实现的功能号不再静默降级：文件、网络、图形类 `SYS` 直接
+  `x86-64 后端暂不支持指令: SYS 51 (Windows 后端暂未实现文件/网络能力)`，
+  更不会生成一个跑到一半才崩的可执行文件。
+
+**编译期 `const`**
+
+- 新增 `const int N = 10;` / `const float PI = 3.14;` / `const string NAME = "x";`
+  命名常量，支持一条语句声明多个、支持全局与局部位置。常量是纯编译期的，不占
+  数据段、不产生指令，因此可直接用作数组维度、`case` 标签与全局初始化器。
+- 常量表达式在解析阶段折叠（`const int N = 4 * 4;`），引用其它常量也成立；
+  引用变量时报
+  `Constant expression uses non-constant name 'x' ...`，同一次报错里提示该
+  用 `const int x = ...` 声明，并说明不支持变长数组。
+- 对常量赋值报编译错误而不是悄悄写进数据段；常量名与关键字、枚举成员、已有
+  常量重名都在解析阶段拦下。
+
+**浮点（机器码后端）**
+
+- `FTOA` 从「截断成整数再打印」升级为真实十进制输出：符号 + 整数部分 + 最多
+  15 位小数、去掉尾随零，按位判定 `NaN` / `+Inf` / `-Inf` 并分别输出。
+  `0.5` 打印 `0.5`，`1.0/3.0` 打印 `0.333333333333333`，不再变成 `0`。
+- `SYS 0/1/3/4/5`（`sqrt`/`pow`/`sin`/`cos`/`tan`）用 SSE2 与 x87 实现，
+  机器码路径终于能算浮点数学，与引擎结果对齐到 1e-6。
+
+**x86-64 编码器补齐的指令**
+
+- 移位：`SHL`/`SHR`/`ASR`（`SAR` 语义，算术右移）。
+- 位运算：`ANDI`/`ORI`/`XORI`、`MVN`（按位取反）。
+- 窄读：`LB`/`LH`/`LW`（`movsx`/`movsxd`，与 VM 的有符号扩展一致），
+  `LD`/`SD` 的寄存器间接寻址补上。
+- 这些指令此前只在 VM 里有实现，机器码后端一到 `>>`、`>>>=`、`~`、`s[i]`
+  就报「暂不支持指令」。
+
+**测试**
+
+- `codecin/native/mc/pe_bisect_test.go`：7 层 PE 后端子测试（`mov` /
+  `pushpop` / `callret` / `call_mov_ret` / `push_in_fn` / `call_out` /
+  `call_out_halt`），按层定位出事的是函数调用、栈帧还是输出。
+- `codecin/native/mc/pe_print_test.go`：`OUT str` + `HALT` 的 IR 用例，断言
+  生成的 exe 真的输出 `hi\n`。
+- `tests/test_features_syscall_raw.py`：`syscall()` / `syscall_str()` 的回归
+  用例，覆盖运行期功能号分派、实参进 `x0`–`x4` 与功能号进 `x7` 的布置、缺省
+  实参补 0、字符串返回值当新堆指针使用、6 实参上限（编译期报错）、未知功能号
+  的报错文案，以及 `syscall(159)` 这类高位功能号不被截断。
+- `tests/test_features_import_glob.py`：相对 import 的 `*` 通配展开与平台专用
+  源码择优用例，覆盖多模块展开、非 `.cin` 文件忽略、`foo_<平台>.cin` 优先于
+  `foo.cin`、其它平台文件在通配时被排除并按去掉平台后缀的路径去重、模式无
+  匹配时报错，以及无平台变体时回退普通文件。平台一律用 `CIN_TARGET_PLATFORM`
+  固定，不依赖宿主机实际平台。
+- `tests/test_features_native_import.py`：cincc 侧 import 解析用例（8 例），
+  覆盖 `-lib` 参数与 `CODECIN_LIB_DIR` 两条库目录来源、裸名字不命中兄弟文件、
+  相对导入缺失的提示、通配无匹配、平台专用文件优先与跨平台排除，并锁定
+  `--native` 调用 cincc 时不带 `-lib` 参数（靠环境变量传目录）。
+- `codecin/native/compiler/import_test.go`：同一套解析规则的 Go 单测（6 例），
+  直接打 `resolveImport`，不依赖编译产物。
+
+### 修复 (Fixed)
+
+- Windows 下调用任何函数都会崩（`0xc0000005`）：原先没有函数序言，而被调函数
+  一调 `kernel32` 就往 `[rsp]` 写 shadow space——那里正是 `call` 压入的返回
+  地址，于是函数把自己的返回地址写坏。现在由函数入口的 `sub rsp, 0x28` 负责
+  让出 shadow space。
+- Windows 下 `println` 输出变成 `55\0` 而不是 `55\n`：换行字节最初放在
+  `[rsp]`，被 `WriteFile` 前的调用覆盖；改放 `[rsp+0x30]`。
+- 改了 `ImageBase` / `.data` RVA 后所有 exe 都无法加载
+  （`WinError 193 不是有效的 Win32 应用程序`）：`.text` 与 `.data` 之间留了
+  RVA 空洞，加载器判映像无效。现在把 `.text` 的 `VirtualSize` 铺到 `.data`
+  起点。
+
+- 寄存器形式 `SYS` 的未知功能号报错改报**运行期**功能号：`syscall(999)` 现在
+  输出 `unsupported SYS call id: 999`，旧实现取的是操作数的 `value`（寄存器
+  编号 `x7` → `7`）。外层预检查的文案同时与 `execute()` 内的实现对齐。
+- 操作数既不是立即数也不是寄存器时，外层预检查不再落进「unsupported SYS call
+  id」分支，统一报 `SYS requires an immediate or register call id`。
+- `--native` / `mkn build --native` 下裸名字 import 终于能用了：`cmd/cincc`
+  过去给 `CompileFile` 传的是空库目录，`import "math.cin"` 直接
+  `Import file not found`，41 个内置标准库在机器码路径上全部不可用。现在
+  cincc 支持 `-lib <dir>` 参数与 `CODECIN_LIB_DIR` 环境变量，猜不到时按可执行
+  文件位置推断（`<pkg>/native/cincc` → `<pkg>/lib`）。
+- cincc 的裸名字 import 不再命中当前目录的同名文件：旧实现先查兄弟文件，于是
+  同一份源码在 `--native` 下能编译、在默认引擎下报 `Import file not found`。
+  现在按文档规则只查内置标准库（`<lib>/<name>` 与 pic 布局
+  `<lib>/<pkg>/src/<file>`），两种执行路径解析出同一文件集合。
+- cincc 找不到相对导入目标时不再抛裸 OS 错误（`open ...: The system cannot
+  find the file specified.`），改为与默认引擎一致的
+  `Import file not found: "./nope.cin" (相对引用, 已查找 <绝对路径>)`。
+- `codecin` CLI 与 `mkn` 通过 `CODECIN_LIB_DIR` 传递库目录，而不是加 `-lib`
+  参数：旧版 cincc 不认识该参数，直接在 `flag provided but not defined` 上
+  失败，升级 Python 包就会连带打断 `--native`。
+
+### 新增 (Added)
+
+- `tests/test_features_syscall_raw.py`：`syscall()` / `syscall_str()` 的回归
+  用例，覆盖运行期功能号分派、实参进 `x0`–`x4` 与功能号进 `x7` 的布置、缺省
+  实参补 0、字符串返回值当新堆指针使用、6 实参上限（编译期报错）、未知功能号
+  的报错文案，以及 `syscall(159)` 这类高位功能号不被截断。
+- `tests/test_features_import_glob.py`：相对 import 的 `*` 通配展开与平台专用
+  源码择优用例，覆盖多模块展开、非 `.cin` 文件忽略、`foo_<平台>.cin` 优先于
+  `foo.cin`、其它平台文件在通配时被排除并按去掉平台后缀的路径去重、模式无
+  匹配时报错，以及无平台变体时回退普通文件。平台一律用 `CIN_TARGET_PLATFORM`
+  固定，不依赖宿主机实际平台。
+- `tests/test_features_native_import.py`：cincc 侧 import 解析用例（8 例），
+  覆盖 `-lib` 参数与 `CODECIN_LIB_DIR` 两条库目录来源、裸名字不命中兄弟文件、
+  相对导入缺失的提示、通配无匹配、平台专用文件优先与跨平台排除，并锁定
+  `--native` 调用 cincc 时不带 `-lib` 参数（靠环境变量传目录）。
+- `codecin/native/compiler/import_test.go`：同一套解析规则的 Go 单测（6 例），
+  直接打 `resolveImport`，不依赖编译产物。
+
+### 变更 (Changed)
+
+- 版本号 8.1.2：`codecin/__init__.py` 的 `__version__`、`codecin/native/engine/`
+  下 `version_gen.go` 的 `BuildVersion` 与 41 个内置库的 `pic.toml` 同步
+  （由 `script/bump_version.py` 生成）。
+- `mc/win64.go` 从「自带一份简化编码器」改为「PE 容器 + `.data` 镜像」，
+  代码量从 284 行降到约 120 行，编码逻辑统一在 `mc/x86_64.go`。
+- VM 的 `FTOA` 输出缓冲区从静态数据区旁（`dataBase+0x600`）挪到 VM 地址
+  `0xF0000`。原位置紧挨 `itoaBuf`，静态字符串一多就会被覆盖；新位置在静态
+  数据增长区（`0x410000` 起）与堆起点（`0x100000`）之间的空隙里，任何一方都
+  不会踩到。
+
+### 注意
+
+- 仅更新 Python 包时，新的报错文案不会生效——`unsupported SYS call id` 由 Go
+  引擎产生，需要重建 `codecin_native`（源码树 `codecin/native/build.ps1` 或
+  `build.sh`）。执行本身不受影响，旧库仍可运行 8.1.2 的字节码。
+- import 解析、`const`、浮点打印与 Windows 后端的修复都在 cincc 里，同样需要
+  重建：`cd codecin/native && go build -o cincc ./cmd/cincc`。旧二进制仍按老
+  规则解析（裸名字会命中兄弟文件），不支持 `const`，浮点打印仍是整数截断，且
+  不会读 `CODECIN_LIB_DIR`。
+- Windows 后端的文件、网络、图形 `SYS` 仍未实现，`io` / `net` / `key` /
+  `gui` / `ffi` / `gostd` / `termux` 七个库在 `-target x86_64-windows` 下会
+  明确报错。Linux 目标不受影响。
+
+---
+
 ## [8.1.0] - 2026-11-14
 
 ### 发布说明 (Release 8.1.0)
