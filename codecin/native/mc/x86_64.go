@@ -80,18 +80,29 @@ func (e *Encoder) emitITOA() {
 
 const memSize = 1 << 30 // VM 地址空间 (mmap 惰性分配)
 
-// prologue mmap 一块 VM 内存, 基址存入 r15, 并初始化 R32 (SP)。
-func (e *Encoder) prologue(writes []ir.DataWrite) {
-	e.raw(0x31, 0xFF)             // xor edi, edi   (addr = NULL)
-	e.raw(0xBE); e.imm32(memSize) // mov esi, memSize
-	e.raw(0xBA); e.imm32(3)       // mov edx, PROT_READ|PROT_WRITE
-	e.raw(0x41, 0xBA); e.imm32(0x22) // mov r10d, MAP_PRIVATE|MAP_ANONYMOUS
-	e.raw(0x41, 0xB8); e.imm32(-1)   // mov r8d, -1 (fd)
-	e.raw(0x45, 0x31, 0xC9)       // xor r9d, r9d (offset)
-	e.raw(0xB8); e.imm32(9)       // mov eax, SYS_mmap
-	e.raw(0x0F, 0x05)
-	e.raw(0x49, 0x89, 0xC7)       // mov r15, rax
-	// 把静态数据搬进 VM 内存 (源: ELF 数据段, 目标: r15 + addr)
+// memSizeWin 是 Windows 下提交的 VM 内存大小。
+// Linux 的 mmap 是惰性分配, 1 GiB 也不占物理页; VirtualAlloc 提交多少就实占
+// 多少, 所以按 64 MiB 提交 —— 覆盖内置标准库的实际用量。
+const memSizeWin = 64 << 20
+
+// prologue 分配 VM 内存, 基址存入 r15, 并初始化 R32 (SP)。
+func (e *Encoder) prologue(writes []ir.DataWrite) error {
+	if e.isWin() {
+		if err := e.prologueWin(); err != nil {
+			return err
+		}
+	} else {
+		e.raw(0x31, 0xFF)             // xor edi, edi   (addr = NULL)
+		e.raw(0xBE); e.imm32(memSize) // mov esi, memSize
+		e.raw(0xBA); e.imm32(3)       // mov edx, PROT_READ|PROT_WRITE
+		e.raw(0x41, 0xBA); e.imm32(0x22) // mov r10d, MAP_PRIVATE|MAP_ANONYMOUS
+		e.raw(0x41, 0xB8); e.imm32(-1)   // mov r8d, -1 (fd)
+		e.raw(0x45, 0x31, 0xC9)       // xor r9d, r9d (offset)
+		e.raw(0xB8); e.imm32(9)       // mov eax, SYS_mmap
+		e.raw(0x0F, 0x05)
+		e.raw(0x49, 0x89, 0xC7)       // mov r15, rax
+	}
+	// 把静态数据搬进 VM 内存 (源: 映像数据段, 目标: r15 + addr)
 	for _, w := range writes {
 		e.raw(0x48, 0xBE); e.imm64(int64(dataBase + w.Addr)) // rsi = 源
 		e.raw(0x4C, 0x89, 0xFF)                              // rdi = r15
@@ -102,9 +113,36 @@ func (e *Encoder) prologue(writes []ir.DataWrite) {
 	// heap = VM 0x100000
 	e.raw(0x48, 0xB8); e.imm64(0x100000)
 	e.raw(0x48, 0x89, 0x04, 0x25); e.imm32(int32(dataBase+heapPtrOff))
-	// R32 = memSize - 8
-	e.raw(0x48, 0xB8); e.imm64(memSize - 8)
+	// R32 = 栈顶 - 8
+	top := int64(memSize - 8)
+	if e.isWin() {
+		top = memSizeWin - 8
+	}
+	e.raw(0x48, 0xB8); e.imm64(top)
 	e.raw(0x48, 0x89, 0x04, 0x25); e.imm32(regAddr(32))
+	return nil
+}
+
+// prologueWin 是 Windows 序言: 拿 stdout 句柄 + VirtualAlloc 一块 RW 内存。
+//
+// Win64 ABI 要求调用点 rsp 16 字节对齐, 且调用者提供 32 字节 shadow space。
+// 入口 rsp ≡ 8 (mod 16), 因此 ``sub rsp, 0x28`` 之后恰为 16 的倍数。
+func (e *Encoder) prologueWin() error {
+	e.raw(0x48, 0x83, 0xEC, 0x28)                              // sub rsp, 0x28
+	e.raw(0xB9); e.imm32(-11)                                  // mov ecx, STD_OUTPUT_HANDLE
+	if err := e.callIAT("GetStdHandle"); err != nil {
+		return err
+	}
+	e.raw(0x48, 0x89, 0x04, 0x25); e.imm32(int32(winStdoutSlot)) // mov [hStdout], rax
+	e.raw(0x31, 0xC9)                                          // xor ecx, ecx (lpAddress = NULL)
+	e.raw(0xBA); e.imm32(memSizeWin)                           // mov edx, size
+	e.raw(0x41, 0xB8); e.imm32(0x3000)                         // mov r8d, MEM_COMMIT|MEM_RESERVE
+	e.raw(0x41, 0xB9); e.imm32(4)                              // mov r9d, PAGE_READWRITE
+	if err := e.callIAT("VirtualAlloc"); err != nil {
+		return err
+	}
+	e.raw(0x49, 0x89, 0xC7)                                    // mov r15, rax
+	return nil
 }
 
 // vmAddr 计算 rax = r15 + R[base] + off。
@@ -226,8 +264,14 @@ func (e *Encoder) emitCaseConv(upper bool) {
 	e.raw(0xC6, 0x07, 0x00)
 }
 
-// outStr 打印静态字符串 (write(1, dataBase+addr, len))。
-func (e *Encoder) outStr(addr int64, n int) {
+// outStr 打印静态字符串 (dataBase+addr 处, 长度 n)。
+func (e *Encoder) outStr(addr int64, n int) error {
+	if e.isWin() {
+		e.raw(0x4C, 0x89, 0xFE)                       // mov rsi, r15
+		e.raw(0x48, 0x81, 0xC6); e.imm32(int32(addr)) // rsi += addr
+		e.raw(0x48, 0xC7, 0xC2); e.imm32(int32(n))    // rdx = n
+		return e.emitWriteStdout()
+	}
 	e.raw(0xB8)
 	e.imm32(1) // rax = SYS_write
 	e.raw(0x48, 0xC7, 0xC7)
@@ -237,11 +281,84 @@ func (e *Encoder) outStr(addr int64, n int) {
 	e.raw(0x48, 0xC7, 0xC2)
 	e.imm32(int32(n)) // rdx = len
 	e.raw(0x0F, 0x05)
+	return nil
 }
+
+// targetKind 区分同一套 x86-64 指令编码要产出的操作系统目标。
+//
+// 指令编码、寄存器布局、VM 内存模型两边完全一致, 差别只在 5 个"落到
+// 操作系统"的原语: 分配 VM 内存、写标准输出、取时间、取临时目录、退出。
+// 因此 Linux 与 Windows 共用同一个 Encoder, 由 tgt 决定这几处的字节序列。
+type targetKind int
+
+const (
+	targetLinux targetKind = iota
+	targetWindows
+)
 
 // Encoder 生成 x86-64 代码字节。
 type Encoder struct {
-	code []byte
+	code    []byte
+	tgt     targetKind
+	textRVA uint32            // Windows: .text 在映像中的 RVA (IAT 相对调用要用)
+	iat     map[string]uint32 // Windows: 导入函数 -> IAT 槽 RVA
+}
+
+func (e *Encoder) isWin() bool { return e.tgt == targetWindows }
+
+// callIAT 生成 ``call qword ptr [rip+disp32]``, 调用 kernel32 导入函数。
+// 目标地址是 IAT 槽, disp 相对**下一条指令**计算。
+func (e *Encoder) callIAT(name string) error {
+	slot, ok := e.iat[name]
+	if !ok {
+		return fmt.Errorf("未导入函数: %s", name)
+	}
+	next := e.textRVA + uint32(len(e.code)) + 6
+	disp := int64(slot) - int64(next)
+	if disp < -1<<31 || disp >= 1<<31 {
+		return fmt.Errorf("导入槽超出 32 位相对范围: %s", name)
+	}
+	e.raw(0xFF, 0x15)
+	e.imm32(int32(disp))
+	return nil
+}
+
+// emitWriteStdout 把 rsi 指向的 buf、rdx 长度写到标准输出。
+//
+// 破坏 rcx/rdx/rsi/r8/r9/rax 与 xmm 之外的调用者保存寄存器 —— CIN 的
+// 虚拟寄存器全部存在内存里, 不需要跨这条序列保活。
+func (e *Encoder) emitWriteStdout() error {
+	if e.isWin() {
+		e.raw(0x49, 0x89, 0xD0)                    // mov r8, rdx (nNumberOfBytesToWrite)
+		e.raw(0x48, 0x89, 0xF2)                    // mov rdx, rsi (lpBuffer)
+		e.raw(0x48, 0x8B, 0x0C, 0x25)              // mov rcx, [hStdout]
+		e.imm32(int32(winStdoutSlot))
+		e.raw(0x41, 0xB9); e.imm32(int32(winScratch)) // mov r9d, &written (零扩展后是 32 位绝对地址)
+		e.raw(0x48, 0xC7, 0x44, 0x24, 0x20); e.imm32(0) // mov qword [rsp+0x20], 0 (lpOverlapped)
+		return e.callIAT("WriteFile")
+	}
+	e.raw(0xB8); e.imm32(1)                        // eax = SYS_write
+	e.raw(0x48, 0xC7, 0xC7); e.imm32(1)            // rdi = 1
+	e.raw(0x0F, 0x05)
+	return nil
+}
+
+// winTempDir 调用 GetTempPathA 把临时目录写进 VM 内存, 返回 VM 地址。
+// 失败时退化成 "C:\\Windows\\Temp"。
+func (e *Encoder) winTempDir() error {
+	const size = 260
+	e.raw(0x48, 0xC7, 0xC0); e.imm32(size) // R0 = size
+	e.storeReg(0)
+	e.emitMalloc()
+	e.loadReg(0); e.storeReg(9)                                     // R9 = dst (VM 地址)
+	e.raw(0x4C, 0x89, 0xFF); e.raw(0x48, 0x03, 0x0C, 0x25)          // rcx = r15 + dst
+	e.imm32(regAddr(9))
+	e.raw(0xBA); e.imm32(size)                                      // rdx = size
+	if err := e.callIAT("GetTempPathA"); err != nil {
+		return err
+	}
+	e.loadReg(9); e.storeReg(0)
+	return nil
 }
 
 // ErrUnsupported 表示 IR 里出现当前后端尚未实现的指令。
@@ -339,12 +456,22 @@ func (e *Encoder) patchRel(pos, target int) {
 	binary.LittleEndian.PutUint32(e.code[pos:], uint32(rel))
 }
 
-func (e *Encoder) exitWithReg(r int) {
+func (e *Encoder) exitWithReg(r int) error {
+	if e.isWin() {
+		e.loadReg(r)             // rax = 退出码
+		e.raw(0x48, 0x89, 0xC1)  // mov rcx, rax
+		if err := e.callIAT("ExitProcess"); err != nil {
+			return err
+		}
+		e.raw(0xEB, 0xFE) // ExitProcess 不返回; 万一返回就原地挂住
+		return nil
+	}
 	e.loadReg(r)
 	e.raw(0x48, 0x89, 0xC7) // mov rdi, rax
 	e.raw(0xB8)
 	e.imm32(60)       // SYS_exit
 	e.raw(0x0F, 0x05) // syscall
+	return nil
 }
 
 func regImm(ins ir.Instr) (int, int64, error) {
@@ -361,10 +488,43 @@ func labelOf(ins ir.Instr) (string, error) {
 	return ins.Args[0].Name, nil
 }
 
-// Encode 把 IR 编译为机器码 (入口为偏移 0)。
+// Encode 把 IR 编译为 Linux x86-64 机器码 (入口为偏移 0)。
 func Encode(p *ir.Program) ([]byte, error) {
-	e := &Encoder{}
-	e.prologue(p.DataWrites)
+	return encodeWith(p, &Encoder{tgt: targetLinux})
+}
+
+// EncodeWin 把 IR 编译为 Windows x86-64 机器码 (入口为偏移 0)。
+//
+// 指令编码与 Linux 版共用, 只有序言/输出/退出/时间这类落到操作系统的
+// 原语走 IAT 调用。textRVA 是 .text 的 RVA (核对 IAT 相对位移用), iat 是
+// 导入函数名到 IAT 槽 RVA 的映射。
+func EncodeWin(p *ir.Program, textRVA uint32, iat map[string]uint32) ([]byte, error) {
+	return encodeWith(p, &Encoder{tgt: targetWindows, textRVA: textRVA, iat: iat})
+}
+
+// winSyscalls 是 Windows 机器码后端已实现的功能号 (不依赖 Unix 系统调用)。
+//
+// 文件、目录、TCP、UDP 这些能力在 Linux 版直接映射 syscall, Windows 侧需要
+// 另走 CreateFileA/WinSock 一整套封装, 暂未实现 —— 明确报错好过生成跑飞
+// 的二进制。
+var winSyscalls = map[int64]bool{
+	6: true, 7: true, 8: true, 9: true, // FADD/FSUB/FMUL/FDIV
+	11: true, 12: true, // FTOI/ITOF
+	13: true, 14: true, // RAND/SRAND
+	15: true, 16: true, 17: true, // TIME/STRLEN/STRCMP
+	20: true,                  // MALLOC
+	22: true, 23: true, 24: true, 25: true, 26: true, // ITOA/FTOA/PRINT_STR/STR_CONCAT/BOOL_STR
+	28: true, 29: true, 30: true, 31: true, // SUBSTR/INDEXOF/TOUPPER/TOLOWER
+	35: true, 36: true, 37: true, 38: true, // ATOI/TRIM/LTRIM/RTRIM
+	63: true, 89: true, // OSNAME/TEMPDIR
+	91: true, 92: true, // TIMEMS/SLEEPMS
+	137: true, // ALLOCFRAME
+}
+
+func encodeWith(p *ir.Program, e *Encoder) ([]byte, error) {
+	if err := e.prologue(p.DataWrites); err != nil {
+		return nil, err
+	}
 	offs := make([]int, len(p.Instructions))
 	type fix struct {
 		pos   int
@@ -479,6 +639,18 @@ func Encode(p *ir.Program) ([]byte, error) {
 			fixups = append(fixups, fix{e.jccPlaceholder([]byte{0x0F, 0x84}), name})
 		case "OUT":
 			if len(ins.Args) == 1 && ins.Args[0].Kind == "imm" && ins.Args[0].V == 10 {
+				if e.isWin() {
+					// sub rsp, 0x30 保持 16 字节对齐, 同时给 [rsp+0x20] 的第 5 参数留位
+					e.raw(0x48, 0x83, 0xEC, 0x30) // sub rsp, 0x30
+					e.raw(0xC6, 0x04, 0x24, 0x0A) // mov byte [rsp], 10
+					e.raw(0x48, 0x89, 0xE6)       // mov rsi, rsp
+					e.raw(0xBA); e.imm32(1)       // mov edx, 1
+					if err := e.emitWriteStdout(); err != nil {
+						return nil, err
+					}
+					e.raw(0x48, 0x83, 0xC4, 0x30) // add rsp, 0x30
+					continue
+				}
 				e.raw(0x48, 0x83, 0xEC, 0x08)       // sub rsp, 8
 				e.raw(0xC6, 0x04, 0x24, 0x0A)       // mov byte [rsp], 10
 				e.raw(0x48, 0x89, 0xE6)             // mov rsi, rsp
@@ -493,7 +665,9 @@ func Encode(p *ir.Program) ([]byte, error) {
 				return nil, ErrUnsupported{Op: "OUT(非字符串)"}
 			}
 			addr := ins.Args[0].V
-			e.outStr(addr, dataLen(p, addr))
+			if err := e.outStr(addr, dataLen(p, addr)); err != nil {
+				return nil, err
+			}
 		case "ADD", "SUB", "AND", "OR", "XOR":
 			if len(ins.Args) == 2 && ins.Args[0].Kind == "reg" && ins.Args[1].Kind == "reg" {
 				rd, rs := int(ins.Args[0].V), int(ins.Args[1].V)
@@ -621,6 +795,10 @@ func Encode(p *ir.Program) ([]byte, error) {
 			if len(ins.Args) != 1 || ins.Args[0].Kind != "imm" {
 				return nil, fmt.Errorf("SYS: 需要立即数功能号")
 			}
+			if e.isWin() && !winSyscalls[ins.Args[0].V] {
+				return nil, ErrUnsupported{Op: fmt.Sprintf(
+					"SYS %d (Windows 后端暂未实现文件/网络能力)", ins.Args[0].V)}
+			}
 			switch ins.Args[0].V {
 			case 24: // PRINT_STR: x0 指向 VM 内存里的 NUL 结尾字符串
 				e.raw(0x48, 0x8B, 0x34, 0x25); e.imm32(regAddr(0))
@@ -633,10 +811,9 @@ func Encode(p *ir.Program) ([]byte, error) {
 				e.raw(0x48, 0xFF, 0xC2)       // inc rdx
 				rel := int32(strLoop - (len(e.code) + 2))
 				e.raw(0xEB); e.raw(byte(int8(rel))) // jmp strLoop
-				// write(1, rsi, rdx)
-				e.raw(0xB8); e.imm32(1)
-				e.raw(0x48, 0xC7, 0xC7); e.imm32(1)
-				e.raw(0x0F, 0x05)
+				if err := e.emitWriteStdout(); err != nil {
+					return nil, err
+				}
 			case 12: // ITOF: R0 = double(R0) 的位模式
 				e.loadReg(0)
 				e.raw(0xF2, 0x48, 0x0F, 0x2A, 0xC0) // cvtsi2sd xmm0, rax
@@ -815,6 +992,21 @@ func Encode(p *ir.Program) ([]byte, error) {
 				e.storeReg(0)
 				endAddr := len(e.code); e.patchRel(endPos, endAddr)
 			case 15: // TIME: R0 = unix 秒
+				if e.isWin() {
+					// GetSystemTimeAsFileTime 给的是 1601 起的 100ns 计数
+					e.raw(0x48, 0x8D, 0x0C, 0x25); e.imm32(int32(winScratch2)) // lea rcx, [ft]
+					if err := e.callIAT("GetSystemTimeAsFileTime"); err != nil {
+						return nil, err
+					}
+					e.raw(0x48, 0x8B, 0x04, 0x25); e.imm32(int32(winScratch2)) // rax = ft
+					e.raw(0x48, 0xB9); e.imm64(116444736000000000)            // rcx = 1601->1970
+					e.raw(0x48, 0x29, 0xC8)                                   // sub rax, rcx
+					e.raw(0x31, 0xD2)                                         // xor edx, edx
+					e.raw(0x48, 0xB9); e.imm64(10000000)                      // rcx = 每秒 100ns 数
+					e.raw(0x48, 0xF7, 0xF1)                                   // div rcx
+					e.storeReg(0)
+					break
+				}
 				e.raw(0xB8); e.imm32(201) // SYS_time
 				e.raw(0x31, 0xFF)         // xor edi, edi
 				e.raw(0x0F, 0x05)
@@ -1148,6 +1340,13 @@ func Encode(p *ir.Program) ([]byte, error) {
 				e.raw(0x0F, 0x05)
 				e.storeReg(0)
 			case 91: // TIMEMS: 单调时钟毫秒
+				if e.isWin() {
+					if err := e.callIAT("GetTickCount64"); err != nil {
+						return nil, err
+					}
+					e.storeReg(0)
+					break
+				}
 				e.raw(0x48, 0x83, 0xEC, 0x10)       // sub rsp, 16
 				e.raw(0xBF); e.imm32(1)             // edi = CLOCK_MONOTONIC
 				e.raw(0x48, 0x89, 0xE6)             // rsi = &ts
@@ -1165,6 +1364,16 @@ func Encode(p *ir.Program) ([]byte, error) {
 				e.raw(0x48, 0x83, 0xC4, 0x10)
 				e.storeReg(0)
 			case 92: // SLEEPMS: R0 毫秒
+				if e.isWin() {
+					e.loadReg(0)
+					e.raw(0x48, 0x89, 0xC1) // mov rcx, rax
+					if err := e.callIAT("Sleep"); err != nil {
+						return nil, err
+					}
+					e.raw(0x48, 0x31, 0xC0)
+					e.storeReg(0)
+					break
+				}
 				e.loadReg(0)
 				e.raw(0x48, 0x31, 0xD2)
 				e.raw(0x48, 0xC7, 0xC1); e.imm32(1000)
@@ -1275,7 +1484,17 @@ func Encode(p *ir.Program) ([]byte, error) {
 				e.raw(0xB8); e.imm32(3)
 				e.raw(0x0F, 0x05)
 				e.storeReg(0)
-			case 63: // OSNAME -> "linux"
+			case 63: // OSNAME -> "linux" / "windows"
+				if e.isWin() {
+					e.raw(0x48, 0xC7, 0xC0); e.imm32(8)
+					e.storeReg(0)
+					e.emitMalloc()
+					e.loadReg(0)
+					e.raw(0x4C, 0x89, 0xFF); e.raw(0x48, 0x01, 0xC7)
+					e.raw(0xC7, 0x07); e.imm32(0x646E6977)       // "wind"
+					e.raw(0xC7, 0x47, 0x04); e.imm32(0x0073776F) // "ows\0"
+					break
+				}
 				e.raw(0x48, 0xC7, 0xC0); e.imm32(6)
 				e.storeReg(0)
 				e.emitMalloc()
@@ -1284,7 +1503,13 @@ func Encode(p *ir.Program) ([]byte, error) {
 				e.raw(0xC7, 0x07); e.imm32(0x756E696C) // "linu"
 				e.raw(0xC6, 0x47, 0x04, 0x78)          // 'x'
 				e.raw(0xC6, 0x47, 0x05, 0x00)
-			case 89: // TEMPDIR -> "/tmp"
+			case 89: // TEMPDIR
+				if e.isWin() {
+					if err := e.winTempDir(); err != nil {
+						return nil, err
+					}
+					break
+				}
 				e.raw(0x48, 0xC7, 0xC0); e.imm32(5)
 				e.storeReg(0)
 				e.emitMalloc()
@@ -1320,7 +1545,9 @@ func Encode(p *ir.Program) ([]byte, error) {
 				return nil, ErrUnsupported{Op: fmt.Sprintf("SYS %d", ins.Args[0].V)}
 			}
 		case "HALT":
-			e.exitWithReg(0)
+			if err := e.exitWithReg(0); err != nil {
+				return nil, err
+			}
 			sawHalt = true
 			continue
 		default:

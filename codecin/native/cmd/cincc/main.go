@@ -7,15 +7,42 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"codecin-native/compiler"
 	"codecin-native/mc"
 )
 
+// defaultLibDir 猜测内置标准库目录 (codecin/lib)。
+//
+// 顺序: 环境变量 CODECIN_LIB_DIR -> 可执行文件同级的 lib / 上一级的 lib。
+// 从源码树直接编译时 cincc 位于 <pkg>/native/, 库在 <pkg>/lib。
+// 猜不到时返回空串, 此时裸名字 import 只能报 Import file not found。
+func defaultLibDir() string {
+	if v := os.Getenv("CODECIN_LIB_DIR"); v != "" {
+		return v
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		return ""
+	}
+	dir := filepath.Dir(exe)
+	for _, cand := range []string{
+		filepath.Join(dir, "lib"),
+		filepath.Join(dir, "..", "lib"),
+	} {
+		if fi, e := os.Stat(cand); e == nil && fi.IsDir() {
+			return filepath.Clean(cand)
+		}
+	}
+	return ""
+}
+
 func main() {
 	out := flag.String("o", "", "输出可执行文件")
 	target := flag.String("target", "x86_64-linux", "目标平台")
+	libDir := flag.String("lib", defaultLibDir(), "内置标准库目录 (codecin/lib)")
 	verbose := flag.Bool("v", false, "打印 IR")
 	flag.Parse()
 	if flag.NArg() != 1 || *out == "" {
@@ -31,7 +58,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "cincc: %v\n", err)
 		os.Exit(1)
 	}
-	prog, err := compiler.CompileFile(flag.Arg(0), "")
+	prog, err := compiler.CompileFile(flag.Arg(0), *libDir)
 	if err != nil {
 		// CompileFile 会展开 import; 源码含 import 时回退到 Compile 只会报
 		// 与真实原因无关的解析错误, 直接把原始错误报告给用户。

@@ -539,12 +539,17 @@ def _build_native_project(project: MknManifest, args) -> int:
     out = args.output or os.path.join(
         project.target_dir, f'{project.name}-{project.version}')
     os.makedirs(os.path.dirname(out) or '.', exist_ok=True)
+    # 内置标准库目录经环境变量传给 cincc (旧版 cincc 不认识 -lib 参数)。
     cmd = [_cincc_path(), '-o', out, entry]
     target = getattr(args, 'build_target', None)
     if target:
         cmd += ['-target', target]
+    child_env = dict(os.environ)
+    lib_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'lib')
+    if os.path.isdir(lib_dir):
+        child_env['CODECIN_LIB_DIR'] = lib_dir
     proc = subprocess.run(cmd, capture_output=True, text=True,
-                          encoding='utf-8', errors='replace')
+                          encoding='utf-8', errors='replace', env=child_env)
     if proc.returncode != 0:
         raise MknError((proc.stderr or proc.stdout).strip())
     print(f'Built native {project.name} {project.version}: {out}')

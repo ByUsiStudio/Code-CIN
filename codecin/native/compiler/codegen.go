@@ -2260,6 +2260,99 @@ func expandImportPattern(dir, target, platform string) []string {
 	return out
 }
 
+// libraryCandidates 把 import 目标映射到内置标准库的候选路径。
+//
+// 与 Python 侧 codecin/cin.py 的 _bundled_library_candidates 保持一致:
+// 兼容 math.cin / lib/math.cin / math 三种写法, 主候选是 <libDir>/<name>
+// 扁平路径, 其次是 pic 包布局 <libDir>/<pkg>/src/<file>。
+func libraryCandidates(name, libDir string) []string {
+	if libDir == "" {
+		return nil
+	}
+	rel := strings.TrimPrefix(strings.ReplaceAll(name, "\\", "/"), "lib/")
+	parts := make([]string, 0, 3)
+	for _, p := range strings.Split(rel, "/") {
+		if p != "" {
+			parts = append(parts, p)
+		}
+	}
+	if len(parts) == 0 {
+		return nil
+	}
+	head := parts[0]
+	pkg := strings.TrimSuffix(head, ".cin")
+	out := []string{filepath.Join(libDir, filepath.FromSlash(rel))}
+	if len(parts) == 1 {
+		file := head
+		if !strings.HasSuffix(file, ".cin") {
+			file += ".cin"
+		}
+		out = append(out, filepath.Join(libDir, pkg, "src", file))
+	} else {
+		out = append(out, filepath.Join(libDir, pkg, "src",
+			filepath.Join(parts[1:]...)))
+	}
+	return out
+}
+
+// resolveImport 把一条 import 目标解析为若干 .cin 文件。
+//
+// 语义与 Python 引擎 (codecin/cin.py 的 _resolve_import) 对齐:
+//   - "./x.cin" / "../x.cin": 相对当前文件所在目录, 支持 * ? [ 通配与
+//     foo_<平台>.cin 择优;
+//   - 其余 (裸名字): 只查内置标准库, 不命中当前目录的同名文件 ——
+//     "裸名字是内置库, 相对路径要写 ./" 是文档写死的规则, 旧实现先查兄弟
+//     文件, 于是同一份源码在 cincc 下能过、在默认引擎下报 Import file not
+//     found。
+func resolveImport(target, fromFile, libDir string) ([]string, error) {
+	platform := hostPlatform()
+	dir := filepath.Dir(fromFile)
+	if isRelativeImport(target) {
+		if strings.ContainsAny(target, "*?[") {
+			resolved := expandImportPattern(dir, target, platform)
+			if len(resolved) == 0 {
+				return nil, fmt.Errorf("Import pattern matched no .cin file: %q", target)
+			}
+			return resolved, nil
+		}
+		path := filepath.Join(dir, target)
+		if v := platformVariant(path, platform); v != "" {
+			return []string{v}, nil
+		}
+		if fi, err := os.Stat(path); err == nil && !fi.IsDir() {
+			return []string{path}, nil
+		}
+		abs, aerr := filepath.Abs(path)
+		if aerr != nil {
+			abs = path
+		}
+		return nil, fmt.Errorf("Import file not found: %q (相对引用, 已查找 %s)",
+			target, abs)
+	}
+
+	candidates := libraryCandidates(target, libDir)
+	for _, cand := range candidates {
+		if v := platformVariant(cand, platform); v != "" {
+			return []string{v}, nil
+		}
+		if fi, err := os.Stat(cand); err == nil && !fi.IsDir() {
+			return []string{cand}, nil
+		}
+	}
+	hint := ""
+	if len(candidates) > 0 {
+		hint = candidates[0]
+	}
+	if hint == "" {
+		return nil, fmt.Errorf(
+			"Import file not found: %q (未指定内置标准库目录; "+
+				"用 -lib 或 CODECIN_LIB_DIR 指向 codecin/lib)", target)
+	}
+	return nil, fmt.Errorf(
+		"Import file not found: %q (内置标准库已查找 %s; cincc 不支持 pic 包依赖)",
+		target, hint)
+}
+
 // CompileFile 读取 .cin 文件并展开 import, 然后编译。
 func CompileFile(path, libDir string) (*ir.Program, error) {
 	source, err := loadProgramSource(path, libDir)
@@ -2302,43 +2395,9 @@ func loadProgramSource(path, libDir string) (string, error) {
 		for _, line := range strings.Split(text, "\n") {
 			m := importRe.FindStringSubmatch(line)
 			if m != nil {
-				target := m[1]
-				platform := hostPlatform()
-				var resolved []string
-				if isRelativeImport(target) {
-					dir := filepath.Dir(rp)
-					if strings.ContainsAny(target, "*?[") {
-						resolved = expandImportPattern(dir, target, platform)
-						if len(resolved) == 0 {
-							return fmt.Errorf("Import pattern matched no .cin file: %q", target)
-						}
-					} else if v := platformVariant(filepath.Join(dir, target), platform); v != "" {
-						resolved = []string{v}
-					} else {
-						resolved = []string{filepath.Join(dir, target)}
-					}
-				} else {
-					var candidates []string
-					candidates = append(candidates, filepath.Join(filepath.Dir(rp), target))
-					if libDir != "" {
-						candidates = append(candidates, filepath.Join(libDir, target))
-					}
-					if filepath.Base(libDir) == "lib" {
-						candidates = append(candidates, filepath.Join(filepath.Dir(libDir), target))
-					}
-					for _, cand := range candidates {
-						if v := platformVariant(cand, platform); v != "" {
-							resolved = []string{v}
-							break
-						}
-						if fi, e := os.Stat(cand); e == nil && !fi.IsDir() {
-							resolved = []string{cand}
-							break
-						}
-					}
-				}
-				if len(resolved) == 0 {
-					return fmt.Errorf("Import file not found: %q", target)
+				resolved, rerr := resolveImport(m[1], rp, libDir)
+				if rerr != nil {
+					return rerr
 				}
 				for _, r := range resolved {
 					rr, e := filepath.Abs(r)

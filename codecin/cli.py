@@ -240,11 +240,19 @@ def _run_native(ns: argparse.Namespace, console, program_file: str,
         out = os.path.join(tmpdir, os.path.splitext(
             os.path.basename(program_file))[0])
 
+    # 内置标准库目录通过环境变量交给 cincc: 裸名字 import ("math.cin") 只查
+    # 这里。用环境变量而不是 -lib 参数, 是为了兼容旧版 cincc (它不认识 -lib,
+    # 会直接报 flag provided but not defined)。
+    lib_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib")
     cmd = [cincc, "-o", out, program_file]
     if target:
         cmd += ["-target", target]
+    child_env = dict(os.environ)
+    if os.path.isdir(lib_dir):
+        child_env["CODECIN_LIB_DIR"] = lib_dir
     proc = subprocess.run(cmd, capture_output=True, text=True,
-                           encoding="utf-8", errors="replace")
+                           encoding="utf-8", errors="replace",
+                           env=child_env)
     if proc.returncode != 0:
         console.print(Panel((proc.stderr or proc.stdout).strip(),
                             title="Native Build Error", border_style="red"))

@@ -425,9 +425,15 @@ func RunV2(opts *RunOptions) *Result {
 				return finish(StatusError, "SYS requires a call id")
 			}
 			id, ok := vm.val(ins.args[0])
-			if !ok || !syscallSupported(id) {
+			if !ok {
+				// 与 execute() 内的提示保持一致 (操作数既不是立即数也不是寄存器)。
+				return finish(StatusError, "SYS requires an immediate or register call id")
+			}
+			if !syscallSupported(id) {
+				// 必须报**运行期功能号**: 寄存器形式下 ins.args[0].value 是寄存器
+				// 编号, 旧实现把它当功能号打印, 于是 syscall(999) 报 "id: 7"。
 				return finish(StatusError, fmt.Sprintf(
-					"unsupported SYS call id: %d", ins.args[0].value))
+					"unsupported SYS call id: %d", int64(id)))
 			}
 		}
 		// 与解释器一致: 先自增 pc
