@@ -128,7 +128,10 @@ func (e *Encoder) prologue(writes []ir.DataWrite) error {
 // Win64 ABI 要求调用点 rsp 16 字节对齐, 且调用者提供 32 字节 shadow space。
 // 入口 rsp ≡ 8 (mod 16), 因此 ``sub rsp, 0x28`` 之后恰为 16 的倍数。
 func (e *Encoder) prologueWin() error {
-	e.raw(0x48, 0x83, 0xEC, 0x28)                              // sub rsp, 0x28
+	// 入口 rsp 的对齐取决于 loader 版本, 直接 and 到 16 字节边界最稳:
+	// 进程不会再 ret 回 kernel32 (退出走 ExitProcess), 丢掉原 rsp 无副作用。
+	e.raw(0x48, 0x83, 0xE4, 0xF0)                              // and rsp, -16
+	e.raw(0x48, 0x83, 0xEC, 0x30)                              // sub rsp, 0x30 (16 的倍数, 且容得下第 5 参数)
 	e.raw(0xB9); e.imm32(-11)                                  // mov ecx, STD_OUTPUT_HANDLE
 	if err := e.callIAT("GetStdHandle"); err != nil {
 		return err
@@ -141,10 +144,16 @@ func (e *Encoder) prologueWin() error {
 	if err := e.callIAT("VirtualAlloc"); err != nil {
 		return err
 	}
-	e.raw(0x49, 0x89, 0xC7)                                    // mov r15, rax
+	e.raw(0x49, 0x89, 0xC7)  // mov r15, rax
+	e.raw(0x48, 0x85, 0xC0)  // test rax, rax
+	e.raw(0x75, 0x0B)        // jne ok (跳过 mov ecx,99 + call ExitProcess 共 11 字节)
+	e.raw(0xB9); e.imm32(99) // mov ecx, 99
+	if err := e.callIAT("ExitProcess"); err != nil {
+		return err
+	}
+	e.raw(0xEB, 0xFE) // 悬停
 	return nil
 }
-
 // vmAddr 计算 rax = r15 + R[base] + off。
 func (e *Encoder) vmAddr(base int, off int32) {
 	e.raw(0x4C, 0x89, 0xF8)             // mov rax, r15
