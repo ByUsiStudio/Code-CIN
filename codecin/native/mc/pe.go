@@ -6,19 +6,24 @@ import "encoding/binary"
 //
 // 布局: [DOS 头][PE 头 + 可选头][节表][.text][.data][.rdata]
 //
-// ImageBase 固定 0x400000, 而不是链接器默认的 0x140000000: 编码器与
+// ImageBase 固定 0x200000, 而不是链接器默认的 0x140000000: 编码器与
 // Linux 版共用同一套绝对寻址序列 (`` mov rax, [abs32] ``), 该指令只能
 // 寻址低 4 GiB, 因此 .data 里的寄存器组必须落在 32 位地址空间内。
 // DllCharacteristics=0 关闭 ASLR, 映像始终装载在 ImageBase。
 //
-// .data 的 VirtualSize 远大于 RawSize: 寄存器组在 RVA 0x2000, 而 IR 静态
-// 数据在 dataBase=0x410000 (RVA 0x10000) 之后, 中间的空洞交给加载器零填。
+// .data 放在 RVA 0x202000 而不是紧跟 .text: 寄存器组的绝对地址在编码器里
+// 是常量 dataAddr=0x402000, 只有 ImageBase 取 0x200000 时两者才对齐, 同时
+// 给代码留出 2 MiB 空间 (裸 0x400000 方案只有 4 KiB, 稍大的程序就会让
+// .text 压到 .data 上)。
+//
+// .data 的 VirtualSize 远大于 RawSize: 寄存器组在 RVA 0x202000, 而 IR 静态
+// 数据在 dataBase=0x410000 (RVA 0x210000) 之后, 中间的空洞交给加载器零填。
 const (
-	peBase        = 0x400000
+	peBase        = 0x200000
 	peFileAlign   = 0x200
 	peSectAlign   = 0x1000
 	peTextRVA     = 0x1000
-	peDataRVA     = 0x2000 // == dataAddr, 寄存器组/标志位所在页
+	peDataRVA     = 0x202000 // == dataAddr - peBase: 寄存器组/标志位所在页
 	peHeadersSize = 0x200
 )
 
@@ -121,7 +126,13 @@ func buildPE(code []byte, data []byte, dataVSize uint32, imp peImport) (*peLayou
 		le.PutUint32(buf[o+20:], rawPtr)
 		le.PutUint32(buf[o+36:], chars)
 	}
-	putSection(0, ".text", textSize, peTextRVA, textSize, peHeadersSize, 0x60000020)                 // CODE|EXEC|READ
+	// .text 的虚拟大小铺到 .data 起点: 中间若留空洞, 映像里会出现一段
+	// 不属于任何节的地址, 加载器会直接判定映像无效 (WinError 193)。
+	textVSize := textSize
+	if dv := uint32(peDataRVA) - peTextRVA; dv > textVSize {
+		textVSize = dv
+	}
+	putSection(0, ".text", textVSize, peTextRVA, textSize, peHeadersSize, 0x60000020)                  // CODE|EXEC|READ
 	putSection(1, ".data", dataV, peDataRVA, dataRaw, peHeadersSize+textSize, 0xC0000040)           // INITIALIZED|READ|WRITE
 	putSection(2, ".rdata", rdataSize, rdataRVA, rdataSize, peHeadersSize+textSize+dataRaw, 0xC0000040) // 装载器要写 IAT
 

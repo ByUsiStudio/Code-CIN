@@ -79,6 +79,28 @@ func TestPEBisect(t *testing.T) {
 			},
 			Labels: map[string]int{"f": 2},
 		}, 5},
+		{"call_out", &ir.Program{
+			Instructions: []ir.Instr{
+				{Op: "CALL", Args: []ir.Operand{ir.Label("f")}},
+				{Op: "HALT"},
+				{Op: "OUT", Args: []ir.Operand{ir.Str(0x1000)}},
+				{Op: "MOV", Args: []ir.Operand{ir.Reg(0), ir.Imm(9)}},
+				{Op: "RET"},
+			},
+			Labels:     map[string]int{"f": 2},
+			DataWrites: []ir.DataWrite{{Addr: 0x1000, Data: []byte("ok\n\x00")}},
+		}, 9},
+		{"call_out_halt", &ir.Program{
+			Instructions: []ir.Instr{
+				{Op: "CALL", Args: []ir.Operand{ir.Label("f")}},
+				{Op: "HALT"},
+				{Op: "OUT", Args: []ir.Operand{ir.Str(0x1000)}},
+				{Op: "MOV", Args: []ir.Operand{ir.Reg(0), ir.Imm(8)}},
+				{Op: "HALT"},
+			},
+			Labels:     map[string]int{"f": 2},
+			DataWrites: []ir.DataWrite{{Addr: 0x1000, Data: []byte("ok\n\x00")}},
+		}, 8},
 	}
 	for _, c := range cases {
 		c := c

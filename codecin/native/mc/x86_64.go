@@ -532,8 +532,26 @@ func encodeWith(p *ir.Program, e *Encoder) ([]byte, error) {
 	var fixups []fix
 	sawHalt := false
 
+	// Windows: 被调函数要有自己的序言。Win64 要求 caller 在调用点留出 32
+	// 字节 shadow space, 被调者可以往里 spill 参数; 没有序言的话这块正好压
+	// 在返回地址上, 函数一调 kernel32 就把自己的返回地址写坏。
+	funcEntry := map[int]bool{}
+	if e.isWin() {
+		for _, ins := range p.Instructions {
+			if ins.Op == "CALL" && len(ins.Args) == 1 && ins.Args[0].Kind == "label" {
+				if idx, ok := p.Labels[ins.Args[0].Name]; ok {
+					funcEntry[idx] = true
+				}
+			}
+		}
+	}
+
 	for i, ins := range p.Instructions {
+		// label 必须指向函数序言的起点, 否则 CALL 会跳过 sub rsp。
 		offs[i] = len(e.code)
+		if funcEntry[i] {
+			e.raw(0x48, 0x83, 0xEC, 0x28) // 函数序言: sub rsp, 0x28
+		}
 		switch ins.Op {
 		case "MOV":
 			if len(ins.Args) == 2 && ins.Args[0].Kind == "reg" && ins.Args[1].Kind == "reg" {
@@ -639,15 +657,16 @@ func encodeWith(p *ir.Program, e *Encoder) ([]byte, error) {
 		case "OUT":
 			if len(ins.Args) == 1 && ins.Args[0].Kind == "imm" && ins.Args[0].V == 10 {
 				if e.isWin() {
-					// sub rsp, 0x30 保持 16 字节对齐, 同时给 [rsp+0x20] 的第 5 参数留位
-					e.raw(0x48, 0x83, 0xEC, 0x30) // sub rsp, 0x30
-					e.raw(0xC6, 0x04, 0x24, 0x0A) // mov byte [rsp], 10
-					e.raw(0x48, 0x89, 0xE6)       // mov rsi, rsp
-					e.raw(0xBA); e.imm32(1)       // mov edx, 1
+					// 换行字节不能放 [rsp]: 那是 shadow space, 被调者 spill 参数
+					// 时会直接覆盖掉。挪到第 5 参数槽之后 ([rsp+0x30]) 才安全。
+					e.raw(0x48, 0x83, 0xEC, 0x40)       // sub rsp, 0x40
+					e.raw(0xC6, 0x44, 0x24, 0x30, 0x0A) // mov byte [rsp+0x30], 10
+					e.raw(0x48, 0x8D, 0x74, 0x24, 0x30) // lea rsi, [rsp+0x30]
+					e.raw(0xBA); e.imm32(1)             // mov edx, 1
 					if err := e.emitWriteStdout(); err != nil {
 						return nil, err
 					}
-					e.raw(0x48, 0x83, 0xC4, 0x30) // add rsp, 0x30
+					e.raw(0x48, 0x83, 0xC4, 0x40) // add rsp, 0x40
 					continue
 				}
 				e.raw(0x48, 0x83, 0xEC, 0x08)       // sub rsp, 8
@@ -759,24 +778,19 @@ func encodeWith(p *ir.Program, e *Encoder) ([]byte, error) {
 			if err != nil {
 				return nil, err
 			}
-			if e.isWin() {
-				// Win64 ABI: 调用点 rsp 要 16 字节对齐, 且 caller 备好 32 字节
-				// shadow space (第 5 个参数落在 [rsp+0x20])。宿主 call 只压
-				// 8 字节返回地址, 所以这块在 call 之前减、返回之后加回去。
-				e.raw(0x48, 0x83, 0xEC, 0x28) // sub rsp, 0x28
-			}
 			e.raw(0x48, 0x83, 0x2C, 0x25) // sub qword [R32], 8 (VM 返回槽)
 			e.imm32(regAddr(32))
 			e.raw(0x08)
 			e.raw(0xE8)
 			fixups = append(fixups, fix{e.imm32Pos(), name})
-			if e.isWin() {
-				e.raw(0x48, 0x83, 0xC4, 0x28) // add rsp, 0x28
-			}
 		case "RET":
 			e.raw(0x48, 0x83, 0x04, 0x25) // add qword [R32], 8
 			e.imm32(regAddr(32))
 			e.raw(0x08)
+			if e.isWin() {
+				// 与函数序言的 sub rsp,0x28 配对。
+				e.raw(0x48, 0x83, 0xC4, 0x28) // add rsp, 0x28
+			}
 			e.raw(0xC3)
 		case "PUSH":
 			if len(ins.Args) != 1 || ins.Args[0].Kind != "reg" {
