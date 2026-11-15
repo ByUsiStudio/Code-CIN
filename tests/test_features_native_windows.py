@@ -220,3 +220,82 @@ def test_native_cli_prefers_pe_on_windows(workdir, monkeypatch):
     assert cmd[-1] == prog
     assert cmd[cmd.index('-target') + 1] == 'x86_64-windows'
     assert cmd.index('-target') < cmd.index(prog)
+
+
+@needs_cincc
+@needs_windows
+def test_pe_file_io_roundtrip(workdir):
+    """文件 / 目录 SYS 走 Win32 API, 语义与引擎一致 (0 成功 / -1 失败)。"""
+    d = os.path.join(workdir, 'io').replace('\\', '/')
+    proc, out = _build(workdir, f'''
+function main() -> int {{
+    mkdir("{d}");
+    string p = "{d}/a.txt";
+    println(file_exists(p));
+    println(file_write(p, "hello"));
+    println(file_size(p));
+    println(file_append(p, " world"));
+    println(file_read(p));
+    println(file_size(p));
+    println(is_dir("{d}"));
+    println(is_dir(p));
+    println(file_copy(p, "{d}/b.txt"));
+    println(file_read("{d}/b.txt"));
+    println(file_mtime(p) > 1600000000);
+    file_delete(p);
+    file_delete("{d}/b.txt");
+    println(file_exists(p));
+    println(dir_remove("{d}"));
+    println(is_dir("{d}"));
+    return 0;
+}}
+''')
+    assert proc.returncode == 0, proc.stderr
+    rc, stdout = _run(out)
+    assert stdout.splitlines() == [
+        '0', '0', '5', '0', 'hello world', '11',
+        '1', '0', '0', 'hello world', 'true',
+        '0', '0', '0',
+    ]
+    assert rc == 0
+
+
+@needs_cincc
+@needs_windows
+def test_pe_dir_list_matches_engine_format(workdir):
+    """dir_list 的输出格式要和引擎一致: 换行分隔、无尾换行、目录带 '/'。"""
+    d = os.path.join(workdir, 'ls').replace('\\', '/')
+    os.makedirs(os.path.join(d, 'sub'), exist_ok=True)
+    _write(os.path.join(d, 'a.txt'), '1')
+    _write(os.path.join(d, 'b.txt'), '2')
+    proc, out = _build(workdir, f'''
+function main() -> int {{
+    println(dir_list("{d}"));
+    return 0;
+}}
+''')
+    assert proc.returncode == 0, proc.stderr
+    rc, stdout = _run(out)
+    assert sorted(stdout.splitlines()) == ['a.txt', 'b.txt', 'sub/']
+    assert not stdout.endswith('\n\n'), '末尾不许多出空行'
+    assert rc == 0
+
+
+@needs_cincc
+@needs_windows
+def test_pe_file_io_failure_paths(workdir):
+    """打不开文件时返回空串 / -1, 不是崩溃或垃圾数据。"""
+    missing = os.path.join(workdir, 'nope.txt').replace('\\', '/')
+    proc, out = _build(workdir, f'''
+function main() -> int {{
+    println(file_read("{missing}") == "");
+    println(file_size("{missing}"));
+    println(file_delete("{missing}"));
+    println(dir_list("{missing}") == "");
+    return 0;
+}}
+''')
+    assert proc.returncode == 0, proc.stderr
+    rc, stdout = _run(out)
+    assert stdout.splitlines() == ['true', '-1', '-1', 'true']
+    assert rc == 0

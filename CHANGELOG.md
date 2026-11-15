@@ -54,9 +54,44 @@ Linux 侧的编码器补上了移位、位运算和按字节读取，`math.cin`�
   `0x202000`。`.data` 的 RVA 由 `dataAddr - peBase` 反推，寄存器组的绝对地址
   `0x402000` 因此恰好落在 `.data` 起点，编码器可以继续用 `mov rax, [abs32]`
   访问虚拟寄存器。
-- 未实现的功能号不再静默降级：文件、网络、图形类 `SYS` 直接
-  `x86-64 后端暂不支持指令: SYS 51 (Windows 后端暂未实现文件/网络能力)`，
+- 未实现的功能号不再静默降级：网络、图形、进程类 `SYS` 直接
+  `x86-64 后端暂不支持指令: SYS 145 (Windows 后端暂未实现网络/图形能力)`，
   更不会生成一个跑到一半才崩的可执行文件。
+
+**Windows 文件与目录能力（`SYS 51`–`58`、`66`、`84`–`90`）**
+
+- 15 个文件/目录功能号全部落到 Win32 API：`CreateFileA`、`ReadFile`、
+  `WriteFile`、`CloseHandle`、`DeleteFileA`、`CopyFileA`、`MoveFileA`、
+  `GetFileAttributesA`、`GetFileSizeEx`、`GetFileTime`、`CreateDirectoryA`、
+  `RemoveDirectoryA`、`GetCurrentDirectoryA`、`SetCurrentDirectoryA`、
+  `FindFirstFileA`/`FindNextFileA`/`FindClose`（导入表共 20 个 kernel32 函数）。
+- `file_read` / `file_write` / `file_append` / `file_exists` / `file_delete` /
+  `file_size` / `mkdir` / `dir_list` / `file_copy` / `file_move` /
+  `dir_remove` / `is_dir` / `file_mtime` / `cwd` / `chdir` 在机器码路径上可用，
+  返回值语义与引擎一致（成功 `0`、失败 `-1`、`file_size` 失败 `-1`、
+  `dir_list` 失败空串）。
+- `dir_list` 的输出格式对齐引擎：条目之间 `\n` 分隔、末尾不留换行、目录名带
+  尾部 `/`、`.` 与 `..` 不计入。
+- `file_mtime` 把 `FILETIME`（1601 年起的 100ns）换算成 Unix 秒：
+  整除 1e7 再减 11644473600。
+- `cincc` 的 `.data` 里新增 `winScratch3` 槽位，存放 `LARGE_INTEGER` /
+  `FILETIME` / `WIN32_FIND_DATAA` 这类 API 输出结构。
+- 仍未实现的是纯路径运算（`path_join` / `path_basename` / `path_dirname` /
+  `path_abs`，`SYS 80`–`83`）与进程/网络/图形：这几项需要精确复刻
+  `filepath` 的清洗规则（`a/./b`、`..`、盘符根目录），宁可直接报错也不做出
+  一个「差不多」的实现。`io.cin` 因此在 Windows 目标下会停在 `SYS 83`。
+
+**`--native` 在 Windows 上直接出 PE**
+
+- `codecin prog.cin --native` 过去在 Windows 上默认编出 ELF，再靠 WSL 执行
+  （没装 WSL 就直接报错）。现在 Windows 宿主默认选 `x86_64-windows`，
+  编完直接跑。
+- 程序用到 Windows 后端尚未实现的宿主能力（网络/图形）时，自动回退
+  `x86_64-linux` + WSL 并给出提示，不会因为默认目标变化而丢掉原本能跑的路径。
+- `--build-target` 新增 `windows/amd64` / `windows/x86_64` 映射；
+  `mkn build --native --build-target <OS/ARCH>` 同样可用，产物按目标加 `.exe`。
+- 修掉两处 `-target` 排序问题：Go 的 flag 解析遇到第一个位置参数就停，
+  所以 `-target` 必须排在入口文件之前（旧代码排在后面，等于没传）。
 
 **编译期 `const`**
 
@@ -94,6 +129,11 @@ Linux 侧的编码器补上了移位、位运算和按字节读取，`math.cin`�
   `call_out_halt`），按层定位出事的是函数调用、栈帧还是输出。
 - `codecin/native/mc/pe_print_test.go`：`OUT str` + `HALT` 的 IR 用例，断言
   生成的 exe 真的输出 `hi\n`。
+- `tests/test_features_native_windows.py`：Windows 后端的端到端用例，覆盖
+  PE32+ 头字段、**节之间不留 RVA 空洞**、递归/数组/`const` 维度/浮点/字符串
+  综合程序、`os_name`/`time_ms`/`sleep_ms` 的 kernel32 分支、文件与目录
+  API 往返（含失败路径）、`dir_list` 与引擎的输出格式一致，以及 `--native`
+  在 Windows 上默认选 PE 且 `-target` 排在入口文件之前。
 - `tests/test_features_syscall_raw.py`：`syscall()` / `syscall_str()` 的回归
   用例，覆盖运行期功能号分派、实参进 `x0`–`x4` 与功能号进 `x7` 的布置、缺省
   实参补 0、字符串返回值当新堆指针使用、6 实参上限（编译期报错）、未知功能号
@@ -183,8 +223,8 @@ Linux 侧的编码器补上了移位、位运算和按字节读取，`math.cin`�
   重建：`cd codecin/native && go build -o cincc ./cmd/cincc`。旧二进制仍按老
   规则解析（裸名字会命中兄弟文件），不支持 `const`，浮点打印仍是整数截断，且
   不会读 `CODECIN_LIB_DIR`。
-- Windows 后端的文件、网络、图形 `SYS` 仍未实现，`io` / `net` / `key` /
-  `gui` / `ffi` / `gostd` / `termux` 七个库在 `-target x86_64-windows` 下会
+- Windows 后端的网络、图形与进程（`exec`）能力仍未实现，`net` / `gui` /
+  `key` / `ffi` / `gostd` / `termux` 六个库在 `-target x86_64-windows` 下会
   明确报错。Linux 目标不受影响。
 
 ---

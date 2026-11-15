@@ -448,9 +448,11 @@ func (e *Encoder) winFileCopy() error {
 //
 // 流程: 把路径拼成 "路径\*" 的通配串 -> FindFirstFileA / FindNextFileA 遍历
 // -> 每条的名字从 WIN32_FIND_DATAA 的偏移 44 (cFileName) 开始。R14 始终保存
-// 「当前写入位置」这个 VM 地址, 因此不需要跨 API 调用保活 rdi。
+// 「当前写入位置」这个 VM 地址, R13 记录已写入的条目数, 因此不需要跨 API
+// 调用保活 rdi/rsi 之外的寄存器。
 //
-// 与引擎的 dir_list 对齐: "." 与 ".." 不计入结果。
+// 输出格式与引擎的 dir_list 对齐: 条目之间用 '\n' 分隔 (末尾不带换行),
+// "." / ".." 不计入, 目录名带尾部 '/'。
 func (e *Encoder) winDirList() error {
 	const (
 		findDataSize = 320 // sizeof(WIN32_FIND_DATAA)
@@ -505,8 +507,9 @@ func (e *Encoder) winDirList() error {
 	e.storeReg(0)
 	e.emitMalloc()
 	e.loadReg(0)
-	e.storeReg(8)  // R8 = 输出缓冲区起点
-	e.storeReg(14) // R14 = 写入游标 (VM 地址)
+	e.storeReg(8)   // R8 = 输出缓冲区起点
+	e.storeReg(14)  // R14 = 写入游标 (VM 地址)
+	e.movImm(13, 0) // R13 = 已写入条目数
 	e.vmAddr(14, 0)
 	e.raw(0xC6, 0x00, 0x00) // mov byte [rax], 0
 
@@ -533,8 +536,21 @@ func (e *Encoder) winDirList() error {
 	e.raw(0x0F, 0x84)
 	jAdvance2 := e.imm32Pos()
 
-	// 追加名字: 注意不能把字符放在 al —— vmAddr 会覆盖 rax。
 	e.patchRel(jAppend, len(e.code))
+
+	// 非首条先补分隔换行
+	e.raw(0x48, 0x83, 0x3C, 0x25) // cmp qword [R13], 0
+	e.imm32(regAddr(13))
+	e.raw(0x00)
+	e.raw(0x0F, 0x84)
+	jNoSep := e.imm32Pos()
+	e.vmAddr(14, 0)
+	e.raw(0xC6, 0x00, 0x0A) // mov byte [rax], '\n'
+	e.raw(0x48, 0xFF, 0x04, 0x25)
+	e.imm32(regAddr(14))
+	e.patchRel(jNoSep, len(e.code))
+
+	// 追加名字: 不能把字符放在 al —— vmAddr 会覆盖 rax。
 	copyName := len(e.code)
 	e.raw(0x8A, 0x16) // mov dl, [rsi]
 	e.raw(0x84, 0xD2) // test dl, dl
@@ -543,16 +559,25 @@ func (e *Encoder) winDirList() error {
 	e.vmAddr(14, 0)
 	e.raw(0x88, 0x10) // mov [rax], dl
 	e.raw(0x48, 0xFF, 0x04, 0x25)
-	e.imm32(regAddr(14))    // inc qword [R14]
+	e.imm32(regAddr(14))
 	e.raw(0x48, 0xFF, 0xC6) // inc rsi
 	e.raw(0xE9)
 	e.imm32(int32(copyName - (len(e.code) + 4)))
 	e.patchRel(jNameEnd, len(e.code))
 
+	// 目录补尾部 '/'
+	e.vmAddr(11, 0)
+	e.raw(0x8B, 0x00) // mov eax, [rax] (dwFileAttributes)
+	e.raw(0xA8, winAttrDirectory)
+	e.raw(0x0F, 0x84)
+	jNoSlash := e.imm32Pos()
 	e.vmAddr(14, 0)
-	e.raw(0xC6, 0x00, 0x0A) // 每条后加换行
+	e.raw(0xC6, 0x00, 0x2F) // mov byte [rax], '/'
 	e.raw(0x48, 0xFF, 0x04, 0x25)
-	e.imm32(regAddr(14)) // inc qword [R14]
+	e.imm32(regAddr(14))
+	e.patchRel(jNoSlash, len(e.code))
+	e.raw(0x48, 0xFF, 0x04, 0x25)
+	e.imm32(regAddr(13)) // 条目数 +1
 
 	// ---- FindNextFileA ----
 	adv := len(e.code)
