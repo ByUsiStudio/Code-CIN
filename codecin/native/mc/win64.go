@@ -28,13 +28,26 @@ const (
 // winImports 是 PE 后端唯一的导入清单 (代码与 IAT 必须一致)。
 var winImports = peImport{DLL: "kernel32.dll", Names: []string{
 	"GetStdHandle",             // 取标准输出句柄
-	"WriteFile",                // 控制台输出
+	"WriteFile",                // 控制台输出 / 写文件
 	"ExitProcess",              // HALT
 	"VirtualAlloc",             // VM 内存
 	"GetSystemTimeAsFileTime",  // SYS 15 TIME
 	"GetTickCount64",           // SYS 91 TIMEMS
 	"Sleep",                    // SYS 92 SLEEPMS
 	"GetTempPathA",             // SYS 89 TEMPDIR
+	// 文件 / 目录 (见 win64_fileio.go)
+	"CreateFileA",              // 51/52/53/56/88 打开文件
+	"ReadFile",                 // SYS 51 FILEREAD
+	"CloseHandle",              // 关闭上面打开的句柄
+	"DeleteFileA",              // SYS 55 FILEDELETE
+	"GetFileAttributesA",       // SYS 54/87 存在性 / 是否目录
+	"CreateDirectoryA",         // SYS 57 MKDIR
+	"RemoveDirectoryA",         // SYS 86 DIRREMOVE
+	"MoveFileA",                // SYS 85 FILEMOVE
+	"GetFileSizeEx",            // SYS 56 FILESIZE
+	"GetFileTime",              // SYS 88 FILEMTIME
+	"GetCurrentDirectoryA",     // SYS 66 CWD
+	"SetCurrentDirectoryA",     // SYS 90 CHDIR
 }}
 
 // dataOffWin 把宿主虚地址换算成 .data 内的偏移。

@@ -783,6 +783,9 @@ var winSyscalls = map[int64]bool{
 	28: true, 29: true, 30: true, 31: true, // SUBSTR/INDEXOF/TOUPPER/TOLOWER
 	32: true, 33: true, 34: true, // FLOOR/CEIL/ROUND
 	35: true, 36: true, 37: true, 38: true, // ATOI/TRIM/LTRIM/RTRIM
+	// 文件 / 目录 (实现在 win64_fileio.go)
+	51: true, 52: true, 53: true, 54: true, 55: true, 56: true, 57: true,
+	66: true, 85: true, 86: true, 87: true, 88: true, 90: true,
 	63: true, 89: true, // OSNAME/TEMPDIR
 	91: true, 92: true, // TIMEMS/SLEEPMS
 	137: true, // ALLOCFRAME
@@ -1132,9 +1135,20 @@ func encodeWith(p *ir.Program, e *Encoder) ([]byte, error) {
 			if len(ins.Args) != 1 || ins.Args[0].Kind != "imm" {
 				return nil, fmt.Errorf("SYS: 需要立即数功能号")
 			}
-			if e.isWin() && !winSyscalls[ins.Args[0].V] {
-				return nil, ErrUnsupported{Op: fmt.Sprintf(
-					"SYS %d (Windows 后端暂未实现文件/网络能力)", ins.Args[0].V)}
+			if e.isWin() {
+				if !winSyscalls[ins.Args[0].V] {
+					return nil, ErrUnsupported{Op: fmt.Sprintf(
+						"SYS %d (Windows 后端暂未实现网络/图形能力)", ins.Args[0].V)}
+				}
+				// 文件 / 目录这类需要 Win32 API 的功能号在 win64_fileio.go 里,
+				// 其余功能号继续走下面与 Linux 共用的实现 (内部再按目标分支)。
+				handled, err := e.winSyscall(ins.Args[0].V)
+				if err != nil {
+					return nil, err
+				}
+				if handled {
+					continue
+				}
 			}
 			switch ins.Args[0].V {
 			case 24: // PRINT_STR: x0 指向 VM 内存里的 NUL 结尾字符串
