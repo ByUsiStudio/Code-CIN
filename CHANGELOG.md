@@ -31,6 +31,20 @@ Linux 侧的编码器补上了移位、位运算和按字节读取，`math.cin`�
 `--native` 拿不到内置标准库目录，`import "math.cin"` 在机器码路径上必然失败；
 裸名字 import 在 cincc 里会命中当前目录的同名文件，与默认引擎结论相反。
 
+目标平台从两个变成四个。`aarch64-linux` 与 `aarch64-darwin`（macOS 只做 arm64）
+走的是同一份 AArch64 编码器，差别只在两件事：一张系统调用表和一个可执行文件
+容器（ELF64 / Mach-O）。macOS 侧额外要做 ad-hoc 代码签名，否则 Apple Silicon
+的内核会直接 `Killed: 9`——这跟权限位无关，是硬性要求。三角函数和对数在
+AArch64 上没有现成指令可用（x87 那套 `fsin`/`fyl2x` 是 x86 独有），所以在
+`mc/aarch64_math.go` 里用象限规约 + Taylor 级数软件实现，与 Go `math` 包的
+差在 1~2 ULP。
+
+同时把 Linux x86-64 侧欠的功能号补齐到与 ARM64 同一水位：`SYS 58` 目录列举、
+`SYS 83` 绝对路径、`SYS 84` 文件复制，并把 `FILEMOVE`/`DIRREMOVE`/`ISDIR`/
+`FILEMTIME` 统一到一份 `stat` 实现上。补齐后两个 Linux 目标的内置库编译结果
+完全一致，`io.cin` 终于能在三个目标上编译。这些 x86-64 新代码没有在真实
+Linux 上跑过（当前环境起不了 WSL），是逐条反汇编核对出来的。
+
 ### 新增 (Added)
 
 **Windows 机器码后端（`cincc -target x86_64-windows`）**
@@ -150,6 +164,89 @@ Linux 侧的编码器补上了移位、位运算和按字节读取，`math.cin`�
 - `codecin/native/compiler/import_test.go`：同一套解析规则的 Go 单测（6 例），
   直接打 `resolveImport`，不依赖编译产物。
 
+**ARM64 机器码后端（`cincc -target aarch64-linux` / `aarch64-darwin`）**
+
+- 新增 AArch64 编码器 `mc/aarch64.go`：MOVZ/MOVK 立即数装载（含 64 位大常量
+  的四段拼装）、ADD/SUB 的寄存器与立即数形式、LDR/STR/LDRB/STRB、B/BL/
+  B.cond/CBZ/CBNZ 回填、MADD 乘除与取余、逻辑与移位、浮点
+  （FADD/FSUB/FMUL/FDIV/FSQRT/FABS/FNEG/FCMP/SCVTF/FCVTZS/FRINTM/FRINTP/
+  FRINTA）、FMOV 寄存器与 X↔D 互转。
+- 虚拟寄存器组挪到 VM 地址空间的高端保留区（`a64MemSize - 0x200000`）。原先
+  放在 VM 偏移 0，与编译器写入的静态数据（也从 0 开始）重叠，`file_write` /
+  `file_exists` 这类用例里字符串字面量会被 R0 悄悄写坏。相应地所有 `scr*`
+  偏移改成相对 `x19`（寄存器组基址），`a64*` 常量为相对 VM 的偏移。
+- 分支回填按指令类分开处理位宽：`B`/`BL` 是 26 位偏移，`B.cond` 与
+  `CBZ`/`CBNZ` 只有 19 位。统一按 19 位掩码截断会让超过 ±128 KiB 的 `B`
+  落到完全不相干的位置（`loop_array` 的表现就是跳进映像之外）。
+- 超越函数用软件实现（`mc/aarch64_math.go`）：AArch64 的浮点单元没有 x87 的
+  `fsin`/`fcos`/`fptan`/`fyl2x` 那一套。`sin`/`cos` 先用 `round(x*2/pi)` 求
+  象限，把参数规约到 `|r| <= pi/4`，再用 Taylor 级数（sin 到 r¹³、cos 到
+  r¹⁴）求值，最后按 `q&1` 在 sin/cos 之间换名、`q&2` 变号；`pow` 的整数指数
+  走平方乘快速幂（结果与 `math.Pow` 一致），非整数走
+  `exp2(y*log2(x))`（log2 用 atanh 级数、exp2 用 Taylor 级数）。与 Go
+  `math` 包的差在 1~2 ULP。
+- Linux AArch64 与 Darwin AArch64 各有一张系统调用表：mmap 222/197、
+  write 64/4、read 63/3、close 57/6、openat 56 / open 5、newfstatat 79 /
+  stat64 338、getdents64 61 / getdirentries64 344、clock_gettime 113 /
+  gettimeofday 116、nanosleep 101/240。功能号都在 `x8`，但错误约定不同：
+  Linux 把负 errno 放在 `x0`，Darwin 用进位标志——所以 Darwin 侧每次 `svc`
+  之后必须立刻紧跟 `b.cs`。
+- 目录列举（`SYS 58`）按平台的 dirent 布局取字段：Linux `d_reclen`@16、
+  `d_type`@18、`d_name`@19；Darwin `d_type`@20、`d_name`@21 且 `d_namlen`
+  占 2 字节。
+
+**macOS (arm64) 后端（`cincc -target aarch64-darwin`）**
+
+- `mc/macho.go`：完整的 64 位 Mach-O 写出器。`MH_EXECUTE` +
+  `MH_PIE|MH_NOUNDEFS`、16 KiB 页，四个段 `__PAGEZERO`/`__TEXT`/`__DATA`/
+  `__LINKEDIT`，装载命令 `LC_SEGMENT_64`×4 + `LC_MAIN` + `LC_LOAD_DYLINKER`
+  + `LC_BUILD_VERSION` + `LC_CODE_SIGNATURE`。
+- ad-hoc 代码签名：Apple Silicon 上未签名的可执行文件会被内核直接
+  `Killed: 9`。签名是 SuperBlob（`0xFADE0CC0`）+ CodeDirectory
+  （`0xFADE0C02`），SHA-256 按 4 KiB 一页哈希，签名区紧贴文件末尾，
+  `codeLimit` 与页数自洽。
+- `LC_MAIN` 的 `entryoff` 由 `WrapMachO` 回填，装载器是相对 `__TEXT` 段起点
+  计算，不是段内偏移也不是虚拟地址。
+
+**Linux x86-64 后端补齐（与 ARM64 对齐）**
+
+- `SYS 58`（DIRLIST）：`open(O_DIRECTORY)` + `getdents64` 循环，输出格式与
+  引擎一致（`\n` 分隔、末尾不带换行、`.`/`..` 跳过、目录带尾部 `/`）。输出
+  缓冲 64 KiB，写满前主动收尾，不会越界。
+- `SYS 83`（PATHABS）：已是绝对路径就复制一份返回，否则拼
+  `cwd + "/" + path`（与 ARM64 一致，不做 `filepath.Abs` 那种 `.`/`..` 规整）。
+- `SYS 84`（FILECOPY）：读全部到 1 MiB 缓冲再一次写出。
+- `SYS 85`/`86`/`87`/`88`（FILEMOVE/DIRREMOVE/ISDIR/FILEMTIME）改为统一走
+  `stat` + 栈上 `struct stat`（`st_mode`@24、`st_mtim.tv_sec`@88），失败返回
+  值同时规范成 `-1`——旧实现直接回传负 errno（`-2`、`-20`…），与引擎和
+  ARM64 后端都不一致。
+- 补齐后 `x86_64-linux` 与 `aarch64-linux` 的内置库编译结果完全一致：34 个
+  纯计算库全部通过，只有 `ffi`/`gostd`/`gui`/`key`/`net` 因
+  `SYS 117/119/129/140/145`（网络、图形、FFI、桌面集成）报错——这几个功能号
+  两个 Linux 后端都还没实现。`io.cin` 也终于能在 `x86_64-linux`、
+  `aarch64-linux`、`aarch64-darwin` 上编译（此前卡在缺 `SYS 84`）。
+
+**测试**
+
+- `mc/emu_test.go`：一个按位模式匹配的 AArch64 解释器，在本机真实执行 ARM64
+  机器码并与 Go 引擎差分（stdout 逐字节 + 退出码）。支持 Linux / Darwin 双
+  模式，系统调用号、错误约定、`O_*` 位值都分开。
+- `mc/macho_test.go`（文件名不能叫 `*_darwin_test.go`——Go 会按 GOOS 过滤，
+  在 Windows 上根本不编译）：Mach-O 结构校验（magic / cputype / filetype /
+  ncmds / flags、装载命令总长、段数量、签名区落在文件末尾、SuperBlob 与
+  CodeDirectory 的 magic、页数覆盖 `codeLimit`），外加四个用例与引擎逐字节
+  比对。
+- `mc/aarch64_test.go` 增补 `mathfn` 用例：`pow`/`sin`/`cos`/`tan`/`floor`/
+  `ceil`/`round` 与引擎差分。精确可表示的值直接比字符串，非平凡值放大取整后
+  只比前 6 位有效数字，避免末位 ULP 差异导致误报。
+
+**Python 侧**
+
+- `--build-target` 支持 `linux/arm64`、`linux/aarch64`、`darwin/arm64`、
+  `darwin/aarch64`（`codecin/cli.py`、`codecin/mkn.py`）。
+- `cincc -target` 白名单扩到四个目标，各自打印产物类型（`ELF` / `PE32+` /
+  `AArch64 ELF` / `Mach-O arm64`）。
+
 ### 修复 (Fixed)
 
 - Windows 下调用任何函数都会崩（`0xc0000005`）：原先没有函数序言，而被调函数
@@ -230,6 +327,15 @@ Linux 侧的编码器补上了移位、位运算和按字节读取，`math.cin`�
   往返表示。`sqrt(2.0)` 因此是 `1.414213562373095` 而不是
   `1.4142135623730951`。要逐位一致得在机器码里实现完整的最短十进制转换
   （Ryu/Grisu 那一类），本版没有做。
+- ARM64 与 macOS 后端的验证方式是「解释器 + 引擎差分」，不是真机：仓库里的
+  AArch64 解释器把机器码的每条指令按位模式解出来真的执行，再和 Go 引擎比
+  stdout 与退出码，但没有在 Apple Silicon 或 ARM64 Linux 机器上跑过。macOS
+  产物已带 ad-hoc 签名、Mach-O 结构自检通过，首次在真机上运行时若被
+  Gatekeeper 拦下，需要 `xattr -d com.apple.quarantine <文件>`。
+- `x86_64-linux` 新增的 `SYS 58/83/84/85/86/87/88` 同样没有在真实 Linux 上
+  执行过（当前环境无法起 WSL），是靠逐条反汇编核对编码实现的。若发现行为
+  不对，优先查这几段的栈/寄存器使用（`mc/x86_64_dirlist.go`、
+  `mc/x86_64_fileops.go`）。
 
 ---
 
