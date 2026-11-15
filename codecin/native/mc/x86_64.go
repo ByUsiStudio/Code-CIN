@@ -1614,6 +1614,8 @@ func encodeWith(p *ir.Program, e *Encoder) ([]byte, error) {
 				e.storeReg(0)
 			case 58: // DIRLIST(path=R0) -> 换行分隔的条目
 				e.linDirList()
+			case 83: // PATHABS(path=R0)
+				e.linPathAbs()
 			case 84: // FILECOPY(src=R0, dst=R1)
 				e.linFileCopy()
 			case 147: // TCPDIAL(host=R0, port=R1) -> fd; 仅支持点分 IPv4

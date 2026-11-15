@@ -190,3 +190,93 @@ func (e *Encoder) linFileMtime() {
 	e.patchRel(jDone, len(e.code))
 	e.storeReg(0)
 }
+
+// x86CopyZ: 把 [rsi] 逐字节复制到 [rdi] 直到 NUL (含 NUL); 结束后 rdi 停在 NUL 上。
+func (e *Encoder) x86CopyZ() {
+	loop := len(e.code)
+	e.raw(0x8A, 0x06)       // mov al, [rsi]
+	e.raw(0x88, 0x07)       // mov [rdi], al
+	e.raw(0x84, 0xC0)       // test al, al
+	e.raw(0x0F, 0x84)       // je 结束
+	je := e.imm32Pos()
+	e.raw(0x48, 0xFF, 0xC6) // inc rsi
+	e.raw(0x48, 0xFF, 0xC7) // inc rdi
+	e.raw(0xE9); e.imm32(int32(loop - (len(e.code) + 4)))
+	e.patchRel(je, len(e.code))
+}
+
+// linPathAbs 生成 SYS 83 PATHABS(path=R0)。
+//
+// 已经是绝对路径就复制一份返回, 否则拼成 cwd + "/" + path —— 与 AArch64
+// 后端一致 (不做 Go filepath.Abs 那种 "." / ".." 规整)。
+func (e *Encoder) linPathAbs() {
+	e.loadReg(0)
+	e.storeReg(7) // R7 = path
+
+	// path[0] == '/' ?
+	e.vmAddr(7, 0)
+	e.raw(0x80, 0x38, '/') // cmp byte [rax], '/'
+	e.raw(0x0F, 0x84)      // je 绝对路径分支
+	jAbs := e.imm32Pos()
+
+	// ---- 相对路径: cwd + "/" + path ----
+	e.raw(0x48, 0xC7, 0xC0); e.imm32(4096) // mov rax, 4096
+	e.storeReg(0)
+	e.emitMalloc()
+	e.loadReg(0)
+	e.storeReg(8)              // R8 = cwd 缓冲区
+	e.vmAddr(8, 0)
+	e.raw(0x48, 0x89, 0xC7)    // mov rdi, rax
+	e.raw(0xBE); e.imm32(4096) // mov esi, 4096
+	e.raw(0xB8); e.imm32(79)   // mov eax, SYS_getcwd
+	e.raw(0x0F, 0x05)
+
+	e.loadReg(8)
+	e.emitStrlen()
+	e.storeReg(9) // R9 = len(cwd)
+	e.loadReg(7)
+	e.emitStrlen()
+	e.storeReg(10) // R10 = len(path)
+
+	e.loadReg(9)
+	e.raw(0x48, 0x03, 0x04, 0x25); e.imm32(regAddr(10)) // rax += len(path)
+	e.raw(0x48, 0x05); e.imm32(2)                       // + '/' + NUL
+	e.storeReg(0)
+	e.emitMalloc()
+	e.loadReg(0)
+	e.storeReg(11) // R11 = 结果
+
+	e.vmAddr(11, 0)
+	e.raw(0x48, 0x89, 0xC7) // mov rdi, 结果
+	e.vmAddr(8, 0)
+	e.raw(0x48, 0x89, 0xC6) // mov rsi, cwd
+	e.x86CopyZ()            // rdi 停在 cwd 的 NUL 上
+	e.raw(0xC6, 0x07, '/')  // mov byte [rdi], '/'
+	e.raw(0x48, 0xFF, 0xC7) // inc rdi
+	e.vmAddr(7, 0)
+	e.raw(0x48, 0x89, 0xC6) // mov rsi, path
+	e.x86CopyZ()            // 连 NUL 一起抄
+	e.loadReg(11)
+	e.storeReg(0)
+	e.raw(0xE9) // 跳过绝对路径分支
+	jDone := e.imm32Pos()
+
+	// ---- 绝对路径: 复制一份 ----
+	e.patchRel(jAbs, len(e.code))
+	e.loadReg(7)
+	e.emitStrlen()
+	e.raw(0x48, 0x05); e.imm32(1) // + NUL
+	e.storeReg(0)
+	e.emitMalloc()
+	e.loadReg(0)
+	e.storeReg(11)
+	e.vmAddr(11, 0)
+	e.raw(0x48, 0x89, 0xC7) // mov rdi, 副本
+	e.vmAddr(7, 0)
+	e.raw(0x48, 0x89, 0xC6) // mov rsi, path
+	e.x86CopyZ()
+	e.loadReg(11)
+	e.storeReg(0)
+
+	e.patchRel(jDone, len(e.code))
+}
