@@ -13,7 +13,7 @@ import (
 //  2. 构造 .data 初值 —— 寄存器组、标志字节、堆指针、静态数据;
 //  3. 把 .text/.data/.rdata 交给 PE 写出器。
 //
-// ImageBase 固定 0x400000 且关闭 ASLR (见 pe.go), 因此 .data 落在 32 位
+// ImageBase 固定 0x200000 且关闭 ASLR (见 pe.go), 因此 .data 落在 32 位
 // 地址空间内, 编码器可以照旧用 `mov rax, [abs32]` 访问虚拟寄存器。
 
 const (
@@ -38,7 +38,7 @@ var winImports = peImport{DLL: "kernel32.dll", Names: []string{
 }}
 
 // dataOffWin 把宿主虚地址换算成 .data 内的偏移。
-// .data 起始即 RVA 0x2000, 也就是 dataAddr。
+// .data 起始即 RVA 0x202000, 也就是 dataAddr。
 func dataOffWin(va int64) int { return int(va - dataAddr) }
 
 // winImageData 构造 .data 初值与其虚拟大小。

@@ -529,6 +529,23 @@ def _cincc_path() -> str:
         "  cd codecin/native && go build -o cincc ./cmd/cincc")
 
 
+def _native_target(requested: str | None) -> str | None:
+    """把 ``--build-target`` 的 OS/ARCH 写法映射成 cincc 的目标名。
+
+    未指定时, Windows 宿主默认用本机 PE 后端 (出 ELF 只能靠 WSL 跑)。
+    """
+    mapping = {'linux/amd64': 'x86_64-linux',
+               'linux/x86_64': 'x86_64-linux',
+               'windows/amd64': 'x86_64-windows',
+               'windows/x86_64': 'x86_64-windows'}
+    if requested:
+        target = mapping.get(requested)
+        if target is None:
+            raise MknError(f'cincc 暂不支持目标 {requested}')
+        return target
+    return 'x86_64-windows' if os.name == 'nt' else None
+
+
 def _build_native_project(project: MknManifest, args) -> int:
     """``mkn build --native``: 调用 cincc 直接出机器码 (不经 C/字节码)。"""
     import subprocess
@@ -536,14 +553,17 @@ def _build_native_project(project: MknManifest, args) -> int:
     entry = project.entry_path
     if not entry.lower().endswith('.cin'):
         raise MknError('mkn build --native 目前只支持 .cin 入口')
+    target = _native_target(getattr(args, 'build_target', None))
+    suffix = '.exe' if target == 'x86_64-windows' else ''
     out = args.output or os.path.join(
-        project.target_dir, f'{project.name}-{project.version}')
+        project.target_dir, f'{project.name}-{project.version}{suffix}')
     os.makedirs(os.path.dirname(out) or '.', exist_ok=True)
     # 内置标准库目录经环境变量传给 cincc (旧版 cincc 不认识 -lib 参数)。
-    cmd = [_cincc_path(), '-o', out, entry]
-    target = getattr(args, 'build_target', None)
+    # -target 必须排在入口文件之前: Go 的 flag 解析遇到第一个位置参数就停。
+    cmd = [_cincc_path(), '-o', out]
     if target:
         cmd += ['-target', target]
+    cmd.append(entry)
     child_env = dict(os.environ)
     lib_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'lib')
     if os.path.isdir(lib_dir):
@@ -819,6 +839,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument('--native', action='store_true',
                    help='直接用 AST→C 原生后端编译为设备本机可执行文件 '
                         '(不经过 UCPU 指令集; 超出语言子集会报错)')
+    p.add_argument('--build-target', default=None, metavar='OS/ARCH',
+                   help='--native 的目标平台: windows/amd64, linux/amd64 '
+                        '(默认 Windows 出 PE, 其余出 ELF)')
     p.add_argument('--clean', action='store_true')
     p.add_argument('--package', action='store_true', help='编译后同时打包')
     p.set_defaults(func=cmd_build)

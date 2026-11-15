@@ -13,7 +13,10 @@ const (
 	regCount = 33
 	flagOff  = 0x400 // zf at +0x400, lf at +0x401 (相对 dataAddr)
 	itoaBuf  = 0x4F0 // ITOA 缓冲区相对 dataBase 的偏移 (向前增长)
-	ftoaBuf  = 0x600 // FTOA 输出缓冲区相对 dataBase 的偏移 (向后增长, 64 字节)
+	// FTOA 输出缓冲区 (VM 地址)。放在堆起点 (0x100000) 之下的空隙里: 静态数据
+	// 从 VM 0 向上长、堆自 0x100000 向上长、栈从内存顶端向下长, 这一段不会
+	// 被任何一方占用; 挨着 itoaBuf 会与体积稍大的静态字符串区撞车。
+	ftoaBuf = 0xF0000
 	// IR 里的数据地址 (如 0x1000) 会被搬到 dataBase+addr 虚地址。
 	dataBase = 0x410000
 )
@@ -197,7 +200,7 @@ func (e *Encoder) emitFTOA() {
 	e.raw(0x48, 0xFF, 0xC7)             // inc rdi
 	e.raw(0x49, 0x89, 0xFD)             // mov r13, rdi (最后一个非零位之后)
 	e.raw(0x49, 0x89, 0xFE)             // mov r14, rdi (小数点之后)
-	e.raw(0x48, 0xC7, 0xC1, 0x10, 0x00, 0x00, 0x00) // mov rcx, 16 (最多 16 位)
+	e.raw(0x48, 0xC7, 0xC1, 0x0F, 0x00, 0x00, 0x00) // mov rcx, 15 (最多 15 位)
 	e.raw(0x48, 0xBA); e.imm64(0x4024000000000000)  // mov rdx, 10.0
 	e.raw(0x66, 0x48, 0x0F, 0x6E, 0xDA)             // movq xmm3, rdx
 	digitLoop := len(e.code)
@@ -229,14 +232,12 @@ func (e *Encoder) emitFTOA() {
 	e.patchRel(jIntOnly, len(e.code))
 	e.raw(0xC6, 0x07, 0x00) // mov byte [rdi], 0
 
-	// ---- 收尾: R0 = 缓冲区的 VM 地址 ----
+	// ---- 收尾: R0 = 缓冲区的 VM 地址 (r15 + ftoaBuf 是它的宿主指针) ----
 	store := len(e.code)
 	for _, pos := range []int{jPosInfStore, jNaNStore, jNegInfStore, jFracStore} {
 		e.patchRel(pos, store)
 	}
-	e.raw(0x4C, 0x89, 0xF8)             // mov rax, r15
-	e.raw(0x48, 0x05); e.imm32(ftoaBuf) // add rax, ftoaBuf
-	e.storeReg(0)
+	e.movImm(0, ftoaBuf)
 }
 
 const memSize = 1 << 30 // VM 地址空间 (mmap 惰性分配)

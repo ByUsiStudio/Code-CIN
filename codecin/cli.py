@@ -223,36 +223,64 @@ def _run_native(ns: argparse.Namespace, console, program_file: str,
         return 1
 
     target = None
-    if ns.build_target:
+    explicit_target = bool(ns.build_target)
+    if explicit_target:
         mapping = {"linux/amd64": "x86_64-linux",
-                   "linux/x86_64": "x86_64-linux"}
+                   "linux/x86_64": "x86_64-linux",
+                   "windows/amd64": "x86_64-windows",
+                   "windows/x86_64": "x86_64-windows"}
         target = mapping.get(ns.build_target)
         if target is None:
             console.print(Panel(f"cincc 暂不支持目标 {ns.build_target}",
                                 title="Build Error", border_style="red"))
             return 1
+    elif os.name == "nt":
+        # Windows 宿主上默认用本机 PE 后端: 出 ELF 只能靠 WSL 跑, 而 8.1.2 的
+        # Windows 后端已经能直接执行。命中它尚未实现的能力时再回退 ELF + WSL。
+        target = "x86_64-windows"
 
+    exe_suffix = ".exe" if target == "x86_64-windows" else ""
     build_only = ns.native_out is not None
     if build_only:
         out = ns.native_out or (os.path.splitext(program_file)[0] + ".exe")
     else:
         tmpdir = tempfile.mkdtemp(prefix=".native-")
         out = os.path.join(tmpdir, os.path.splitext(
-            os.path.basename(program_file))[0])
+            os.path.basename(program_file))[0] + exe_suffix)
 
     # 内置标准库目录通过环境变量交给 cincc: 裸名字 import ("math.cin") 只查
     # 这里。用环境变量而不是 -lib 参数, 是为了兼容旧版 cincc (它不认识 -lib,
     # 会直接报 flag provided but not defined)。
     lib_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "lib")
-    cmd = [cincc, "-o", out, program_file]
-    if target:
-        cmd += ["-target", target]
     child_env = dict(os.environ)
     if os.path.isdir(lib_dir):
         child_env["CODECIN_LIB_DIR"] = lib_dir
-    proc = subprocess.run(cmd, capture_output=True, text=True,
-                           encoding="utf-8", errors="replace",
-                           env=child_env)
+
+    def _compile(tgt):
+        # -target 必须排在入口文件之前: Go 的 flag 解析遇到第一个位置参数就停,
+        # 排到后面会被当成多余参数 (cincc 只回一行用法)。
+        cmd = [cincc, "-o", out]
+        if tgt:
+            cmd += ["-target", tgt]
+        cmd.append(program_file)
+        return subprocess.run(cmd, capture_output=True, text=True,
+                              encoding="utf-8", errors="replace",
+                              env=child_env)
+
+    proc = _compile(target)
+    if (proc.returncode != 0 and not explicit_target
+            and target == "x86_64-windows"
+            and "Windows 后端暂未实现" in (proc.stderr or "")):
+        # Windows 后端的文件/网络/图形能力还没补, 退回 ELF + WSL 保证能跑。
+        import shutil as _shutil
+        if _shutil.which("wsl"):
+            console.print(Colors.colorize(
+                "该程序用到 Windows 后端尚未实现的宿主能力，改用 Linux 目标 + WSL 运行",
+                Colors.YELLOW))
+            target = "x86_64-linux"
+            if not build_only and out.endswith(".exe"):
+                out = out[:-4]
+            proc = _compile(target)
     if proc.returncode != 0:
         console.print(Panel((proc.stderr or proc.stdout).strip(),
                             title="Native Build Error", border_style="red"))
